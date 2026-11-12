@@ -15,3 +15,5 @@ cd src-tauri && cargo test
 ```
 
 On a headless machine, run the app under a virtual display: `xvfb-run -a npm run tauri dev`.
+
+See [ROADMAP.md](ROADMAP.md) for what is planned.
