@@ -19,8 +19,10 @@ A pleasant way to browse any repository.
 - [x] Project scaffold: Tauri 2, React + TypeScript, git2
 - [x] Commit graph with lanes, merge/fork curves and lane colours
 - [x] Branch, remote-branch, tag and detached-HEAD labels
-- [ ] Commit details pane: message, author, date, parents, changed files
-- [ ] Diff viewer: unified and side-by-side, syntax highlighting, image previews
+- [x] Commit details pane: message, author, date, parents, changed files
+- [x] Diff viewer: unified and side-by-side, with rename and binary handling
+- [ ] Diff viewer: syntax highlighting and word-level changes
+- [ ] Diff viewer: image previews
 - [ ] Sidebar: local branches, remotes, tags and stashes; click to jump to the commit in the graph
 - [ ] Open repos with a native folder picker; recent-repos list on the welcome screen
 - [ ] Refresh automatically when the repo changes on disk

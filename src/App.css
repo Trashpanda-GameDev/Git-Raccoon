@@ -8,6 +8,12 @@
   --text-muted: #8a91a0;
   --accent: #2ece9d;
   --danger: #ff6b6b;
+  --add: #4cc38a;
+  --del: #f26d6d;
+  --add-bg: rgba(76, 195, 138, 0.12);
+  --add-bg-strong: rgba(76, 195, 138, 0.22);
+  --del-bg: rgba(242, 109, 109, 0.12);
+  --del-bg-strong: rgba(242, 109, 109, 0.22);
   --refs-width: 200px;
 
   font-family: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -131,7 +137,7 @@ body,
 
 .row-grid {
   display: grid;
-  grid-template-columns: var(--refs-width) var(--graph-width) minmax(200px, 1fr) 160px 120px 72px;
+  grid-template-columns: var(--refs-width) var(--graph-width) minmax(160px, 1fr) 140px 110px 72px;
   align-items: center;
 }
 
@@ -263,4 +269,425 @@ body,
 
 .welcome-mark {
   font-size: 56px;
+}
+
+/* Main layout: graph (with diff overlay) and details pane */
+
+.main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.center {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.add {
+  color: var(--add);
+}
+
+.del {
+  color: var(--del);
+}
+
+.stale {
+  opacity: 0.55;
+  transition: opacity 0.15s;
+}
+
+.icon-button {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.icon-button:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.close {
+  margin-left: auto;
+}
+
+.pane-empty {
+  padding: 24px;
+  text-align: center;
+}
+
+/* Details pane */
+
+.details-pane {
+  display: flex;
+  flex-direction: column;
+  width: 380px;
+  flex: none;
+  border-left: 1px solid var(--border);
+  background: var(--bg-raised);
+  min-height: 0;
+}
+
+.pane-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pane-title {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sha-button,
+.link-button {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sha-button:hover,
+.link-button:hover {
+  border-color: var(--accent);
+}
+
+code {
+  font-family: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.pane-body {
+  flex: 1;
+  overflow: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.commit-summary {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.commit-body {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  opacity: 0.85;
+}
+
+.person {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.avatar {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.person-text {
+  min-width: 0;
+}
+
+.person-name {
+  font-weight: 600;
+}
+
+.parents {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.files-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.change-bar {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.change-bar span {
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
+}
+
+.bar-add {
+  background: var(--add);
+}
+
+.bar-del {
+  background: var(--del);
+}
+
+.file-list {
+  list-style: none;
+  margin: 0 -12px;
+  padding: 0;
+}
+
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 12px;
+  border: none;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-row:hover {
+  background: var(--bg-hover);
+}
+
+.file-row.active {
+  background: var(--bg-selected);
+}
+
+.file-path {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+/* The folder (and old name) shrink with an ellipsis; the file name stays whole. */
+.file-dir {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-name {
+  flex: none;
+  font-weight: 500;
+}
+
+.file-counts {
+  display: flex;
+  gap: 6px;
+  flex: none;
+  font-size: 12px;
+}
+
+.status-badge {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #10131a;
+}
+
+.status-added {
+  background: var(--add);
+}
+
+.status-modified {
+  background: #e5b94b;
+}
+
+.status-deleted {
+  background: var(--del);
+}
+
+.status-renamed,
+.status-copied {
+  background: #6ea8fe;
+}
+
+.status-typechange {
+  background: #b88cff;
+}
+
+/* Diff view (covers the graph) */
+
+.diff-view {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.diff-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+
+.diff-path {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+
+.segmented {
+  display: inline-flex;
+  margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.segmented button {
+  border: none;
+  background: var(--bg);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.segmented button.on {
+  background: var(--bg-selected);
+  color: var(--text);
+}
+
+.segmented + .close {
+  margin-left: 0;
+}
+
+.diff-body {
+  flex: 1;
+  overflow: auto;
+}
+
+.diff-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-family: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.ln-col {
+  width: 52px;
+}
+
+.diff-table td {
+  padding: 0;
+  vertical-align: top;
+}
+
+.diff-table .ln {
+  padding: 0 8px;
+  text-align: right;
+  color: var(--text-muted);
+  user-select: none;
+  opacity: 0.8;
+}
+
+.diff-table .code {
+  padding-right: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.diff-table.split td.code {
+  border-right: 1px solid var(--border);
+}
+
+.marker {
+  display: inline-block;
+  width: 18px;
+  text-align: center;
+  user-select: none;
+  color: var(--text-muted);
+}
+
+.diff-table .add {
+  background: var(--add-bg);
+  color: var(--text);
+}
+
+.diff-table .ln.add {
+  background: var(--add-bg-strong);
+}
+
+.diff-table .delete {
+  background: var(--del-bg);
+}
+
+.diff-table .ln.delete {
+  background: var(--del-bg-strong);
+}
+
+.diff-table .noeol {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.diff-table .filler {
+  background: repeating-linear-gradient(-45deg, transparent 0 4px, rgba(255, 255, 255, 0.025) 4px 8px);
+}
+
+.hunk-header td {
+  padding: 4px 12px;
+  background: rgba(110, 168, 254, 0.08);
+  color: #8fb6f5;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
 }

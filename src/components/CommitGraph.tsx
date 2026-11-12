@@ -17,7 +17,8 @@ export const laneColor = (lane: number) => LANE_COLORS[lane % LANE_COLORS.length
 const laneX = (lane: number) => GRAPH_PADDING + lane * LANE_WIDTH;
 const rowY = (row: number) => row * ROW_HEIGHT + ROW_HEIGHT / 2;
 
-export const graphWidth = (lanes: number) => Math.max(lanes, 1) * LANE_WIDTH + GRAPH_PADDING;
+// At least wide enough for the "Graph" column heading.
+export const graphWidth = (lanes: number) => Math.max(Math.max(lanes, 1) * LANE_WIDTH + GRAPH_PADDING, 64);
 
 function edgePath(row: number, from: number, to: number) {
   const x1 = laneX(from);

@@ -137,45 +137,17 @@ pub fn load_graph(path: &str, limit: usize) -> Result<Graph, git2::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-
-    struct TempRepo {
-        dir: PathBuf,
-        repo: Repository,
-    }
-
-    impl TempRepo {
-        fn new(name: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!("git-raccoon-{name}-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&dir);
-            let repo = Repository::init(&dir).unwrap();
-            TempRepo { dir, repo }
-        }
-
-        fn commit(&self, update_ref: Option<&str>, message: &str, parents: &[Oid]) -> Oid {
-            let sig = git2::Signature::now("Raccoon", "raccoon@example.com").unwrap();
-            let tree = self.repo.find_tree(self.repo.index().unwrap().write_tree().unwrap()).unwrap();
-            let parents: Vec<_> = parents.iter().map(|p| self.repo.find_commit(*p).unwrap()).collect();
-            let parents: Vec<_> = parents.iter().collect();
-            self.repo.commit(update_ref, &sig, &sig, message, &tree, &parents).unwrap()
-        }
-    }
-
-    impl Drop for TempRepo {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.dir);
-        }
-    }
+    use crate::testutil::TempRepo;
 
     #[test]
     fn walks_all_branches_and_labels_refs() {
-        let t = TempRepo::new("graph");
+        let t = TempRepo::new();
         let base = t.commit(Some("HEAD"), "base", &[]);
         let main = t.commit(Some("HEAD"), "on main", &[base]);
         let feature = t.commit(Some("refs/heads/feature"), "on feature", &[base]);
         t.repo.tag_lightweight("v1", &t.repo.find_object(base, None).unwrap(), false).unwrap();
 
-        let g = load_graph(t.dir.to_str().unwrap(), 100).unwrap();
+        let g = load_graph(t.path(), 100).unwrap();
         let branch = g.branch.clone().unwrap();
         assert!(branch == "master" || branch == "main", "{branch}");
 
@@ -195,12 +167,12 @@ mod tests {
 
     #[test]
     fn detached_head_gets_a_head_label() {
-        let t = TempRepo::new("detached");
+        let t = TempRepo::new();
         let first = t.commit(Some("HEAD"), "first", &[]);
         t.commit(Some("HEAD"), "second", &[first]);
         t.repo.set_head_detached(first).unwrap();
 
-        let g = load_graph(t.dir.to_str().unwrap(), 100).unwrap();
+        let g = load_graph(t.path(), 100).unwrap();
         assert_eq!(g.branch, None);
         let refs = &g.commits[1].refs;
         assert_eq!(refs[0].kind, RefKind::Head);
@@ -208,8 +180,8 @@ mod tests {
 
     #[test]
     fn empty_repo_has_no_commits() {
-        let t = TempRepo::new("empty");
-        let g = load_graph(t.dir.to_str().unwrap(), 100).unwrap();
+        let t = TempRepo::new();
+        let g = load_graph(t.path(), 100).unwrap();
         assert!(g.commits.is_empty());
         assert_eq!(g.width, 0);
     }
