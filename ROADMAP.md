@@ -1,6 +1,6 @@
 # Git Raccoon Roadmap
 
-Git Raccoon is a fast, friendly desktop Git client built on Tauri 2 (Rust + git2) and React. It takes inspiration from GitKraken's graph-first workflow, with its own look and identity.
+Git Raccoon is a fast, friendly desktop Git client written entirely in Rust: egui/eframe on wgpu for the interface and git2 (libgit2) for Git. It takes inspiration from GitKraken's graph-first workflow, with its own look and identity.
 
 Each milestone is a usable release. Tick items off as they land on `main`.
 
@@ -10,13 +10,14 @@ Each milestone is a usable release. Tick items off as they land on `main`.
 - **Safe by default.** Destructive actions (reset, discard, force-push, branch delete) ask first and can be undone where Git allows it.
 - **Respect the user's Git.** Read the user's config, hooks, credential helpers and SSH agent. When git2 can't match the `git` CLI's behaviour for an operation, run `git` instead.
 - **Fast on big repos.** Load history incrementally, draw only visible rows, and keep slow work off the UI thread.
-- **Tested against real repositories.** Rust logic is tested on temporary Git repos; UI flows get end-to-end tests.
+- **Tested against real repositories.** Git logic is tested on temporary repos, and UI flows run headlessly against a sample repo with egui_kittest.
 
 ## v0.1: Explore (read-only)
 
 A pleasant way to browse any repository.
 
-- [x] Project scaffold: Tauri 2, React + TypeScript, git2
+- [x] Project scaffold: Cargo workspace with `git-raccoon-core` (Git logic) and `git-raccoon` (egui app)
+- [x] Native Rust interface (moved from Tauri + React)
 - [x] Commit graph with lanes, merge/fork curves and lane colours
 - [x] Branch, remote-branch, tag and detached-HEAD labels
 - [x] Commit details pane: message, author, date, parents, changed files
@@ -76,11 +77,10 @@ The operations people open a GUI for.
 ## v1.0: Ship
 
 - [ ] CI on GitHub Actions: build and test on Linux, macOS and Windows
-- [ ] Installers: AppImage and .deb, signed macOS .dmg, Windows .msi
-- [ ] Auto-update
+- [ ] Installers and in-app updates (for example Velopack, as in the Asset Browser): Windows first, then macOS and Linux
 - [ ] Opt-in crash reporting
 - [ ] User guide and project website
-- [ ] App icon and branding
+- [ ] App icon and branding (the current icon is a placeholder)
 
 ## Later (ideas, not commitments)
 

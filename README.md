@@ -1,20 +1,48 @@
 # Git Raccoon
 
-A graphical Git client, built with [Tauri 2](https://tauri.app) (Rust + [git2](https://docs.rs/git2)) and React + TypeScript.
-
-## Development
-
-Prerequisites: Node.js 22+, Rust (stable), and the [Tauri Linux system packages](https://tauri.app/start/prerequisites/#linux)
-(`libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev build-essential pkg-config`).
-
-```bash
-npm install
-npm run tauri dev      # run the app with hot reload
-npm run build          # type-check and build the frontend
-npm test               # frontend unit tests (Vitest)
-cd src-tauri && cargo test
-```
-
-On a headless machine, run the app under a virtual display: `xvfb-run -a npm run tauri dev`.
+A fast, friendly desktop Git client, written in Rust with [egui](https://github.com/emilk/egui) (eframe on wgpu) and [git2](https://docs.rs/git2).
 
 See [ROADMAP.md](ROADMAP.md) for what is planned.
+
+## Layout
+
+- `crates/git-raccoon-core`: reading repositories: history and graph layout, commit details and diffs, branches and tags, search, and watching for changes. No UI code.
+- `crates/git-raccoon`: the desktop app.
+
+## Running it
+
+You need [Rust](https://rustup.rs) (stable). Then, from the repository root:
+
+```bash
+cargo run --release
+```
+
+To open a repository straight away, pass its path:
+
+```bash
+cargo run --release -- path/to/repo
+```
+
+`cargo run` without `--release` also works and starts faster to build; dependencies are optimised in dev builds too.
+
+### Per-platform setup
+
+- **Windows:** Rust's installer sets up the Visual Studio C++ Build Tools it needs. Nothing else is required.
+- **macOS:** `xcode-select --install`.
+- **Linux (Debian/Ubuntu):** `sudo apt install build-essential pkg-config libssl-dev libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libvulkan1 mesa-vulkan-drivers`
+
+## Tests
+
+```bash
+cargo test --workspace
+```
+
+The UI tests in `crates/git-raccoon/tests/ui.rs` render the real app headlessly. They need a GPU, or a software renderer such as Mesa's (`mesa-vulkan-drivers` on Linux). Set `GIT_RACCOON_SCREENSHOTS=<dir>` to save a screenshot of each step.
+
+To check performance on a large repository:
+
+```bash
+GIT_RACCOON_BIG_REPO=path/to/big/repo cargo test --release -p git-raccoon --test ui big_repo -- --ignored --nocapture
+```
+
+Lints are strict (`cargo clippy --workspace --all-targets`): exceptions use `#[expect(..., reason = "...")]`.
