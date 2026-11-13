@@ -23,7 +23,7 @@ A pleasant way to browse any repository.
 - [x] Diff viewer: unified and side-by-side, with rename and binary handling
 - [ ] Diff viewer: syntax highlighting and word-level changes
 - [ ] Diff viewer: image previews
-- [ ] Sidebar: local branches, remotes, tags and stashes; click to jump to the commit in the graph
+- [x] Sidebar: local branches, remotes, tags and stashes; click to jump to the commit in the graph
 - [ ] Open repos with a native folder picker; recent-repos list on the welcome screen
 - [ ] Refresh automatically when the repo changes on disk
 - [ ] Draw only the visible rows, and load more history while scrolling

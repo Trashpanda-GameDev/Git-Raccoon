@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { loadCommitDetails, loadFileDiff, loadGraph } from "./api";
+import { loadCommitDetails, loadFileDiff, loadGraph, loadRefs } from "./api";
 import { GraphSvg, RefPills, ROW_HEIGHT, graphWidth, laneColor } from "./components/CommitGraph";
 import { CommitDetailsPane } from "./components/CommitDetailsPane";
 import { DiffView, type DiffMode } from "./components/DiffView";
+import { Sidebar } from "./components/Sidebar";
 import { formatAge, shortSha } from "./format";
-import type { CommitDetails, FileDiff, Graph } from "./types";
+import type { CommitDetails, FileDiff, Graph, Refs } from "./types";
 import "./App.css";
 
 const LAST_REPO_KEY = "git-raccoon:last-repo";
 const DIFF_MODE_KEY = "git-raccoon:diff-mode";
+const SIDEBAR_KEY = "git-raccoon:sidebar";
 
 function readSetting(key: string) {
   try {
@@ -56,6 +58,8 @@ function useLoader<T>(key: string | null, load: (key: string) => Promise<T>) {
 function App() {
   const [path, setPath] = useState(() => readSetting(LAST_REPO_KEY));
   const [graph, setGraph] = useState<Graph | null>(null);
+  const [refs, setRefs] = useState<Refs | null>(null);
+  const [showSidebar, setShowSidebar] = useState(() => readSetting(SIDEBAR_KEY) !== "hidden");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
@@ -69,13 +73,15 @@ function App() {
     setError("");
     setLoading(true);
     try {
-      const g = await loadGraph(trimmed);
+      const [g, r] = await Promise.all([loadGraph(trimmed), loadRefs(trimmed)]);
       setGraph(g);
+      setRefs(r);
       setSelected(null);
       setActiveFile(null);
       writeSetting(LAST_REPO_KEY, trimmed);
     } catch (e) {
       setGraph(null);
+      setRefs(null);
       setError(String(e));
     } finally {
       setLoading(false);
@@ -142,6 +148,19 @@ function App() {
   return (
     <div className="app">
       <header className="toolbar">
+        <button
+          type="button"
+          className={`icon-button sidebar-toggle${showSidebar ? " on" : ""}`}
+          onClick={() => {
+            setShowSidebar((v) => !v);
+            writeSetting(SIDEBAR_KEY, showSidebar ? "hidden" : "shown");
+          }}
+          title={showSidebar ? "Hide sidebar" : "Show sidebar"}
+          aria-label="Toggle sidebar"
+          aria-pressed={showSidebar}
+        >
+          ☰
+        </button>
         <div className="brand">🦝 Git Raccoon</div>
         {graph && (
           <div className="repo-info">
@@ -173,15 +192,16 @@ function App() {
 
       {graph && (
         <div className="main">
+          {showSidebar && <Sidebar refs={refs} selected={selected} onJump={select} />}
           <div className="center">
             <section className="history" style={{ ["--graph-width" as string]: `${gw}px` }}>
               <div className="history-header row-grid">
                 <span>Branch / Tag</span>
                 <span>Graph</span>
                 <span>Commit message</span>
-                <span>Author</span>
+                <span className="col-author">Author</span>
                 <span>Date</span>
-                <span>SHA</span>
+                <span className="col-sha">SHA</span>
               </div>
               {graph.commits.length === 0 ? (
                 <div className="empty">This repository has no commits yet.</div>
@@ -204,11 +224,11 @@ function App() {
                         <span className="summary" title={c.summary}>
                           {c.summary}
                         </span>
-                        <span className="author">{c.author}</span>
+                        <span className="author col-author">{c.author}</span>
                         <span className="date" title={new Date(c.time * 1000).toLocaleString()}>
                           {formatAge(c.time)}
                         </span>
-                        <code className="sha">{shortSha(c.id)}</code>
+                        <code className="sha col-sha">{shortSha(c.id)}</code>
                       </div>
                     ))}
                   </div>

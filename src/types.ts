@@ -85,3 +85,50 @@ export type FileDiff = {
   hunks: Hunk[];
   truncated: boolean;
 };
+
+// Mirrors src-tauri/src/refs.rs.
+
+export type Upstream = {
+  name: string;
+  ahead: number;
+  behind: number;
+  gone: boolean;
+};
+
+export type LocalBranch = {
+  name: string;
+  target: string;
+  isHead: boolean;
+  upstream: Upstream | null;
+};
+
+export type RemoteBranch = {
+  name: string;
+  fullName: string;
+  target: string;
+};
+
+export type Remote = {
+  name: string;
+  url: string | null;
+  branches: RemoteBranch[];
+};
+
+export type Tag = {
+  name: string;
+  target: string;
+  annotated: boolean;
+};
+
+export type Stash = {
+  index: number;
+  message: string;
+  target: string;
+};
+
+export type Refs = {
+  local: LocalBranch[];
+  remotes: Remote[];
+  tags: Tag[];
+  stashes: Stash[];
+};

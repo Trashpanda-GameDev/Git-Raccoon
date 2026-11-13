@@ -1,7 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { CommitDetails, FileDiff, Graph } from "./types";
+import type { CommitDetails, FileDiff, Graph, Refs } from "./types";
 
 export const loadGraph = (path: string) => invoke<Graph>("load_graph", { path });
+
+export const loadRefs = (path: string) => invoke<Refs>("load_refs", { path });
 
 export const loadCommitDetails = (path: string, id: string) =>
   invoke<CommitDetails>("commit_details", { path, id });
