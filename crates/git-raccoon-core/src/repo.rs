@@ -203,7 +203,7 @@ impl History {
                 time: commit.time().seconds(),
                 refs: self.labels.get(&commit.id()).cloned().unwrap_or_default(),
                 column: layout.column,
-                edges: layout.edges.clone(),
+                edges: layout.edges.to_vec(),
             });
         }
         Ok(GraphPage {

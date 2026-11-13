@@ -4,7 +4,10 @@
 //!
 //! Set `GIT_RACCOON_SCREENSHOTS=<dir>` to save a PNG of each step.
 
-#![expect(clippy::unwrap_used, reason = "test setup: a failure should simply fail the test")]
+#![expect(
+    clippy::unwrap_used,
+    reason = "test setup: a failure should simply fail the test"
+)]
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};

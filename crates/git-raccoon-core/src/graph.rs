@@ -6,18 +6,31 @@
 //! the first lane expecting it, and any other lanes expecting it merge in.
 
 /// A line drawn from `from` (a column at this row) to `to` (a column at the
-/// next row). `lane` picks the colour.
+/// next row). `lane` picks the colour. Columns are `u16` because the layout
+/// stores one edge per open lane per row, which adds up on big histories.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Edge {
-    pub from: usize,
-    pub to: usize,
-    pub lane: usize,
+    pub from: u16,
+    pub to: u16,
+    pub lane: u16,
+}
+
+impl Edge {
+    fn new(from: usize, to: usize, lane: usize) -> Self {
+        // More than 65,535 simultaneous lanes would draw wrongly, not crash.
+        let narrow = |x: usize| u16::try_from(x).unwrap_or(u16::MAX);
+        Edge {
+            from: narrow(from),
+            to: narrow(to),
+            lane: narrow(lane),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RowLayout {
     pub column: usize,
-    pub edges: Vec<Edge>,
+    pub edges: Box<[Edge]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,14 +68,13 @@ pub fn layout<T: PartialEq>(commits: &[(T, Vec<T>)]) -> Layout {
         if let Some(prev) = rows.last_mut() {
             prev.edges = pending
                 .drain(..)
-                .map(|(from, lane)| Edge {
-                    from,
-                    to: if lanes[lane] == Some(id) {
+                .map(|(from, lane)| {
+                    let to = if lanes[lane] == Some(id) {
                         column
                     } else {
                         lane
-                    },
-                    lane,
+                    };
+                    Edge::new(from, to, lane)
                 })
                 .collect();
         }
@@ -104,7 +116,7 @@ pub fn layout<T: PartialEq>(commits: &[(T, Vec<T>)]) -> Layout {
         }
         rows.push(RowLayout {
             column,
-            edges: Vec::new(),
+            edges: Box::default(),
         });
     }
 
@@ -113,11 +125,7 @@ pub fn layout<T: PartialEq>(commits: &[(T, Vec<T>)]) -> Layout {
     if let Some(last) = rows.last_mut() {
         last.edges = pending
             .drain(..)
-            .map(|(from, lane)| Edge {
-                from,
-                to: lane,
-                lane,
-            })
+            .map(|(from, lane)| Edge::new(from, lane, lane))
             .collect();
     }
 
@@ -132,7 +140,7 @@ mod tests {
         (id, parents.to_vec())
     }
 
-    fn e(from: usize, to: usize, lane: usize) -> Edge {
+    fn e(from: u16, to: u16, lane: u16) -> Edge {
         Edge { from, to, lane }
     }
 
@@ -144,8 +152,8 @@ mod tests {
             l.rows.iter().map(|r| r.column).collect::<Vec<_>>(),
             [0, 0, 0]
         );
-        assert_eq!(l.rows[0].edges, [e(0, 0, 0)]);
-        assert_eq!(l.rows[1].edges, [e(0, 0, 0)]);
+        assert_eq!(*l.rows[0].edges, [e(0, 0, 0)]);
+        assert_eq!(*l.rows[1].edges, [e(0, 0, 0)]);
         assert!(l.rows[2].edges.is_empty());
     }
 
@@ -164,11 +172,11 @@ mod tests {
             [0, 1, 0, 0]
         );
         // m -> b continues in lane 0, m -> f bends out to lane 1.
-        assert_eq!(l.rows[0].edges, [e(0, 0, 0), e(0, 1, 1)]);
+        assert_eq!(*l.rows[0].edges, [e(0, 0, 0), e(0, 1, 1)]);
         // At f: lane 0 passes through, f continues down lane 1.
-        assert_eq!(l.rows[1].edges, [e(0, 0, 0), e(1, 1, 1)]);
+        assert_eq!(*l.rows[1].edges, [e(0, 0, 0), e(1, 1, 1)]);
         // At b: lane 1 (waiting for a) passes, b continues to a; both meet at a.
-        assert_eq!(l.rows[2].edges, [e(1, 0, 1), e(0, 0, 0)]);
+        assert_eq!(*l.rows[2].edges, [e(1, 0, 1), e(0, 0, 0)]);
     }
 
     #[test]
@@ -178,8 +186,8 @@ mod tests {
             l.rows.iter().map(|r| r.column).collect::<Vec<_>>(),
             [0, 1, 0]
         );
-        assert_eq!(l.rows[0].edges, [e(0, 0, 0)]);
-        assert_eq!(l.rows[1].edges, [e(0, 0, 0), e(1, 0, 1)]);
+        assert_eq!(*l.rows[0].edges, [e(0, 0, 0)]);
+        assert_eq!(*l.rows[1].edges, [e(0, 0, 0), e(1, 0, 1)]);
     }
 
     #[test]
@@ -201,6 +209,6 @@ mod tests {
     #[test]
     fn edges_past_the_limit_go_straight_down() {
         let l = layout(&[c("b", &["a"])]);
-        assert_eq!(l.rows[0].edges, [e(0, 0, 0)]);
+        assert_eq!(*l.rows[0].edges, [e(0, 0, 0)]);
     }
 }

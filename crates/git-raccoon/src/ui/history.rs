@@ -219,10 +219,10 @@ pub fn show(
             };
             for e in &c.edges {
                 let (a, b) = (
-                    Pos2::new(lane_x(graph_left, e.from), centre(row)),
-                    Pos2::new(lane_x(graph_left, e.to), centre(row + 1)),
+                    Pos2::new(lane_x(graph_left, usize::from(e.from)), centre(row)),
+                    Pos2::new(lane_x(graph_left, usize::from(e.to)), centre(row + 1)),
                 );
-                let stroke = Stroke::new(2.0, theme::lane_color(e.lane));
+                let stroke = Stroke::new(2.0, theme::lane_color(usize::from(e.lane)));
                 if (a.x - b.x).abs() < 0.5 {
                     graph.line_segment([a, b], stroke);
                 } else {
