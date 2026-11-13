@@ -18,3 +18,6 @@ export const loadFileDiff = (path: string, id: string, file: string) =>
 
 export const searchCommits = (snapshot: number, query: string, field: SearchField, start: number) =>
   invoke<SearchResult>("search_commits", { snapshot, query, field, start });
+
+/** Starts watching a repo for changes (emits "repo-changed"); null stops. */
+export const watchRepo = (path: string | null) => invoke<void>("watch_repo", { path });

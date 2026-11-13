@@ -5,11 +5,13 @@ pub mod repo;
 pub mod search;
 #[cfg(test)]
 mod testutil;
+pub mod watch;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use repo::{GraphPage, History};
+use tauri::Emitter;
 
 /// The history of the open repository, shared by the paging commands.
 #[derive(Default)]
@@ -18,6 +20,8 @@ struct AppState {
     next_snapshot: AtomicU64,
     /// Bumped by each search; a running search stops when it changes.
     search_generation: Arc<AtomicU64>,
+    /// Watches the open repository; replaced when another one is opened.
+    watcher: Mutex<Option<watch::RepoWatcher>>,
 }
 
 impl AppState {
@@ -119,6 +123,24 @@ async fn search_commits(
     .await
 }
 
+/// Emits `repo-changed` whenever the repository at `path` changes on disk.
+/// Replaces any previous watch; `None` stops watching.
+#[tauri::command]
+fn watch_repo(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: Option<String>,
+) -> Result<(), String> {
+    let watcher = match path {
+        Some(path) => Some(watch::RepoWatcher::new(&path, move || {
+            let _ = app.emit("repo-changed", ());
+        })?),
+        None => None,
+    };
+    *state.watcher.lock().unwrap() = watcher;
+    Ok(())
+}
+
 #[tauri::command]
 async fn load_refs(path: String) -> Result<refs::Refs, String> {
     blocking(move || refs::load_refs(&path)).await
@@ -145,6 +167,7 @@ pub fn run() {
             graph_page,
             locate_commit,
             search_commits,
+            watch_repo,
             load_refs,
             commit_details,
             file_diff

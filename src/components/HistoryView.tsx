@@ -33,11 +33,11 @@ export function HistoryView({ history, selected, scrollTarget, onSelect, onNeedR
     return () => observer.disconnect();
   }, []);
 
-  // A new history (another repo, or a reload) starts at the top.
+  // Another repo starts at the top; a refresh of the same one stays put.
   useEffect(() => {
     if (bodyRef.current) bodyRef.current.scrollTop = 0;
     setScrollTop(0);
-  }, [history.snapshot]);
+  }, [history.path]);
 
   useEffect(() => {
     const body = bodyRef.current;

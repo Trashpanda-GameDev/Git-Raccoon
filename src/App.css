@@ -1097,3 +1097,24 @@ code {
   color: var(--text);
   font-weight: 500;
 }
+
+.refresh {
+  font-size: 16px;
+}
+
+.refresh.spinning {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .refresh.spinning {
+    animation: none;
+    opacity: 0.5;
+  }
+}

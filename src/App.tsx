@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { loadCommitDetails, loadFileDiff, loadRefs } from "./api";
+import { loadCommitDetails, loadFileDiff, loadRefs, watchRepo } from "./api";
 import { CommitDetailsPane } from "./components/CommitDetailsPane";
 import { DiffView, type DiffMode } from "./components/DiffView";
 import { HistoryView } from "./components/HistoryView";
@@ -43,6 +44,7 @@ function App() {
         setActiveFile(null);
         writeSetting(LAST_REPO_KEY, h.path);
         setRecent(rememberRepo(h.path));
+        watchRepo(h.path).catch((e) => console.warn("Not watching for changes:", e));
       } catch (e) {
         // Keep whatever repo was open; just report the failure.
         setError(`Could not open ${trimmed}: ${e}`);
@@ -64,12 +66,39 @@ function App() {
 
   const closeRepo = useCallback(() => {
     close();
+    watchRepo(null).catch(() => {});
     setRefs(null);
     setSelected(null);
     setActiveFile(null);
     setError("");
     writeSetting(LAST_REPO_KEY, "");
   }, [close]);
+
+  /**
+   * Reloads the open repo after it changed on disk, keeping the selection,
+   * open diff and scroll position.
+   */
+  const [refreshing, setRefreshing] = useState(false);
+  const refresh = useCallback(async () => {
+    const path = history?.path;
+    if (!path) return;
+    setRefreshing(true);
+    try {
+      const [h, r] = await Promise.all([open(path), loadRefs(path)]);
+      if (h) setRefs(r);
+    } catch (e) {
+      setError(`Could not refresh: ${e}`);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [history?.path, open]);
+
+  useEffect(() => {
+    const unlisten = listen("repo-changed", () => refresh());
+    return () => {
+      unlisten.then((stop) => stop()).catch(() => {});
+    };
+  }, [refresh]);
 
   const forget = useCallback((p: string) => setRecent(forgetRepo(p)), []);
 
@@ -218,6 +247,18 @@ function App() {
             onForget={forget}
             onClose={closeRepo}
           />
+        )}
+        {history && (
+          <button
+            type="button"
+            className={`icon-button refresh${refreshing ? " spinning" : ""}`}
+            onClick={refresh}
+            disabled={refreshing}
+            title="Refresh (the app also refreshes when the repo changes)"
+            aria-label="Refresh"
+          >
+            ⟳
+          </button>
         )}
         {loading && <span className="muted toolbar-status">Opening…</span>}
       </header>
