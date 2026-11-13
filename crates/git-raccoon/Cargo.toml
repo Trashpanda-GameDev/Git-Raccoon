@@ -1,0 +1,29 @@
+[package]
+name = "git-raccoon"
+description = "A fast, friendly desktop Git client"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+git-raccoon-core = { path = "../git-raccoon-core" }
+eframe = { version = "0.36", default-features = false, features = ["accesskit", "default_fonts", "persistence", "wayland", "wgpu", "x11"] }
+egui-phosphor = "0.14"
+serde = { version = "1.0.229", features = ["derive"] }
+rfd = "0.18"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "tga", "tiff", "webp", "ico", "qoi"] }
+syntect = { version = "5", default-features = false, features = ["default-fancy"] }
+two-face = { version = "0.5", default-features = false, features = ["syntect-default-fancy"] }
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+
+[dev-dependencies]
+egui_kittest = { version = "0.36", features = ["eframe", "snapshot", "wgpu"] }
+egui = "0.36"
+git2 = "0.20"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[lints]
+workspace = true
+
+[build-dependencies]
+winresource = "0.1.34"

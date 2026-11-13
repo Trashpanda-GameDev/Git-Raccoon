@@ -1,0 +1,384 @@
+//! A file's diff, shown over the history when a file is opened.
+
+use std::sync::Arc;
+
+use eframe::egui::{self, Color32, Pos2, Rect, RichText, Sense, Stroke};
+use egui_phosphor::regular as icon;
+use git_raccoon_core::details::{DiffLine, LineKind};
+
+use crate::format;
+use crate::highlight::{RenderedDiff, Row, SplitRow};
+use crate::images::{ImagePair, Preview, Side};
+use crate::theme;
+use crate::ui::widgets;
+
+const LINE: f32 = 20.0;
+const NUMBER: f32 = 52.0;
+const MARKER: f32 = 18.0;
+const IMAGE_BOX: f32 = 220.0;
+
+pub enum Action {
+    Close,
+    SetSplit(bool),
+}
+
+pub fn show(
+    ui: &mut egui::Ui,
+    file: &str,
+    diff: Option<&Result<Arc<RenderedDiff>, String>>,
+    loading: bool,
+    images: Option<&Result<Arc<ImagePair>, String>>,
+    split: bool,
+) -> Option<Action> {
+    let mut action = None;
+    let ready = diff.and_then(|d| d.as_ref().ok());
+
+    // Title bar.
+    egui::Frame::new()
+        .fill(theme::BG_RAISED)
+        .inner_margin(egui::Margin::symmetric(12, 0))
+        .show(ui, |ui| {
+            ui.set_height(36.0);
+            ui.horizontal_centered(|ui| {
+                if let Some(d) = ready {
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), Sense::hover());
+                    widgets::status_badge(ui.painter(), rect, d.diff.status);
+                }
+                let title = match ready.and_then(|d| d.diff.old_path.as_deref()) {
+                    Some(old) => format!("{old}  {}  {file}", icon::ARROW_RIGHT),
+                    None => file.to_string(),
+                };
+                ui.label(RichText::new(title).strong());
+                if loading {
+                    ui.spinner();
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if widgets::icon_button(ui, icon::X, "Back to the graph (Esc)").clicked() {
+                        action = Some(Action::Close);
+                    }
+                    ui.add_space(4.0);
+                    let chosen =
+                        widgets::segmented(ui, split, &[(true, "Split"), (false, "Unified")]);
+                    if chosen != split {
+                        action = Some(Action::SetSplit(chosen));
+                    }
+                });
+            });
+        });
+    ui.painter().hline(
+        ui.max_rect().x_range(),
+        ui.cursor().top(),
+        Stroke::new(1.0, theme::BORDER),
+    );
+
+    if let Some(Ok(pair)) = images {
+        image_preview(ui, pair);
+    } else if let Some(Err(e)) = images {
+        ui.colored_label(theme::DANGER, format!("Could not load images: {e}"));
+    }
+
+    match diff {
+        None => {
+            ui.add_space(24.0);
+            ui.vertical_centered(|ui| ui.label(RichText::new("Loading diff…").color(theme::MUTED)));
+        }
+        Some(Err(e)) => {
+            ui.add_space(12.0);
+            ui.colored_label(theme::DANGER, e);
+        }
+        Some(Ok(d)) => body(ui, d, split, images.is_some()),
+    }
+    action
+}
+
+fn notice(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(24.0);
+    ui.vertical_centered(|ui| ui.label(RichText::new(text).color(theme::MUTED)));
+}
+
+fn body(ui: &mut egui::Ui, d: &RenderedDiff, split: bool, has_images: bool) {
+    if d.diff.binary {
+        if !has_images {
+            notice(ui, "Binary file not shown.");
+        }
+        return;
+    }
+    if d.diff.hunks.is_empty() {
+        notice(ui, "No content changes (mode or rename only).");
+        return;
+    }
+
+    let char_width = ui
+        .painter()
+        .layout_no_wrap("M".repeat(20), theme::mono(theme::MONO_SIZE), theme::TEXT)
+        .size()
+        .x
+        / 20.0;
+    #[expect(clippy::cast_precision_loss, reason = "line lengths are small")]
+    let code_width = d.widest as f32 * char_width + 24.0;
+    let rows = if split {
+        d.split.len()
+    } else {
+        d.unified.len()
+    };
+    let available = ui.available_width();
+    // Side by side, each half gets half the window and long lines are cut
+    // off (unified view scrolls sideways instead).
+    let width = if split {
+        available
+    } else {
+        (2.0 * NUMBER + MARKER + code_width).max(available)
+    };
+    let area = if split {
+        egui::ScrollArea::vertical()
+    } else {
+        egui::ScrollArea::both()
+    };
+
+    area.id_salt(("diff", split))
+        .auto_shrink([false, false])
+        .show_rows(ui, LINE, rows, |ui, range| {
+            let start_y = ui.cursor().top();
+            let left = ui.max_rect().left();
+            #[expect(clippy::cast_precision_loss, reason = "visible row count is small")]
+            ui.allocate_exact_size(egui::vec2(width, LINE * range.len() as f32), Sense::hover());
+            let painter = ui.painter();
+            for (n, row) in range.enumerate() {
+                #[expect(clippy::cast_precision_loss, reason = "visible row count is small")]
+                let top = start_y + n as f32 * LINE;
+                let rect = Rect::from_min_size(Pos2::new(left, top), egui::vec2(width, LINE));
+                if split {
+                    match d.split[row] {
+                        SplitRow::Header(h) => header(painter, rect, &d.diff.hunks[h].header),
+                        SplitRow::Pair(a, b) => {
+                            let half = width / 2.0;
+                            let l = Rect::from_min_size(rect.min, egui::vec2(half, LINE));
+                            let r = Rect::from_min_size(
+                                Pos2::new(rect.left() + half, top),
+                                egui::vec2(half, LINE),
+                            );
+                            side(painter, l, d, a, false);
+                            side(painter, r, d, b, true);
+                            painter.vline(l.right(), l.y_range(), Stroke::new(1.0, theme::BORDER));
+                        }
+                    }
+                } else {
+                    match d.unified[row] {
+                        Row::Header(h) => header(painter, rect, &d.diff.hunks[h].header),
+                        Row::Line(h, l) => {
+                            unified_line(painter, rect, &d.diff.hunks[h].lines[l], &d.jobs[h][l])
+                        }
+                    }
+                }
+            }
+        });
+    if d.diff.truncated {
+        notice(
+            ui,
+            "This diff is too large; only the first 20,000 lines are shown.",
+        );
+    }
+}
+
+fn backgrounds(kind: LineKind) -> (Color32, Color32) {
+    match kind {
+        LineKind::Add => (theme::ADD_BG_STRONG, theme::ADD_BG),
+        LineKind::Delete => (theme::DEL_BG_STRONG, theme::DEL_BG),
+        LineKind::Context | LineKind::NoEol => (Color32::TRANSPARENT, Color32::TRANSPARENT),
+    }
+}
+
+fn marker(kind: LineKind) -> &'static str {
+    match kind {
+        LineKind::Add => "+",
+        LineKind::Delete => "−",
+        LineKind::NoEol => "\\",
+        LineKind::Context => " ",
+    }
+}
+
+fn header(painter: &egui::Painter, rect: Rect, text: &str) {
+    painter.rect_filled(rect, 0, theme::HUNK_BG);
+    painter.hline(rect.x_range(), rect.top(), Stroke::new(1.0, theme::BORDER));
+    let r = rect.shrink2(egui::vec2(12.0, 0.0));
+    widgets::text_in(painter, r, text, theme::mono(12.0), theme::HUNK);
+}
+
+fn number(painter: &egui::Painter, rect: Rect, n: Option<u32>) {
+    if let Some(n) = n {
+        painter.text(
+            Pos2::new(rect.right() - 8.0, rect.center().y),
+            egui::Align2::RIGHT_CENTER,
+            n.to_string(),
+            theme::mono(12.0),
+            theme::MUTED,
+        );
+    }
+}
+
+fn code(painter: &egui::Painter, rect: Rect, line: &DiffLine, job: &egui::text::LayoutJob) {
+    painter.text(
+        Pos2::new(rect.left() + MARKER / 2.0, rect.center().y),
+        egui::Align2::CENTER_CENTER,
+        marker(line.kind),
+        theme::mono(12.0),
+        theme::MUTED,
+    );
+    let galley = painter.layout_job(job.clone());
+    let clipped = painter.with_clip_rect(rect.intersect(painter.clip_rect()));
+    clipped.galley(
+        Pos2::new(
+            rect.left() + MARKER,
+            rect.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        theme::TEXT,
+    );
+}
+
+fn unified_line(painter: &egui::Painter, rect: Rect, line: &DiffLine, job: &egui::text::LayoutJob) {
+    let (gutter_bg, code_bg) = backgrounds(line.kind);
+    let gutter = Rect::from_min_size(rect.min, egui::vec2(2.0 * NUMBER, LINE));
+    let body = Rect::from_min_max(Pos2::new(gutter.right(), rect.top()), rect.max);
+    painter.rect_filled(gutter, 0, gutter_bg);
+    painter.rect_filled(body, 0, code_bg);
+    number(
+        painter,
+        Rect::from_min_size(rect.min, egui::vec2(NUMBER, LINE)),
+        line.old_line,
+    );
+    number(
+        painter,
+        Rect::from_min_size(
+            Pos2::new(rect.left() + NUMBER, rect.top()),
+            egui::vec2(NUMBER, LINE),
+        ),
+        line.new_line,
+    );
+    code(painter, body, line, job);
+}
+
+fn side(
+    painter: &egui::Painter,
+    rect: Rect,
+    d: &RenderedDiff,
+    at: Option<(usize, usize)>,
+    new: bool,
+) {
+    let Some((h, l)) = at else {
+        // Nothing on this side: a faint filler.
+        painter.rect_filled(rect, 0, Color32::from_white_alpha(4));
+        return;
+    };
+    let line = &d.diff.hunks[h].lines[l];
+    let (gutter_bg, code_bg) = backgrounds(line.kind);
+    let gutter = Rect::from_min_size(rect.min, egui::vec2(NUMBER, LINE));
+    let body = Rect::from_min_max(Pos2::new(gutter.right(), rect.top()), rect.max);
+    painter.rect_filled(gutter, 0, gutter_bg);
+    painter.rect_filled(body, 0, code_bg);
+    number(
+        painter,
+        gutter,
+        if new { line.new_line } else { line.old_line },
+    );
+    code(painter, body, line, &d.jobs[h][l]);
+}
+
+fn image_preview(ui: &mut egui::Ui, pair: &ImagePair) {
+    egui::Frame::new()
+        .inner_margin(egui::Margin::same(16))
+        .show(ui, |ui| {
+            let gap = 16.0;
+            let w = ((ui.available_width() - gap) / 2.0).max(120.0);
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = gap;
+                image_side(ui, "Before", pair.old.as_ref(), "Added in this commit", w);
+                image_side(ui, "After", pair.new.as_ref(), "Deleted in this commit", w);
+            });
+        });
+    ui.painter().hline(
+        ui.max_rect().x_range(),
+        ui.cursor().top(),
+        Stroke::new(1.0, theme::BORDER),
+    );
+}
+
+fn image_side(ui: &mut egui::Ui, label: &str, side: Option<&Side>, missing: &str, width: f32) {
+    ui.vertical(|ui| {
+        ui.set_width(width);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(label).strong().size(12.0));
+            if let Some(s) = side {
+                let dims = match &s.preview {
+                    Preview::Image { width, height, .. } => format!("{width} × {height} · "),
+                    _ => String::new(),
+                };
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(format!("{dims}{}", format::bytes(s.size)))
+                            .size(12.0)
+                            .color(theme::MUTED),
+                    );
+                });
+            }
+        });
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(width, IMAGE_BOX), Sense::hover());
+        let painter = ui.painter();
+        checkerboard(painter, rect);
+        painter.rect_stroke(
+            rect,
+            6,
+            Stroke::new(1.0, theme::BORDER),
+            egui::StrokeKind::Inside,
+        );
+        let say = |text: &str| {
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                text,
+                theme::body(12.0),
+                theme::MUTED,
+            );
+        };
+        match side.map(|s| &s.preview) {
+            None => say(missing),
+            Some(Preview::TooLarge) => say("Too large to preview"),
+            Some(Preview::Failed(_)) => say("Can't display this image"),
+            Some(Preview::Image { texture, .. }) => {
+                let size = texture.size_vec2();
+                let fit = rect.shrink(12.0);
+                // Never upscale small images; shrink large ones to fit.
+                let scale = (fit.width() / size.x).min(fit.height() / size.y).min(1.0);
+                let shown = Rect::from_center_size(rect.center(), size * scale);
+                painter.image(
+                    texture.id(),
+                    shown,
+                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                    Color32::WHITE,
+                );
+            }
+        }
+    });
+}
+
+/// Shows transparency.
+fn checkerboard(painter: &egui::Painter, rect: Rect) {
+    painter.rect_filled(rect, 6, theme::BG_RAISED);
+    let cell = 8.0;
+    let clipped = painter.with_clip_rect(rect.shrink(1.0).intersect(painter.clip_rect()));
+    let mut y = rect.top();
+    let mut row = 0;
+    while y < rect.bottom() {
+        let mut x = rect.left() + if row % 2 == 0 { 0.0 } else { cell };
+        while x < rect.right() {
+            clipped.rect_filled(
+                Rect::from_min_size(Pos2::new(x, y), egui::vec2(cell, cell)),
+                0,
+                theme::BG_HOVER,
+            );
+            x += 2.0 * cell;
+        }
+        y += cell;
+        row += 1;
+    }
+}
