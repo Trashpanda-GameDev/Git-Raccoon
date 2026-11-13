@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { CommitDetails, FileDiff, GraphPage, Refs } from "./types";
+import type { CommitDetails, FileDiff, GraphPage, Refs, SearchField, SearchResult } from "./types";
 
 export const loadGraph = (path: string, limit: number) => invoke<GraphPage>("load_graph", { path, limit });
 
@@ -15,3 +15,6 @@ export const loadCommitDetails = (path: string, id: string) =>
 
 export const loadFileDiff = (path: string, id: string, file: string) =>
   invoke<FileDiff>("file_diff", { path, id, file });
+
+export const searchCommits = (snapshot: number, query: string, field: SearchField, start: number) =>
+  invoke<SearchResult>("search_commits", { snapshot, query, field, start });

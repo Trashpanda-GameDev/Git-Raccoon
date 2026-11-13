@@ -1034,3 +1034,66 @@ code {
 .badge.gone {
   color: var(--text-muted);
 }
+
+/* Search */
+
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.search-icon {
+  color: var(--text-muted);
+  font-size: 16px;
+}
+
+.search-bar input {
+  flex: 1;
+  min-width: 80px;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+}
+
+.search-bar input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--bg);
+}
+
+.search-bar .segmented {
+  margin-left: 0;
+}
+
+.search-status {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+
+.icon-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.icon-button:disabled:hover {
+  background: none;
+}
+
+.history.searching .commit-row:not(.match):not(.pending) {
+  opacity: 0.35;
+}
+
+.commit-row.match .summary {
+  color: var(--text);
+  font-weight: 500;
+}

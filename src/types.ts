@@ -135,3 +135,13 @@ export type Refs = {
   tags: Tag[];
   stashes: Stash[];
 };
+
+// Mirrors src-tauri/src/search.rs.
+
+export type SearchField = "text" | "path";
+
+export type SearchResult = {
+  rows: number[];
+  next: number | null;
+  cancelled: boolean;
+};

@@ -154,6 +154,15 @@ impl History {
         })
     }
 
+    /// Commit ids in row order.
+    pub fn ids(&self) -> &[Oid] {
+        &self.ids
+    }
+
+    pub fn open_repo(&self) -> Result<Repository, git2::Error> {
+        Repository::open(&self.git_dir)
+    }
+
     pub fn total(&self) -> usize {
         self.ids.len()
     }
@@ -167,7 +176,7 @@ impl History {
 
     /// Rows `offset .. offset + limit` (clamped to the history's end).
     pub fn page(&self, offset: usize, limit: usize) -> Result<GraphPage, git2::Error> {
-        let repo = Repository::open(&self.git_dir)?;
+        let repo = self.open_repo()?;
         let start = offset.min(self.ids.len());
         let end = offset.saturating_add(limit).min(self.ids.len());
         let mut commits = Vec::with_capacity(end - start);

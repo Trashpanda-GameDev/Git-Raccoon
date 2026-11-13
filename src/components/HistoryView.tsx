@@ -14,9 +14,11 @@ type Props = {
   onSelect: (id: string, index: number) => void;
   /** Called with the row range `first .. last` that should be loaded. */
   onNeedRows: (first: number, last: number) => void;
+  /** Rows matching the active search, or null when not searching. */
+  matches: Set<number> | null;
 };
 
-export function HistoryView({ history, selected, scrollTarget, onSelect, onNeedRows }: Props) {
+export function HistoryView({ history, selected, scrollTarget, onSelect, onNeedRows, matches }: Props) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(600);
@@ -74,7 +76,7 @@ export function HistoryView({ history, selected, scrollTarget, onSelect, onNeedR
       <div
         key={c.id}
         data-id={c.id}
-        className={`commit-row row-grid${c.id === selected ? " selected" : ""}`}
+        className={`commit-row row-grid${c.id === selected ? " selected" : ""}${matches?.has(i) ? " match" : ""}`}
         style={{ top, height: ROW_HEIGHT, ["--lane-color" as string]: laneColor(c.column) }}
         onClick={() => onSelect(c.id, i)}
       >
@@ -95,7 +97,7 @@ export function HistoryView({ history, selected, scrollTarget, onSelect, onNeedR
   }
 
   return (
-    <section className="history" style={{ ["--graph-width" as string]: `${graphColumnWidth(history.width)}px` }}>
+    <section className={`history${matches ? " searching" : ""}`} style={{ ["--graph-width" as string]: `${graphColumnWidth(history.width)}px` }}>
       <div className="history-header row-grid">
         <span>Branch / Tag</span>
         <span>Graph</span>

@@ -1,16 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { loadCommitDetails, loadFileDiff, loadRefs } from "./api";
 import { CommitDetailsPane } from "./components/CommitDetailsPane";
 import { DiffView, type DiffMode } from "./components/DiffView";
 import { HistoryView } from "./components/HistoryView";
 import { RepoMenu, Welcome } from "./components/RepoPicker";
+import { SearchBar } from "./components/SearchBar";
 import { Sidebar } from "./components/Sidebar";
 import { forgetRepo, loadRecent, rememberRepo, repoName } from "./recent";
 import { DIFF_MODE_KEY, LAST_REPO_KEY, SIDEBAR_KEY, readSetting, writeSetting } from "./settings";
 import type { CommitDetails, FileDiff, Refs } from "./types";
 import { useHistory } from "./useHistory";
 import { useLoader } from "./useLoader";
+import { useSearch } from "./useSearch";
 import "./App.css";
 
 function App() {
@@ -23,6 +25,8 @@ function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [scrollTarget, setScrollTarget] = useState<{ index: number; nonce: number } | null>(null);
   const [activeFile, setActiveFile] = useState<string | null>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
+  const { search, matches, setQuery, setField } = useSearch(history?.snapshot ?? null, history?.total ?? 0);
   const [diffMode, setDiffMode] = useState<DiffMode>(() => (readSetting(DIFF_MODE_KEY) === "split" ? "split" : "unified"));
 
   const openRepo = useCallback(
@@ -113,8 +117,49 @@ function App() {
     [indexById, locate, selectRow],
   );
 
+  /** Selects the commit at a row, loading its page first if needed. */
+  const selectIndex = useCallback(
+    async (index: number) => {
+      if (!history) return;
+      await ensureRange(index, index + 1);
+      const row = history.rows[index];
+      if (row) selectRow(row.id, index);
+    },
+    [history, ensureRange, selectRow],
+  );
+
+  const selectedIndex = selected ? (indexById.get(selected) ?? null) : null;
+  const currentMatch = useMemo(() => {
+    if (selectedIndex === null || !matches.has(selectedIndex)) return null;
+    return search.rows.indexOf(selectedIndex);
+  }, [selectedIndex, matches, search.rows]);
+
+  /** Moves to the next (or previous) match after the selected row, wrapping. */
+  const stepMatch = useCallback(
+    (direction: 1 | -1) => {
+      const rows = search.rows;
+      if (rows.length === 0) return;
+      const from = selectedIndex ?? -1;
+      let target: number;
+      if (direction > 0) target = rows.find((r) => r > from) ?? rows[0];
+      else {
+        const before = rows.filter((r) => r < from);
+        target = before.length ? before[before.length - 1] : rows[rows.length - 1];
+      }
+      selectIndex(target);
+    },
+    [search.rows, selectedIndex, selectIndex],
+  );
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f" && history) {
+        e.preventDefault();
+        setActiveFile(null);
+        searchInput.current?.focus();
+        searchInput.current?.select();
+        return;
+      }
       const target = e.target as HTMLElement;
       if (target.closest("input, textarea, [contenteditable]")) return;
       if (e.key === "Escape") {
@@ -190,12 +235,21 @@ function App() {
         <div className="main">
           {showSidebar && <Sidebar refs={refs} selected={selected} onJump={jumpTo} />}
           <div className="center">
+            <SearchBar
+              ref={searchInput}
+              search={search}
+              currentMatch={currentMatch}
+              onQuery={setQuery}
+              onField={setField}
+              onStep={stepMatch}
+            />
             <HistoryView
               history={history}
               selected={selected}
               scrollTarget={scrollTarget}
               onSelect={selectRow}
               onNeedRows={ensureRange}
+              matches={search.query.trim() ? matches : null}
             />
 
             {activeFile && (

@@ -2,6 +2,7 @@ pub mod details;
 pub mod graph;
 pub mod refs;
 pub mod repo;
+pub mod search;
 #[cfg(test)]
 mod testutil;
 
@@ -15,6 +16,8 @@ use repo::{GraphPage, History};
 struct AppState {
     history: Mutex<Option<Arc<History>>>,
     next_snapshot: AtomicU64,
+    /// Bumped by each search; a running search stops when it changes.
+    search_generation: Arc<AtomicU64>,
 }
 
 impl AppState {
@@ -84,6 +87,38 @@ fn locate_commit(
     Ok(state.history(snapshot)?.locate(&id))
 }
 
+/// Searches part of the history from row `start`, returning within about
+/// 150 ms with where to continue. Starting a new search cancels older ones.
+#[tauri::command]
+async fn search_commits(
+    state: tauri::State<'_, AppState>,
+    snapshot: u64,
+    query: String,
+    field: search::SearchField,
+    start: usize,
+) -> Result<search::SearchResult, String> {
+    let history = state.history(snapshot)?;
+    let generation = state.search_generation.clone();
+    // Continuing a search (start > 0) keeps its generation; a new one bumps it.
+    let mine = if start == 0 {
+        generation.fetch_add(1, Ordering::SeqCst) + 1
+    } else {
+        generation.load(Ordering::SeqCst)
+    };
+    blocking(move || {
+        search::search(
+            &history,
+            &query,
+            field,
+            start,
+            search::SLICE,
+            &generation,
+            mine,
+        )
+    })
+    .await
+}
+
 #[tauri::command]
 async fn load_refs(path: String) -> Result<refs::Refs, String> {
     blocking(move || refs::load_refs(&path)).await
@@ -109,6 +144,7 @@ pub fn run() {
             load_graph,
             graph_page,
             locate_commit,
+            search_commits,
             load_refs,
             commit_details,
             file_diff
