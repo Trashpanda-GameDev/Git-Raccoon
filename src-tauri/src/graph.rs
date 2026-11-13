@@ -60,7 +60,11 @@ pub fn layout<S: AsRef<str>>(commits: &[(S, Vec<S>)]) -> Layout {
                 .drain(..)
                 .map(|(from, lane)| Edge {
                     from,
-                    to: if lanes[lane] == Some(id) { column } else { lane },
+                    to: if lanes[lane] == Some(id) {
+                        column
+                    } else {
+                        lane
+                    },
                     lane,
                 })
                 .collect();
@@ -102,7 +106,10 @@ pub fn layout<S: AsRef<str>>(commits: &[(S, Vec<S>)]) -> Layout {
         while lanes.last() == Some(&None) {
             lanes.pop();
         }
-        rows.push(RowLayout { column, edges: Vec::new() });
+        rows.push(RowLayout {
+            column,
+            edges: Vec::new(),
+        });
     }
 
     // Edges out of the last row lead to commits beyond the limit: draw them
@@ -110,7 +117,11 @@ pub fn layout<S: AsRef<str>>(commits: &[(S, Vec<S>)]) -> Layout {
     if let Some(last) = rows.last_mut() {
         last.edges = pending
             .drain(..)
-            .map(|(from, lane)| Edge { from, to: lane, lane })
+            .map(|(from, lane)| Edge {
+                from,
+                to: lane,
+                lane,
+            })
             .collect();
     }
 
@@ -133,7 +144,10 @@ mod tests {
     fn linear_history_stays_in_one_lane() {
         let l = layout(&[c("c", &["b"]), c("b", &["a"]), c("a", &[])]);
         assert_eq!(l.width, 1);
-        assert_eq!(l.rows.iter().map(|r| r.column).collect::<Vec<_>>(), [0, 0, 0]);
+        assert_eq!(
+            l.rows.iter().map(|r| r.column).collect::<Vec<_>>(),
+            [0, 0, 0]
+        );
         assert_eq!(l.rows[0].edges, [e(0, 0, 0)]);
         assert_eq!(l.rows[1].edges, [e(0, 0, 0)]);
         assert!(l.rows[2].edges.is_empty());
@@ -149,7 +163,10 @@ mod tests {
             c("a", &[]),
         ]);
         assert_eq!(l.width, 2);
-        assert_eq!(l.rows.iter().map(|r| r.column).collect::<Vec<_>>(), [0, 1, 0, 0]);
+        assert_eq!(
+            l.rows.iter().map(|r| r.column).collect::<Vec<_>>(),
+            [0, 1, 0, 0]
+        );
         // m -> b continues in lane 0, m -> f bends out to lane 1.
         assert_eq!(l.rows[0].edges, [e(0, 0, 0), e(0, 1, 1)]);
         // At f: lane 0 passes through, f continues down lane 1.
@@ -161,7 +178,10 @@ mod tests {
     #[test]
     fn separate_branch_tips_get_their_own_lanes() {
         let l = layout(&[c("x", &["a"]), c("y", &["a"]), c("a", &[])]);
-        assert_eq!(l.rows.iter().map(|r| r.column).collect::<Vec<_>>(), [0, 1, 0]);
+        assert_eq!(
+            l.rows.iter().map(|r| r.column).collect::<Vec<_>>(),
+            [0, 1, 0]
+        );
         assert_eq!(l.rows[0].edges, [e(0, 0, 0)]);
         assert_eq!(l.rows[1].edges, [e(0, 0, 0), e(1, 0, 1)]);
     }

@@ -54,7 +54,10 @@ pub struct Graph {
 pub fn load_graph(path: &str, limit: usize) -> Result<Graph, git2::Error> {
     let repo = Repository::discover(path)?;
     let head = repo.head().ok();
-    let head_branch = head.as_ref().filter(|h| h.is_branch()).and_then(|h| h.name().map(String::from));
+    let head_branch = head
+        .as_ref()
+        .filter(|h| h.is_branch())
+        .and_then(|h| h.name().map(String::from));
 
     let mut walk = repo.revwalk()?;
     walk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
@@ -102,7 +105,12 @@ pub fn load_graph(path: &str, limit: usize) -> Result<Graph, git2::Error> {
     for id in walk.take(limit) {
         let commit = repo.find_commit(id?)?;
         let mut refs = labels.remove(&commit.id()).unwrap_or_default();
-        refs.sort_by(|a, b| b.is_head.cmp(&a.is_head).then(a.kind.cmp(&b.kind)).then(a.name.cmp(&b.name)));
+        refs.sort_by(|a, b| {
+            b.is_head
+                .cmp(&a.is_head)
+                .then(a.kind.cmp(&b.kind))
+                .then(a.name.cmp(&b.name))
+        });
         commits.push(GraphCommit {
             id: commit.id().to_string(),
             parents: commit.parent_ids().map(|p| p.to_string()).collect(),
@@ -117,7 +125,12 @@ pub fn load_graph(path: &str, limit: usize) -> Result<Graph, git2::Error> {
 
     let pairs: Vec<(&str, Vec<&str>)> = commits
         .iter()
-        .map(|c| (c.id.as_str(), c.parents.iter().map(String::as_str).collect()))
+        .map(|c| {
+            (
+                c.id.as_str(),
+                c.parents.iter().map(String::as_str).collect(),
+            )
+        })
         .collect();
     let layout = graph::layout(&pairs);
     for (commit, row) in commits.iter_mut().zip(layout.rows) {
@@ -145,7 +158,9 @@ mod tests {
         let base = t.commit(Some("HEAD"), "base", &[]);
         let main = t.commit(Some("HEAD"), "on main", &[base]);
         let feature = t.commit(Some("refs/heads/feature"), "on feature", &[base]);
-        t.repo.tag_lightweight("v1", &t.repo.find_object(base, None).unwrap(), false).unwrap();
+        t.repo
+            .tag_lightweight("v1", &t.repo.find_object(base, None).unwrap(), false)
+            .unwrap();
 
         let g = load_graph(t.path(), 100).unwrap();
         let branch = g.branch.clone().unwrap();

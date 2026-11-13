@@ -73,22 +73,39 @@ fn local_branches(repo: &Repository) -> Result<Vec<LocalBranch>, git2::Error> {
     let mut out = Vec::new();
     for item in repo.branches(Some(BranchType::Local))? {
         let (branch, _) = item?;
-        let Some(target) = branch.get().target() else { continue };
+        let Some(target) = branch.get().target() else {
+            continue;
+        };
         let upstream = match branch.upstream() {
             Ok(up) => {
                 let name = up.name()?.unwrap_or_default().to_string();
                 match up.get().target() {
                     Some(up_target) => {
                         let (ahead, behind) = repo.graph_ahead_behind(target, up_target)?;
-                        Some(Upstream { name, ahead, behind, gone: false })
+                        Some(Upstream {
+                            name,
+                            ahead,
+                            behind,
+                            gone: false,
+                        })
                     }
-                    None => Some(Upstream { name, ahead: 0, behind: 0, gone: true }),
+                    None => Some(Upstream {
+                        name,
+                        ahead: 0,
+                        behind: 0,
+                        gone: true,
+                    }),
                 }
             }
             // Configured upstream whose remote-tracking branch no longer exists.
             Err(e) if e.code() == git2::ErrorCode::NotFound => {
                 let name = branch.name()?.unwrap_or_default();
-                configured_upstream(repo, name).map(|name| Upstream { name, ahead: 0, behind: 0, gone: true })
+                configured_upstream(repo, name).map(|name| Upstream {
+                    name,
+                    ahead: 0,
+                    behind: 0,
+                    gone: true,
+                })
             }
             Err(e) => return Err(e),
         };
@@ -108,7 +125,10 @@ fn configured_upstream(repo: &Repository, branch: &str) -> Option<String> {
     let config = repo.config().ok()?;
     let remote = config.get_string(&format!("branch.{branch}.remote")).ok()?;
     let merge = config.get_string(&format!("branch.{branch}.merge")).ok()?;
-    Some(format!("{remote}/{}", merge.trim_start_matches("refs/heads/")))
+    Some(format!(
+        "{remote}/{}",
+        merge.trim_start_matches("refs/heads/")
+    ))
 }
 
 fn remotes(repo: &Repository) -> Result<Vec<Remote>, git2::Error> {
@@ -118,7 +138,10 @@ fn remotes(repo: &Repository) -> Result<Vec<Remote>, git2::Error> {
         .flatten()
         .map(|name| Remote {
             name: name.to_string(),
-            url: repo.find_remote(name).ok().and_then(|r| r.url().map(String::from)),
+            url: repo
+                .find_remote(name)
+                .ok()
+                .and_then(|r| r.url().map(String::from)),
             branches: Vec::new(),
         })
         .collect();
@@ -131,7 +154,9 @@ fn remotes(repo: &Repository) -> Result<Vec<Remote>, git2::Error> {
         if branch.get().symbolic_target().is_some() {
             continue; // origin/HEAD
         }
-        let Some(target) = branch.get().target() else { continue };
+        let Some(target) = branch.get().target() else {
+            continue;
+        };
         let full_name = branch.name()?.unwrap_or_default().to_string();
         let owner = by_length
             .iter()
@@ -157,9 +182,21 @@ fn tags(repo: &Repository) -> Result<Vec<Tag>, git2::Error> {
     let mut out: Vec<(i64, Tag)> = Vec::new();
     for name in repo.tag_names(None)?.iter().flatten() {
         let reference = repo.find_reference(&format!("refs/tags/{name}"))?;
-        let Ok(commit) = reference.peel_to_commit() else { continue };
-        let annotated = reference.target().and_then(|id| repo.find_tag(id).ok()).is_some();
-        out.push((commit.time().seconds(), Tag { name: name.to_string(), target: commit.id().to_string(), annotated }));
+        let Ok(commit) = reference.peel_to_commit() else {
+            continue;
+        };
+        let annotated = reference
+            .target()
+            .and_then(|id| repo.find_tag(id).ok())
+            .is_some();
+        out.push((
+            commit.time().seconds(),
+            Tag {
+                name: name.to_string(),
+                target: commit.id().to_string(),
+                annotated,
+            },
+        ));
     }
     // Newest first; names break ties.
     out.sort_by(|(ta, a), (tb, b)| tb.cmp(ta).then_with(|| b.name.cmp(&a.name)));
@@ -169,7 +206,11 @@ fn tags(repo: &Repository) -> Result<Vec<Tag>, git2::Error> {
 fn stashes(repo: &mut Repository) -> Result<Vec<Stash>, git2::Error> {
     let mut out = Vec::new();
     repo.stash_foreach(|index, message, id: &Oid| {
-        out.push(Stash { index, message: message.to_string(), target: id.to_string() });
+        out.push(Stash {
+            index,
+            message: message.to_string(),
+            target: id.to_string(),
+        });
         true
     })?;
     Ok(out)
@@ -200,12 +241,27 @@ mod tests {
         let head_branch = t.repo.head().unwrap().shorthand().unwrap().to_string();
 
         // origin/<head> is at base plus one commit the local branch lacks.
-        let remote_tip = t.commit(Some(&format!("refs/remotes/origin/{head_branch}")), "remote work", &[base]);
-        t.repo.remote("origin", "https://example.com/repo.git").unwrap();
+        let remote_tip = t.commit(
+            Some(&format!("refs/remotes/origin/{head_branch}")),
+            "remote work",
+            &[base],
+        );
+        t.repo
+            .remote("origin", "https://example.com/repo.git")
+            .unwrap();
         let mut config = t.repo.config().unwrap();
-        config.set_str(&format!("branch.{head_branch}.remote"), "origin").unwrap();
-        config.set_str(&format!("branch.{head_branch}.merge"), &format!("refs/heads/{head_branch}")).unwrap();
-        t.repo.branch("feature/x", &t.repo.find_commit(base).unwrap(), false).unwrap();
+        config
+            .set_str(&format!("branch.{head_branch}.remote"), "origin")
+            .unwrap();
+        config
+            .set_str(
+                &format!("branch.{head_branch}.merge"),
+                &format!("refs/heads/{head_branch}"),
+            )
+            .unwrap();
+        t.repo
+            .branch("feature/x", &t.repo.find_commit(base).unwrap(), false)
+            .unwrap();
 
         let refs = load_refs(t.path()).unwrap();
         let names: Vec<_> = refs.local.iter().map(|b| b.name.as_str()).collect();
@@ -215,10 +271,20 @@ mod tests {
         let up = current.upstream.as_ref().unwrap();
         assert_eq!(up.name, format!("origin/{head_branch}"));
         assert_eq!((up.ahead, up.behind, up.gone), (1, 1, false));
-        assert!(refs.local.iter().find(|b| b.name == "feature/x").unwrap().upstream.is_none());
+        assert!(
+            refs.local
+                .iter()
+                .find(|b| b.name == "feature/x")
+                .unwrap()
+                .upstream
+                .is_none()
+        );
 
         assert_eq!(refs.remotes.len(), 1);
-        assert_eq!(refs.remotes[0].url.as_deref(), Some("https://example.com/repo.git"));
+        assert_eq!(
+            refs.remotes[0].url.as_deref(),
+            Some("https://example.com/repo.git")
+        );
         assert_eq!(refs.remotes[0].branches[0].name, head_branch);
         assert_eq!(refs.remotes[0].branches[0].target, remote_tip.to_string());
     }
@@ -230,8 +296,12 @@ mod tests {
         t.commit_all("base");
         let head_branch = t.repo.head().unwrap().shorthand().unwrap().to_string();
         let mut config = t.repo.config().unwrap();
-        config.set_str(&format!("branch.{head_branch}.remote"), "origin").unwrap();
-        config.set_str(&format!("branch.{head_branch}.merge"), "refs/heads/deleted").unwrap();
+        config
+            .set_str(&format!("branch.{head_branch}.remote"), "origin")
+            .unwrap();
+        config
+            .set_str(&format!("branch.{head_branch}.merge"), "refs/heads/deleted")
+            .unwrap();
 
         let refs = load_refs(t.path()).unwrap();
         let up = refs.local[0].upstream.as_ref().unwrap();
@@ -248,11 +318,25 @@ mod tests {
         let second = t.commit_all("second");
         let sig = git2::Signature::now("Raccoon", "raccoon@example.com").unwrap();
         // Same-second commits: the name tiebreak keeps the order stable.
-        t.repo.tag_lightweight("v1", &t.repo.find_object(first, None).unwrap(), false).unwrap();
-        t.repo.tag("v2", &t.repo.find_object(second, None).unwrap(), &sig, "release", false).unwrap();
+        t.repo
+            .tag_lightweight("v1", &t.repo.find_object(first, None).unwrap(), false)
+            .unwrap();
+        t.repo
+            .tag(
+                "v2",
+                &t.repo.find_object(second, None).unwrap(),
+                &sig,
+                "release",
+                false,
+            )
+            .unwrap();
 
         let refs = load_refs(t.path()).unwrap();
-        let tags: Vec<_> = refs.tags.iter().map(|t| (t.name.as_str(), t.annotated)).collect();
+        let tags: Vec<_> = refs
+            .tags
+            .iter()
+            .map(|t| (t.name.as_str(), t.annotated))
+            .collect();
         assert_eq!(tags, [("v2", true), ("v1", false)]);
         assert_eq!(refs.tags[0].target, second.to_string());
     }

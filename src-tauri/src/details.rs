@@ -121,7 +121,10 @@ fn status_of(delta: Delta) -> FileStatus {
 
 /// The path shown for a file, plus its old path when renamed or copied.
 fn paths_of(delta: &git2::DiffDelta) -> (String, Option<String>) {
-    let lossy = |p: Option<&std::path::Path>| p.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+    let lossy = |p: Option<&std::path::Path>| {
+        p.map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    };
     let new = lossy(delta.new_file().path());
     let old = lossy(delta.old_file().path());
     match delta.status() {
@@ -156,11 +159,22 @@ pub fn commit_details(path: &str, id: &str) -> Result<CommitDetails, git2::Error
             }
             _ => (0, 0),
         };
-        files.push(ChangedFile { path, old_path, status: status_of(delta.status()), additions, deletions, binary });
+        files.push(ChangedFile {
+            path,
+            old_path,
+            status: status_of(delta.status()),
+            additions,
+            deletions,
+            binary,
+        });
     }
 
     let message = commit.message().unwrap_or_default();
-    let body = message.split_once('\n').map(|(_, rest)| rest.trim()).unwrap_or_default().to_string();
+    let body = message
+        .split_once('\n')
+        .map(|(_, rest)| rest.trim())
+        .unwrap_or_default()
+        .to_string();
 
     Ok(CommitDetails {
         id: commit.id().to_string(),
@@ -201,7 +215,10 @@ pub fn file_diff(path: &str, id: &str, file: &str) -> Result<FileDiff, git2::Err
             for l in 0..count {
                 if total == MAX_DIFF_LINES {
                     truncated = true;
-                    hunks.push(Hunk { header: header_of(&hunk), lines });
+                    hunks.push(Hunk {
+                        header: header_of(&hunk),
+                        lines,
+                    });
                     break 'hunks;
                 }
                 total += 1;
@@ -214,25 +231,44 @@ pub fn file_diff(path: &str, id: &str, file: &str) -> Result<FileDiff, git2::Err
                 };
                 lines.push(if kind == LineKind::NoEol {
                     // A marker, not a line of the file: no line numbers.
-                    DiffLine { kind, old_line: None, new_line: None, content: "No newline at end of file".into() }
+                    DiffLine {
+                        kind,
+                        old_line: None,
+                        new_line: None,
+                        content: "No newline at end of file".into(),
+                    }
                 } else {
                     DiffLine {
                         kind,
                         old_line: line.old_lineno(),
                         new_line: line.new_lineno(),
-                        content: String::from_utf8_lossy(line.content()).trim_end_matches(['\n', '\r']).to_string(),
+                        content: String::from_utf8_lossy(line.content())
+                            .trim_end_matches(['\n', '\r'])
+                            .to_string(),
                     }
                 });
             }
-            hunks.push(Hunk { header: header_of(&hunk), lines });
+            hunks.push(Hunk {
+                header: header_of(&hunk),
+                lines,
+            });
         }
     }
 
-    Ok(FileDiff { path, old_path, status, binary, hunks, truncated })
+    Ok(FileDiff {
+        path,
+        old_path,
+        status,
+        binary,
+        hunks,
+        truncated,
+    })
 }
 
 fn header_of(hunk: &git2::DiffHunk) -> String {
-    String::from_utf8_lossy(hunk.header()).trim_end().to_string()
+    String::from_utf8_lossy(hunk.header())
+        .trim_end()
+        .to_string()
 }
 
 #[cfg(test)]
@@ -252,8 +288,18 @@ mod tests {
         assert_eq!(d.body, "With a body.");
         assert!(d.parents.is_empty());
         assert_eq!(d.author.name, "Raccoon");
-        let files: Vec<_> = d.files.iter().map(|f| (f.path.as_str(), f.status, f.additions)).collect();
-        assert_eq!(files, [("a.txt", FileStatus::Added, 2), ("dir/b.txt", FileStatus::Added, 1)]);
+        let files: Vec<_> = d
+            .files
+            .iter()
+            .map(|f| (f.path.as_str(), f.status, f.additions))
+            .collect();
+        assert_eq!(
+            files,
+            [
+                ("a.txt", FileStatus::Added, 2),
+                ("dir/b.txt", FileStatus::Added, 1)
+            ]
+        );
         assert_eq!((d.additions, d.deletions), (3, 0));
     }
 
@@ -275,10 +321,18 @@ mod tests {
         let id = t.commit_all("second");
 
         let d = commit_details(t.path(), &id.to_string()).unwrap();
-        let find = |p: &str| d.files.iter().find(|f| f.path == p).unwrap_or_else(|| panic!("{p} missing"));
+        let find = |p: &str| {
+            d.files
+                .iter()
+                .find(|f| f.path == p)
+                .unwrap_or_else(|| panic!("{p} missing"))
+        };
 
         let keep = find("keep.txt");
-        assert_eq!((keep.status, keep.additions, keep.deletions), (FileStatus::Modified, 2, 1));
+        assert_eq!(
+            (keep.status, keep.additions, keep.deletions),
+            (FileStatus::Modified, 2, 1)
+        );
         assert_eq!(find("gone.txt").status, FileStatus::Deleted);
         let renamed = find("new_name.txt");
         assert_eq!(renamed.status, FileStatus::Renamed);
@@ -299,7 +353,11 @@ mod tests {
         assert_eq!(d.status, FileStatus::Modified);
         assert!(!d.binary && !d.truncated);
         assert_eq!(d.hunks.len(), 1);
-        assert!(d.hunks[0].header.starts_with("@@ -1,3 +1,4 @@"), "{}", d.hunks[0].header);
+        assert!(
+            d.hunks[0].header.starts_with("@@ -1,3 +1,4 @@"),
+            "{}",
+            d.hunks[0].header
+        );
 
         let lines: Vec<_> = d.hunks[0]
             .lines
@@ -338,7 +396,12 @@ mod tests {
         let renamed = file_diff(t.path(), &id, "new.txt").unwrap();
         assert_eq!(renamed.status, FileStatus::Renamed);
         assert_eq!(renamed.old_path.as_deref(), Some("old.txt"));
-        let added: Vec<_> = renamed.hunks.iter().flat_map(|h| &h.lines).filter(|l| l.kind == LineKind::Add).collect();
+        let added: Vec<_> = renamed
+            .hunks
+            .iter()
+            .flat_map(|h| &h.lines)
+            .filter(|l| l.kind == LineKind::Add)
+            .collect();
         assert_eq!(added.len(), 1);
         assert_eq!(added[0].content, "extra");
 
@@ -355,7 +418,9 @@ mod tests {
 
         // Build the feature commit on top of base without touching main's tree.
         let mut index = t.repo.index().unwrap();
-        index.read_tree(&t.repo.find_commit(base).unwrap().tree().unwrap()).unwrap();
+        index
+            .read_tree(&t.repo.find_commit(base).unwrap().tree().unwrap())
+            .unwrap();
         t.write("feature.txt", "feature\n");
         index.add_path(std::path::Path::new("feature.txt")).unwrap();
         index.write().unwrap();

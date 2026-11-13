@@ -4,6 +4,9 @@ import { GraphSvg, RefPills, ROW_HEIGHT, graphWidth, laneColor } from "./compone
 import { CommitDetailsPane } from "./components/CommitDetailsPane";
 import { DiffView, type DiffMode } from "./components/DiffView";
 import { Sidebar } from "./components/Sidebar";
+import { RepoMenu, Welcome } from "./components/RepoPicker";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { forgetRepo, loadRecent, rememberRepo, repoName as nameOfRepo } from "./recent";
 import { formatAge, shortSha } from "./format";
 import type { CommitDetails, FileDiff, Graph, Refs } from "./types";
 import "./App.css";
@@ -56,7 +59,7 @@ function useLoader<T>(key: string | null, load: (key: string) => Promise<T>) {
 }
 
 function App() {
-  const [path, setPath] = useState(() => readSetting(LAST_REPO_KEY));
+  const [recent, setRecent] = useState(loadRecent);
   const [graph, setGraph] = useState<Graph | null>(null);
   const [refs, setRefs] = useState<Refs | null>(null);
   const [showSidebar, setShowSidebar] = useState(() => readSetting(SIDEBAR_KEY) !== "hidden");
@@ -78,15 +81,35 @@ function App() {
       setRefs(r);
       setSelected(null);
       setActiveFile(null);
-      writeSetting(LAST_REPO_KEY, trimmed);
+      writeSetting(LAST_REPO_KEY, g.path);
+      setRecent(rememberRepo(g.path));
     } catch (e) {
-      setGraph(null);
-      setRefs(null);
-      setError(String(e));
+      // Keep whatever repo was open; just report the failure.
+      setError(`Could not open ${trimmed}: ${e}`);
     } finally {
       setLoading(false);
     }
   }, []);
+
+  const browse = useCallback(async () => {
+    try {
+      const picked = await openDialog({ directory: true, multiple: false, title: "Open a Git repository" });
+      if (typeof picked === "string") openRepo(picked);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [openRepo]);
+
+  const closeRepo = useCallback(() => {
+    setGraph(null);
+    setRefs(null);
+    setSelected(null);
+    setActiveFile(null);
+    setError("");
+    writeSetting(LAST_REPO_KEY, "");
+  }, []);
+
+  const forget = useCallback((p: string) => setRecent(forgetRepo(p)), []);
 
   useEffect(() => {
     const last = readSetting(LAST_REPO_KEY);
@@ -139,7 +162,6 @@ function App() {
     writeSetting(DIFF_MODE_KEY, mode);
   };
 
-  const repoName = graph?.path.replace(/[\\/]+$/, "").split(/[\\/]/).pop();
   const gw = graph ? graphWidth(graph.width) : 0;
   // Show the details we have for the current selection, or keep showing the
   // previous commit's (dimmed) while the new one loads.
@@ -163,32 +185,28 @@ function App() {
         </button>
         <div className="brand">🦝 Git Raccoon</div>
         {graph && (
-          <div className="repo-info">
-            <span className="repo-name">{repoName}</span>
-            <span className="repo-branch">{graph.branch ?? "detached HEAD"}</span>
-          </div>
-        )}
-        <form
-          className="open-form"
-          onSubmit={(e) => {
-            e.preventDefault();
-            openRepo(path);
-          }}
-        >
-          <input
-            id="repo-path"
-            value={path}
-            onChange={(e) => setPath(e.currentTarget.value)}
-            placeholder="Path to a Git repository…"
-            spellCheck={false}
+          <RepoMenu
+            name={nameOfRepo(graph.path)}
+            path={graph.path}
+            branch={graph.branch}
+            recent={recent}
+            onBrowse={browse}
+            onOpen={openRepo}
+            onForget={forget}
+            onClose={closeRepo}
           />
-          <button type="submit" disabled={loading}>
-            {loading ? "Opening…" : "Open"}
-          </button>
-        </form>
+        )}
+        {loading && <span className="muted toolbar-status">Opening…</span>}
       </header>
 
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <div className="error dismissable">
+          <span>{error}</span>
+          <button type="button" className="icon-button" onClick={() => setError("")} aria-label="Dismiss error">
+            ×
+          </button>
+        </div>
+      )}
 
       {graph && (
         <div className="main">
@@ -264,12 +282,7 @@ function App() {
         </div>
       )}
 
-      {!graph && !error && (
-        <div className="welcome">
-          <div className="welcome-mark">🦝</div>
-          <p>Open a repository to see its history.</p>
-        </div>
-      )}
+      {!graph && !loading && <Welcome recent={recent} onBrowse={browse} onOpen={openRepo} onForget={forget} />}
     </div>
   );
 }

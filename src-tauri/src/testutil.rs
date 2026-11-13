@@ -41,17 +41,31 @@ impl TempRepo {
         index.add_all(["*"], IndexAddOption::DEFAULT, None).unwrap();
         index.update_all(["*"], None).unwrap();
         index.write().unwrap();
-        let parents: Vec<Oid> = self.repo.head().ok().and_then(|h| h.target()).into_iter().collect();
+        let parents: Vec<Oid> = self
+            .repo
+            .head()
+            .ok()
+            .and_then(|h| h.target())
+            .into_iter()
+            .collect();
         self.commit(Some("HEAD"), message, &parents)
     }
 
     /// Commits the current index with explicit parents, updating `update_ref`.
     pub fn commit(&self, update_ref: Option<&str>, message: &str, parents: &[Oid]) -> Oid {
         let sig = Signature::now("Raccoon", "raccoon@example.com").unwrap();
-        let tree = self.repo.find_tree(self.repo.index().unwrap().write_tree().unwrap()).unwrap();
-        let parents: Vec<_> = parents.iter().map(|p| self.repo.find_commit(*p).unwrap()).collect();
+        let tree = self
+            .repo
+            .find_tree(self.repo.index().unwrap().write_tree().unwrap())
+            .unwrap();
+        let parents: Vec<_> = parents
+            .iter()
+            .map(|p| self.repo.find_commit(*p).unwrap())
+            .collect();
         let parents: Vec<_> = parents.iter().collect();
-        self.repo.commit(update_ref, &sig, &sig, message, &tree, &parents).unwrap()
+        self.repo
+            .commit(update_ref, &sig, &sig, message, &tree, &parents)
+            .unwrap()
     }
 }
 
