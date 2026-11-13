@@ -1,4 +1,6 @@
-import { Fragment } from "react";
+import { Fragment, createContext, useContext, useMemo } from "react";
+import { renderDiff } from "../diff/render";
+import { escapeHtml } from "../diff/highlight";
 import type { DiffLine, FileDiff, Hunk } from "../types";
 import { StatusBadge } from "./CommitDetailsPane";
 
@@ -57,6 +59,16 @@ export function toSplitRows(hunk: Hunk): SplitRow[] {
 
 const MARKERS = { context: " ", add: "+", delete: "−", noeol: "\\" } as const;
 
+/** Highlighted HTML for each line of the diff being shown. */
+const LineHtml = createContext<Map<DiffLine, string>>(new Map());
+
+/** A line's content: highlighted HTML (already escaped), or plain text. */
+function Code({ line }: { line: DiffLine }) {
+  const html = useContext(LineHtml).get(line);
+  if (line.kind === "noeol" || html === undefined) return <>{line.content}</>;
+  return <span dangerouslySetInnerHTML={{ __html: html || escapeHtml(" ") }} />;
+}
+
 function Cell({ line, side }: { line: DiffLine | null; side: "old" | "new" }) {
   if (!line) {
     return (
@@ -72,7 +84,7 @@ function Cell({ line, side }: { line: DiffLine | null; side: "old" | "new" }) {
       <td className={`ln ${line.kind}`}>{number ?? ""}</td>
       <td className={`code ${line.kind}`}>
         <span className="marker">{MARKERS[line.kind]}</span>
-        {line.content}
+        <Code line={line} />
       </td>
     </>
   );
@@ -90,7 +102,7 @@ function UnifiedHunk({ hunk }: { hunk: Hunk }) {
           <td className={`ln ${line.kind}`}>{line.newLine ?? ""}</td>
           <td className={`code ${line.kind}`}>
             <span className="marker">{MARKERS[line.kind]}</span>
-            {line.content}
+            <Code line={line} />
           </td>
         </tr>
       ))}
@@ -125,6 +137,7 @@ type Props = {
 };
 
 export function DiffView({ diff, file, loading, error, mode, onModeChange, onClose }: Props) {
+  const lineHtml = useMemo(() => (diff && !diff.binary ? renderDiff(diff) : new Map<DiffLine, string>()), [diff]);
   return (
     <section className="diff-view" aria-label={`Diff of ${file}`}>
       <div className="diff-toolbar">
@@ -153,6 +166,7 @@ export function DiffView({ diff, file, loading, error, mode, onModeChange, onClo
           <div className="pane-empty muted">No content changes (mode or rename only).</div>
         )}
         {diff && !diff.binary && diff.hunks.length > 0 && (
+          <LineHtml.Provider value={lineHtml}>
           <table className={`diff-table ${mode}`}>
             {mode === "split" ? (
               <colgroup>
@@ -174,6 +188,7 @@ export function DiffView({ diff, file, loading, error, mode, onModeChange, onClo
               ))}
             </tbody>
           </table>
+          </LineHtml.Provider>
         )}
         {diff?.truncated && <div className="pane-empty muted">This diff is too large; only the first 20,000 lines are shown.</div>}
       </div>

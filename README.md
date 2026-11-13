@@ -11,6 +11,7 @@ Prerequisites: Node.js 22+, Rust (stable), and the [Tauri Linux system packages]
 npm install
 npm run tauri dev      # run the app with hot reload
 npm run build          # type-check and build the frontend
+npm test               # frontend unit tests (Vitest)
 cd src-tauri && cargo test
 ```
 
