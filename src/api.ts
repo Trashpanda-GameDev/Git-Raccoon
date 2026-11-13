@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { CommitDetails, FileDiff, GraphPage, Refs, SearchField, SearchResult } from "./types";
+import type { CommitDetails, FileBlobs, FileDiff, GraphPage, Refs, SearchField, SearchResult } from "./types";
 
 export const loadGraph = (path: string, limit: number) => invoke<GraphPage>("load_graph", { path, limit });
 
@@ -21,3 +21,6 @@ export const searchCommits = (snapshot: number, query: string, field: SearchFiel
 
 /** Starts watching a repo for changes (emits "repo-changed"); null stops. */
 export const watchRepo = (path: string | null) => invoke<void>("watch_repo", { path });
+
+export const loadFileBlobs = (path: string, id: string, file: string) =>
+  invoke<FileBlobs>("file_blobs", { path, id, file });

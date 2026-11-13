@@ -1,8 +1,9 @@
 import { Fragment, createContext, useContext, useMemo } from "react";
 import { renderDiff } from "../diff/render";
 import { escapeHtml } from "../diff/highlight";
-import type { DiffLine, FileDiff, Hunk } from "../types";
+import type { DiffLine, FileDiff, Hunk, FileBlobs } from "../types";
 import { StatusBadge } from "./CommitDetailsPane";
+import { ImagePreview } from "./ImagePreview";
 
 export type DiffMode = "unified" | "split";
 
@@ -128,6 +129,8 @@ function SplitHunk({ hunk }: { hunk: Hunk }) {
 
 type Props = {
   diff: FileDiff | null;
+  /** Before/after contents, for image files. */
+  blobs: FileBlobs | null;
   file: string;
   loading: boolean;
   error: string;
@@ -136,7 +139,7 @@ type Props = {
   onClose: () => void;
 };
 
-export function DiffView({ diff, file, loading, error, mode, onModeChange, onClose }: Props) {
+export function DiffView({ diff, blobs, file, loading, error, mode, onModeChange, onClose }: Props) {
   const lineHtml = useMemo(() => (diff && !diff.binary ? renderDiff(diff) : new Map<DiffLine, string>()), [diff]);
   return (
     <section className="diff-view" aria-label={`Diff of ${file}`}>
@@ -161,7 +164,8 @@ export function DiffView({ diff, file, loading, error, mode, onModeChange, onClo
       <div className={`diff-body${loading ? " stale" : ""}`}>
         {error && <div className="error">{error}</div>}
         {!diff && loading && <div className="pane-empty muted">Loading diff…</div>}
-        {diff?.binary && <div className="pane-empty muted">Binary file not shown.</div>}
+        {blobs && <ImagePreview blobs={blobs} path={file} />}
+        {diff?.binary && !blobs && <div className="pane-empty muted">Binary file not shown.</div>}
         {diff && !diff.binary && diff.hunks.length === 0 && (
           <div className="pane-empty muted">No content changes (mode or rename only).</div>
         )}

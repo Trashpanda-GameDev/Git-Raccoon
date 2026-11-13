@@ -156,6 +156,11 @@ async fn file_diff(path: String, id: String, file: String) -> Result<details::Fi
     blocking(move || details::file_diff(&path, &id, &file)).await
 }
 
+#[tauri::command]
+async fn file_blobs(path: String, id: String, file: String) -> Result<details::FileBlobs, String> {
+    blocking(move || details::file_blobs(&path, &id, &file)).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -170,7 +175,8 @@ pub fn run() {
             watch_repo,
             load_refs,
             commit_details,
-            file_diff
+            file_diff,
+            file_blobs
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

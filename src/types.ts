@@ -145,3 +145,13 @@ export type SearchResult = {
   next: number | null;
   cancelled: boolean;
 };
+
+export type BlobData = {
+  size: number;
+  base64: string | null;
+};
+
+export type FileBlobs = {
+  old: BlobData | null;
+  new: BlobData | null;
+};

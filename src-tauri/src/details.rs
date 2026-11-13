@@ -194,10 +194,7 @@ pub fn file_diff(path: &str, id: &str, file: &str) -> Result<FileDiff, git2::Err
     let commit = find_commit(&repo, id)?;
     let diff = commit_diff(&repo, &commit)?;
 
-    let index = diff
-        .deltas()
-        .position(|d| paths_of(&d).0 == file)
-        .ok_or_else(|| git2::Error::from_str(&format!("{file} is not changed in this commit")))?;
+    let index = find_delta(&diff, file)?;
     let delta = diff.get_delta(index).expect("index came from deltas()");
     let (path, old_path) = paths_of(&delta);
     let status = status_of(delta.status());
@@ -262,6 +259,58 @@ pub fn file_diff(path: &str, id: &str, file: &str) -> Result<FileDiff, git2::Err
         binary,
         hunks,
         truncated,
+    })
+}
+
+/// The index of the delta for `file` (its new path, or old path if deleted).
+fn find_delta(diff: &Diff, file: &str) -> Result<usize, git2::Error> {
+    diff.deltas()
+        .position(|d| paths_of(&d).0 == file)
+        .ok_or_else(|| git2::Error::from_str(&format!("{file} is not changed in this commit")))
+}
+
+/// Blobs larger than this are reported by size only.
+const MAX_BLOB_BYTES: usize = 20 * 1024 * 1024;
+
+/// One version of a file's contents, for previews such as images.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobData {
+    pub size: usize,
+    /// Base64 contents, or `None` when larger than the preview limit.
+    pub base64: Option<String>,
+}
+
+/// A changed file's contents before and after the commit. A side is `None`
+/// when the file did not exist there (added or deleted).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileBlobs {
+    pub old: Option<BlobData>,
+    pub new: Option<BlobData>,
+}
+
+pub fn file_blobs(path: &str, id: &str, file: &str) -> Result<FileBlobs, git2::Error> {
+    use base64::Engine;
+    let repo = Repository::discover(path)?;
+    let commit = find_commit(&repo, id)?;
+    let diff = commit_diff(&repo, &commit)?;
+    let delta = diff
+        .get_delta(find_delta(&diff, file)?)
+        .expect("index came from deltas()");
+    let load = |side: git2::DiffFile| -> Result<Option<BlobData>, git2::Error> {
+        if side.id().is_zero() {
+            return Ok(None);
+        }
+        let blob = repo.find_blob(side.id())?;
+        let size = blob.size();
+        let base64 = (size <= MAX_BLOB_BYTES)
+            .then(|| base64::engine::general_purpose::STANDARD.encode(blob.content()));
+        Ok(Some(BlobData { size, base64 }))
+    };
+    Ok(FileBlobs {
+        old: load(delta.old_file())?,
+        new: load(delta.new_file())?,
     })
 }
 
@@ -435,5 +484,29 @@ mod tests {
         assert_eq!(d.parents.len(), 2);
         let paths: Vec<_> = d.files.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(paths, ["feature.txt"]);
+    }
+
+    #[test]
+    fn file_blobs_returns_both_versions() {
+        let t = TempRepo::new();
+        t.write("logo.png", [0x89u8, b'P', b'N', b'G', 1]);
+        t.write("gone.bin", [0u8, 1]);
+        let first = t.commit_all("first").to_string();
+        t.write("logo.png", [0x89u8, b'P', b'N', b'G', 2, 3]);
+        t.remove("gone.bin");
+        let second = t.commit_all("second").to_string();
+
+        let added = file_blobs(t.path(), &first, "logo.png").unwrap();
+        assert!(added.old.is_none());
+        assert_eq!(added.new.as_ref().unwrap().size, 5);
+        assert_eq!(added.new.unwrap().base64.as_deref(), Some("iVBORwE="));
+
+        let changed = file_blobs(t.path(), &second, "logo.png").unwrap();
+        assert_eq!(changed.old.unwrap().size, 5);
+        assert_eq!(changed.new.unwrap().size, 6);
+
+        let deleted = file_blobs(t.path(), &second, "gone.bin").unwrap();
+        assert_eq!(deleted.old.unwrap().size, 2);
+        assert!(deleted.new.is_none());
     }
 }

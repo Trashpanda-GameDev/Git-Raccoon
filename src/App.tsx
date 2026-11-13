@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { loadCommitDetails, loadFileDiff, loadRefs, watchRepo } from "./api";
+import { loadCommitDetails, loadFileBlobs, loadFileDiff, loadRefs, watchRepo } from "./api";
 import { CommitDetailsPane } from "./components/CommitDetailsPane";
 import { DiffView, type DiffMode } from "./components/DiffView";
 import { HistoryView } from "./components/HistoryView";
@@ -10,7 +10,8 @@ import { SearchBar } from "./components/SearchBar";
 import { Sidebar } from "./components/Sidebar";
 import { forgetRepo, loadRecent, rememberRepo, repoName } from "./recent";
 import { DIFF_MODE_KEY, LAST_REPO_KEY, SIDEBAR_KEY, readSetting, writeSetting } from "./settings";
-import type { CommitDetails, FileDiff, Refs } from "./types";
+import type { CommitDetails, FileBlobs, FileDiff, Refs } from "./types";
+import { imageType } from "./components/ImagePreview";
 import { useHistory } from "./useHistory";
 import { useLoader } from "./useLoader";
 import { useSearch } from "./useSearch";
@@ -113,6 +114,10 @@ function App() {
   const diff = useLoader<FileDiff>(diffKey, (key) => {
     const [id, file] = key.split("\n");
     return loadFileDiff(repoPath, id, file);
+  });
+  const blobs = useLoader<FileBlobs>(diffKey && activeFile && imageType(activeFile) ? diffKey : null, (key) => {
+    const [id, file] = key.split("\n");
+    return loadFileBlobs(repoPath, id, file);
   });
 
   // Rows of the loaded commits, rebuilt as pages arrive.
@@ -296,6 +301,7 @@ function App() {
             {activeFile && (
               <DiffView
                 diff={diff.data}
+                blobs={blobs.key === diffKey && !blobs.loading ? blobs.data : null}
                 file={activeFile}
                 loading={diff.loading}
                 error={diff.error}
