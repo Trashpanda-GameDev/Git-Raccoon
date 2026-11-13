@@ -1,95 +1,53 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { loadCommitDetails, loadFileDiff, loadGraph, loadRefs } from "./api";
-import { GraphSvg, RefPills, ROW_HEIGHT, graphWidth, laneColor } from "./components/CommitGraph";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { loadCommitDetails, loadFileDiff, loadRefs } from "./api";
 import { CommitDetailsPane } from "./components/CommitDetailsPane";
 import { DiffView, type DiffMode } from "./components/DiffView";
-import { Sidebar } from "./components/Sidebar";
+import { HistoryView } from "./components/HistoryView";
 import { RepoMenu, Welcome } from "./components/RepoPicker";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { forgetRepo, loadRecent, rememberRepo, repoName as nameOfRepo } from "./recent";
-import { formatAge, shortSha } from "./format";
-import type { CommitDetails, FileDiff, Graph, Refs } from "./types";
+import { Sidebar } from "./components/Sidebar";
+import { forgetRepo, loadRecent, rememberRepo, repoName } from "./recent";
+import { DIFF_MODE_KEY, LAST_REPO_KEY, SIDEBAR_KEY, readSetting, writeSetting } from "./settings";
+import type { CommitDetails, FileDiff, Refs } from "./types";
+import { useHistory } from "./useHistory";
+import { useLoader } from "./useLoader";
 import "./App.css";
 
-const LAST_REPO_KEY = "git-raccoon:last-repo";
-const DIFF_MODE_KEY = "git-raccoon:diff-mode";
-const SIDEBAR_KEY = "git-raccoon:sidebar";
-
-function readSetting(key: string) {
-  try {
-    return localStorage.getItem(key) ?? "";
-  } catch {
-    return "";
-  }
-}
-
-function writeSetting(key: string, value: string) {
-  try {
-    localStorage.setItem(key, value);
-  } catch {
-    // Settings are a convenience; ignore storage failures.
-  }
-}
-
-/** Loads data for a key, dropping responses that arrive after the key changed. */
-function useLoader<T>(key: string | null, load: (key: string) => Promise<T>) {
-  const [state, setState] = useState<{ key: string | null; data: T | null; error: string; loading: boolean }>({
-    key: null,
-    data: null,
-    error: "",
-    loading: false,
-  });
-  const latest = useRef<string | null>(null);
-
-  useEffect(() => {
-    latest.current = key;
-    if (key === null) {
-      setState({ key: null, data: null, error: "", loading: false });
-      return;
-    }
-    setState((s) => ({ ...s, key, loading: true, error: "" }));
-    load(key).then(
-      (data) => latest.current === key && setState({ key, data, error: "", loading: false }),
-      (e) => latest.current === key && setState({ key, data: null, error: String(e), loading: false }),
-    );
-    // `load` is a fresh closure each render; `key` captures everything it reads.
-  }, [key]);
-
-  return state;
-}
-
 function App() {
-  const [recent, setRecent] = useState(loadRecent);
-  const [graph, setGraph] = useState<Graph | null>(null);
+  const { history, open, ensureRange, locate, close } = useHistory();
   const [refs, setRefs] = useState<Refs | null>(null);
+  const [recent, setRecent] = useState(loadRecent);
   const [showSidebar, setShowSidebar] = useState(() => readSetting(SIDEBAR_KEY) !== "hidden");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
+  const [scrollTarget, setScrollTarget] = useState<{ index: number; nonce: number } | null>(null);
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [diffMode, setDiffMode] = useState<DiffMode>(() => (readSetting(DIFF_MODE_KEY) === "split" ? "split" : "unified"));
-  const bodyRef = useRef<HTMLDivElement>(null);
 
-  const openRepo = useCallback(async (repoPath: string) => {
-    const trimmed = repoPath.trim();
-    if (!trimmed) return;
-    setError("");
-    setLoading(true);
-    try {
-      const [g, r] = await Promise.all([loadGraph(trimmed), loadRefs(trimmed)]);
-      setGraph(g);
-      setRefs(r);
-      setSelected(null);
-      setActiveFile(null);
-      writeSetting(LAST_REPO_KEY, g.path);
-      setRecent(rememberRepo(g.path));
-    } catch (e) {
-      // Keep whatever repo was open; just report the failure.
-      setError(`Could not open ${trimmed}: ${e}`);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const openRepo = useCallback(
+    async (repoPath: string) => {
+      const trimmed = repoPath.trim();
+      if (!trimmed) return;
+      setError("");
+      setLoading(true);
+      try {
+        const [h, r] = await Promise.all([open(trimmed), loadRefs(trimmed)]);
+        if (!h) return; // another repo was opened meanwhile
+        setRefs(r);
+        setSelected(null);
+        setActiveFile(null);
+        writeSetting(LAST_REPO_KEY, h.path);
+        setRecent(rememberRepo(h.path));
+      } catch (e) {
+        // Keep whatever repo was open; just report the failure.
+        setError(`Could not open ${trimmed}: ${e}`);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [open],
+  );
 
   const browse = useCallback(async () => {
     try {
@@ -101,13 +59,13 @@ function App() {
   }, [openRepo]);
 
   const closeRepo = useCallback(() => {
-    setGraph(null);
+    close();
     setRefs(null);
     setSelected(null);
     setActiveFile(null);
     setError("");
     writeSetting(LAST_REPO_KEY, "");
-  }, []);
+  }, [close]);
 
   const forget = useCallback((p: string) => setRecent(forgetRepo(p)), []);
 
@@ -116,7 +74,7 @@ function App() {
     if (last) openRepo(last);
   }, [openRepo]);
 
-  const repoPath = graph?.path ?? "";
+  const repoPath = history?.path ?? "";
   const details = useLoader<CommitDetails>(selected, (id) => loadCommitDetails(repoPath, id));
   const diffKey = selected && activeFile ? `${selected}\n${activeFile}` : null;
   const diff = useLoader<FileDiff>(diffKey, (key) => {
@@ -124,17 +82,36 @@ function App() {
     return loadFileDiff(repoPath, id, file);
   });
 
-  const indexById = useMemo(() => new Map(graph?.commits.map((c, i) => [c.id, i]) ?? []), [graph]);
+  // Rows of the loaded commits, rebuilt as pages arrive.
+  const indexById = useMemo(() => {
+    const map = new Map<string, number>();
+    history?.rows.forEach((c, i) => c && map.set(c.id, i));
+    return map;
+  }, [history?.snapshot, history?.version]);
 
-  const select = useCallback((id: string | null) => {
+  /** Selects a commit and scrolls its row (if any) into view. */
+  const selectRow = useCallback((id: string, index: number | null) => {
     setSelected(id);
     setActiveFile(null);
-    if (id) {
-      requestAnimationFrame(() => {
-        bodyRef.current?.querySelector(`[data-id="${id}"]`)?.scrollIntoView({ block: "nearest" });
-      });
-    }
+    if (index !== null) setScrollTarget({ index, nonce: Math.random() });
   }, []);
+
+  const deselect = useCallback(() => {
+    setSelected(null);
+    setActiveFile(null);
+  }, []);
+
+  /** Selects any commit by id, loading history up to its row if needed. */
+  const jumpTo = useCallback(
+    async (id: string) => {
+      selectRow(id, indexById.get(id) ?? null);
+      if (!indexById.has(id)) {
+        const index = await locate(id);
+        if (index !== null) setScrollTarget({ index, nonce: Math.random() });
+      }
+    },
+    [indexById, locate, selectRow],
+  );
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -142,30 +119,31 @@ function App() {
       if (target.closest("input, textarea, [contenteditable]")) return;
       if (e.key === "Escape") {
         if (activeFile) setActiveFile(null);
-        else if (selected) select(null);
+        else if (selected) deselect();
         return;
       }
-      if (!graph || graph.commits.length === 0 || activeFile) return;
-      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-        e.preventDefault();
-        const current = selected ? (indexById.get(selected) ?? -1) : -1;
-        const next = Math.min(Math.max(current + (e.key === "ArrowDown" ? 1 : -1), 0), graph.commits.length - 1);
-        select(graph.commits[next].id);
-      }
+      if (!history || history.total === 0 || activeFile) return;
+      const steps: Record<string, number> = { ArrowDown: 1, ArrowUp: -1, PageDown: 20, PageUp: -20 };
+      const step = steps[e.key];
+      if (step === undefined) return;
+      e.preventDefault();
+      const current = selected ? (indexById.get(selected) ?? -1) : -1;
+      const next = Math.min(Math.max(current + step, 0), history.total - 1);
+      const row = history.rows[next];
+      if (row) selectRow(row.id, next);
+      else ensureRange(next, next + 1).then(() => {
+        const loaded = history.rows[next];
+        if (loaded) selectRow(loaded.id, next);
+      });
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [graph, selected, activeFile, indexById, select]);
+  }, [history, selected, activeFile, indexById, selectRow, deselect, ensureRange]);
 
   const changeDiffMode = (mode: DiffMode) => {
     setDiffMode(mode);
     writeSetting(DIFF_MODE_KEY, mode);
   };
-
-  const gw = graph ? graphWidth(graph.width) : 0;
-  // Show the details we have for the current selection, or keep showing the
-  // previous commit's (dimmed) while the new one loads.
-  const shownDetails = details.data;
 
   return (
     <div className="app">
@@ -184,11 +162,11 @@ function App() {
           ☰
         </button>
         <div className="brand">🦝 Git Raccoon</div>
-        {graph && (
+        {history && (
           <RepoMenu
-            name={nameOfRepo(graph.path)}
-            path={graph.path}
-            branch={graph.branch}
+            name={repoName(history.path)}
+            path={history.path}
+            branch={history.branch}
             recent={recent}
             onBrowse={browse}
             onOpen={openRepo}
@@ -208,51 +186,17 @@ function App() {
         </div>
       )}
 
-      {graph && (
+      {history && (
         <div className="main">
-          {showSidebar && <Sidebar refs={refs} selected={selected} onJump={select} />}
+          {showSidebar && <Sidebar refs={refs} selected={selected} onJump={jumpTo} />}
           <div className="center">
-            <section className="history" style={{ ["--graph-width" as string]: `${gw}px` }}>
-              <div className="history-header row-grid">
-                <span>Branch / Tag</span>
-                <span>Graph</span>
-                <span>Commit message</span>
-                <span className="col-author">Author</span>
-                <span>Date</span>
-                <span className="col-sha">SHA</span>
-              </div>
-              {graph.commits.length === 0 ? (
-                <div className="empty">This repository has no commits yet.</div>
-              ) : (
-                <div className="history-body" ref={bodyRef}>
-                  <div className="rows" style={{ height: graph.commits.length * ROW_HEIGHT }}>
-                    <GraphSvg commits={graph.commits} width={graph.width} selected={selected} />
-                    {graph.commits.map((c) => (
-                      <div
-                        key={c.id}
-                        data-id={c.id}
-                        className={`commit-row row-grid${c.id === selected ? " selected" : ""}`}
-                        style={{ height: ROW_HEIGHT, ["--lane-color" as string]: laneColor(c.column) }}
-                        onClick={() => select(c.id)}
-                      >
-                        <span className="refs-cell">
-                          <RefPills refs={c.refs} lane={c.column} />
-                        </span>
-                        <span />
-                        <span className="summary" title={c.summary}>
-                          {c.summary}
-                        </span>
-                        <span className="author col-author">{c.author}</span>
-                        <span className="date" title={new Date(c.time * 1000).toLocaleString()}>
-                          {formatAge(c.time)}
-                        </span>
-                        <code className="sha col-sha">{shortSha(c.id)}</code>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </section>
+            <HistoryView
+              history={history}
+              selected={selected}
+              scrollTarget={scrollTarget}
+              onSelect={selectRow}
+              onNeedRows={ensureRange}
+            />
 
             {activeFile && (
               <DiffView
@@ -269,20 +213,19 @@ function App() {
 
           {selected && (
             <CommitDetailsPane
-              details={shownDetails}
+              details={details.data}
               loading={details.loading}
               error={details.error}
               activeFile={activeFile}
               onOpenFile={setActiveFile}
-              onSelectCommit={select}
-              isInGraph={(id) => indexById.has(id)}
-              onClose={() => select(null)}
+              onSelectCommit={jumpTo}
+              onClose={deselect}
             />
           )}
         </div>
       )}
 
-      {!graph && !loading && <Welcome recent={recent} onBrowse={browse} onOpen={openRepo} onForget={forget} />}
+      {!history && !loading && <Welcome recent={recent} onBrowse={browse} onOpen={openRepo} onForget={forget} />}
     </div>
   );
 }

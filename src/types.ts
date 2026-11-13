@@ -25,8 +25,11 @@ export type GraphCommit = {
   edges: Edge[];
 };
 
-export type Graph = {
+export type GraphPage = {
+  snapshot: number;
+  offset: number;
   commits: GraphCommit[];
+  total: number;
   width: number;
   branch: string | null;
   path: string;

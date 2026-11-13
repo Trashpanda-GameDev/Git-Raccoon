@@ -26,7 +26,7 @@ A pleasant way to browse any repository.
 - [x] Sidebar: local branches, remotes, tags and stashes; click to jump to the commit in the graph
 - [x] Open repos with a native folder picker; recent-repos list on the welcome screen
 - [ ] Refresh automatically when the repo changes on disk
-- [ ] Draw only the visible rows, and load more history while scrolling
+- [x] Draw only the visible rows, and load more history while scrolling
 - [ ] Search and filter commits by message, author, SHA or file path
 
 ## v0.2: Work (local changes)

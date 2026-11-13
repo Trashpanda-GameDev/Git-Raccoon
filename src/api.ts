@@ -1,7 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { CommitDetails, FileDiff, Graph, Refs } from "./types";
+import type { CommitDetails, FileDiff, GraphPage, Refs } from "./types";
 
-export const loadGraph = (path: string) => invoke<Graph>("load_graph", { path });
+export const loadGraph = (path: string, limit: number) => invoke<GraphPage>("load_graph", { path, limit });
+
+export const graphPage = (snapshot: number, offset: number, limit: number) =>
+  invoke<GraphPage>("graph_page", { snapshot, offset, limit });
+
+export const locateCommit = (snapshot: number, id: string) => invoke<number | null>("locate_commit", { snapshot, id });
 
 export const loadRefs = (path: string) => invoke<Refs>("load_refs", { path });
 

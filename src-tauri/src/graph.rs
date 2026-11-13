@@ -40,8 +40,8 @@ fn free_slot<T>(lanes: &mut Vec<Option<T>>) -> usize {
 }
 
 /// Lays out `(id, parent ids)` pairs, given newest first in topological order.
-pub fn layout<S: AsRef<str>>(commits: &[(S, Vec<S>)]) -> Layout {
-    let mut lanes: Vec<Option<&str>> = Vec::new();
+pub fn layout<T: PartialEq>(commits: &[(T, Vec<T>)]) -> Layout {
+    let mut lanes: Vec<Option<&T>> = Vec::new();
     let mut rows: Vec<RowLayout> = Vec::new();
     // Edges leaving the previous row, as (from column, lane); their end column
     // is only known once we place the next commit.
@@ -49,7 +49,6 @@ pub fn layout<S: AsRef<str>>(commits: &[(S, Vec<S>)]) -> Layout {
     let mut width = 0;
 
     for (id, parents) in commits {
-        let id = id.as_ref();
         let column = match lanes.iter().position(|l| *l == Some(id)) {
             Some(i) => i,
             None => free_slot(&mut lanes),
@@ -85,11 +84,10 @@ pub fn layout<S: AsRef<str>>(commits: &[(S, Vec<S>)]) -> Layout {
 
         if let Some((first, rest)) = parents.split_first() {
             // The first parent continues in this commit's lane.
-            lanes[column] = Some(first.as_ref());
+            lanes[column] = Some(first);
             pending.push((column, column));
             // Merge parents join a lane already waiting for them, or open one.
             for parent in rest {
-                let parent = parent.as_ref();
                 let lane = match lanes.iter().position(|l| *l == Some(parent)) {
                     Some(m) => m,
                     None => {

@@ -1,4 +1,4 @@
-//! Reading a repository's history and refs for the commit graph.
+//! A repository's history and ref labels, laid out for the commit graph.
 
 use std::collections::HashMap;
 
@@ -38,10 +38,17 @@ pub struct GraphCommit {
     pub edges: Vec<Edge>,
 }
 
+/// One page of the graph, `commits[i]` being row `offset + i`.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Graph {
+pub struct GraphPage {
+    /// Identifies the history this page came from; changes on every reload.
+    pub snapshot: u64,
+    pub offset: usize,
     pub commits: Vec<GraphCommit>,
+    /// Number of commits in the whole history.
+    pub total: usize,
+    /// Number of lanes the whole graph needs.
     pub width: usize,
     /// Checked-out branch name, or `None` when HEAD is detached or unborn.
     pub branch: Option<String>,
@@ -49,102 +56,145 @@ pub struct Graph {
     pub path: String,
 }
 
-/// Loads up to `limit` commits reachable from any branch, remote branch, tag
-/// or HEAD, newest first, with their graph layout.
-pub fn load_graph(path: &str, limit: usize) -> Result<Graph, git2::Error> {
-    let repo = Repository::discover(path)?;
-    let head = repo.head().ok();
-    let head_branch = head
-        .as_ref()
-        .filter(|h| h.is_branch())
-        .and_then(|h| h.name().map(String::from));
+/// The full commit order and graph layout of a repository, computed once so
+/// pages of it can be served cheaply as the user scrolls.
+pub struct History {
+    pub snapshot: u64,
+    git_dir: std::path::PathBuf,
+    path: String,
+    branch: Option<String>,
+    ids: Vec<Oid>,
+    index: HashMap<Oid, usize>,
+    layout: graph::Layout,
+    labels: HashMap<Oid, Vec<RefLabel>>,
+}
 
-    let mut walk = repo.revwalk()?;
-    walk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
+impl History {
+    /// Walks every commit reachable from any branch, remote branch, tag or
+    /// HEAD, newest first, and lays out the graph.
+    pub fn load(path: &str, snapshot: u64) -> Result<History, git2::Error> {
+        let repo = Repository::discover(path)?;
+        let head = repo.head().ok();
+        let head_branch = head
+            .as_ref()
+            .filter(|h| h.is_branch())
+            .and_then(|h| h.name().map(String::from));
 
-    let mut labels: HashMap<Oid, Vec<RefLabel>> = HashMap::new();
-    for reference in repo.references()? {
-        let reference = reference?;
-        if reference.symbolic_target().is_some() {
-            continue; // e.g. refs/remotes/origin/HEAD
-        }
-        let kind = if reference.is_branch() {
-            RefKind::Local
-        } else if reference.is_remote() {
-            RefKind::Remote
-        } else if reference.is_tag() {
-            RefKind::Tag
-        } else {
-            continue; // notes, stash, etc.
-        };
-        let Ok(commit) = reference.peel_to_commit() else {
-            continue; // tags on trees or blobs
-        };
-        walk.push(commit.id())?;
-        labels.entry(commit.id()).or_default().push(RefLabel {
-            name: reference.shorthand().unwrap_or_default().to_string(),
-            kind,
-            is_head: kind == RefKind::Local && reference.name().map(String::from) == head_branch,
-        });
-    }
+        let mut walk = repo.revwalk()?;
+        walk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
 
-    if let Some(head) = head.as_ref()
-        && let Some(id) = head.target()
-    {
-        walk.push(id)?;
-        if !head.is_branch() {
-            labels.entry(id).or_default().push(RefLabel {
-                name: "HEAD".into(),
-                kind: RefKind::Head,
-                is_head: true,
+        let mut labels: HashMap<Oid, Vec<RefLabel>> = HashMap::new();
+        for reference in repo.references()? {
+            let reference = reference?;
+            if reference.symbolic_target().is_some() {
+                continue; // e.g. refs/remotes/origin/HEAD
+            }
+            let kind = if reference.is_branch() {
+                RefKind::Local
+            } else if reference.is_remote() {
+                RefKind::Remote
+            } else if reference.is_tag() {
+                RefKind::Tag
+            } else {
+                continue; // notes, stash, etc.
+            };
+            let Ok(commit) = reference.peel_to_commit() else {
+                continue; // tags on trees or blobs
+            };
+            walk.push(commit.id())?;
+            labels.entry(commit.id()).or_default().push(RefLabel {
+                name: reference.shorthand().unwrap_or_default().to_string(),
+                kind,
+                is_head: kind == RefKind::Local
+                    && reference.name().map(String::from) == head_branch,
             });
         }
-    }
 
-    let mut commits = Vec::new();
-    for id in walk.take(limit) {
-        let commit = repo.find_commit(id?)?;
-        let mut refs = labels.remove(&commit.id()).unwrap_or_default();
-        refs.sort_by(|a, b| {
-            b.is_head
-                .cmp(&a.is_head)
-                .then(a.kind.cmp(&b.kind))
-                .then(a.name.cmp(&b.name))
-        });
-        commits.push(GraphCommit {
-            id: commit.id().to_string(),
-            parents: commit.parent_ids().map(|p| p.to_string()).collect(),
-            summary: commit.summary().unwrap_or_default().to_string(),
-            author: commit.author().name().unwrap_or_default().to_string(),
-            time: commit.time().seconds(),
-            refs,
-            column: 0,
-            edges: Vec::new(),
-        });
-    }
+        if let Some(head) = head.as_ref()
+            && let Some(id) = head.target()
+        {
+            walk.push(id)?;
+            if !head.is_branch() {
+                labels.entry(id).or_default().push(RefLabel {
+                    name: "HEAD".into(),
+                    kind: RefKind::Head,
+                    is_head: true,
+                });
+            }
+        }
+        for refs in labels.values_mut() {
+            refs.sort_by(|a, b| {
+                b.is_head
+                    .cmp(&a.is_head)
+                    .then(a.kind.cmp(&b.kind))
+                    .then(a.name.cmp(&b.name))
+            });
+        }
 
-    let pairs: Vec<(&str, Vec<&str>)> = commits
-        .iter()
-        .map(|c| {
-            (
-                c.id.as_str(),
-                c.parents.iter().map(String::as_str).collect(),
-            )
+        let mut pairs: Vec<(Oid, Vec<Oid>)> = Vec::new();
+        for id in walk {
+            let id = id?;
+            let commit = repo.find_commit(id)?;
+            pairs.push((id, commit.parent_ids().collect()));
+        }
+        let layout = graph::layout(&pairs);
+        let ids: Vec<Oid> = pairs.into_iter().map(|(id, _)| id).collect();
+        let index = ids.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+
+        let workdir = repo.workdir().unwrap_or_else(|| repo.path());
+        Ok(History {
+            snapshot,
+            git_dir: repo.path().to_path_buf(),
+            path: workdir.display().to_string(),
+            branch: head_branch.map(|n| n.trim_start_matches("refs/heads/").to_string()),
+            ids,
+            index,
+            layout,
+            labels,
         })
-        .collect();
-    let layout = graph::layout(&pairs);
-    for (commit, row) in commits.iter_mut().zip(layout.rows) {
-        commit.column = row.column;
-        commit.edges = row.edges;
     }
 
-    let path = repo.workdir().unwrap_or_else(|| repo.path());
-    Ok(Graph {
-        commits,
-        width: layout.width,
-        branch: head_branch.map(|n| n.trim_start_matches("refs/heads/").to_string()),
-        path: path.display().to_string(),
-    })
+    pub fn total(&self) -> usize {
+        self.ids.len()
+    }
+
+    /// The row of a commit, if it is in the history.
+    pub fn locate(&self, id: &str) -> Option<usize> {
+        Oid::from_str(id)
+            .ok()
+            .and_then(|id| self.index.get(&id).copied())
+    }
+
+    /// Rows `offset .. offset + limit` (clamped to the history's end).
+    pub fn page(&self, offset: usize, limit: usize) -> Result<GraphPage, git2::Error> {
+        let repo = Repository::open(&self.git_dir)?;
+        let start = offset.min(self.ids.len());
+        let end = offset.saturating_add(limit).min(self.ids.len());
+        let mut commits = Vec::with_capacity(end - start);
+        for row in start..end {
+            let commit = repo.find_commit(self.ids[row])?;
+            let layout = &self.layout.rows[row];
+            commits.push(GraphCommit {
+                id: commit.id().to_string(),
+                parents: commit.parent_ids().map(|p| p.to_string()).collect(),
+                summary: commit.summary().unwrap_or_default().to_string(),
+                author: commit.author().name().unwrap_or_default().to_string(),
+                time: commit.time().seconds(),
+                refs: self.labels.get(&commit.id()).cloned().unwrap_or_default(),
+                column: layout.column,
+                edges: layout.edges.clone(),
+            });
+        }
+        Ok(GraphPage {
+            snapshot: self.snapshot,
+            offset: start,
+            commits,
+            total: self.ids.len(),
+            width: self.layout.width,
+            branch: self.branch.clone(),
+            path: self.path.clone(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -162,7 +212,7 @@ mod tests {
             .tag_lightweight("v1", &t.repo.find_object(base, None).unwrap(), false)
             .unwrap();
 
-        let g = load_graph(t.path(), 100).unwrap();
+        let g = History::load(t.path(), 1).unwrap().page(0, 100).unwrap();
         let branch = g.branch.clone().unwrap();
         assert!(branch == "master" || branch == "main", "{branch}");
 
@@ -187,7 +237,7 @@ mod tests {
         t.commit(Some("HEAD"), "second", &[first]);
         t.repo.set_head_detached(first).unwrap();
 
-        let g = load_graph(t.path(), 100).unwrap();
+        let g = History::load(t.path(), 1).unwrap().page(0, 100).unwrap();
         assert_eq!(g.branch, None);
         let refs = &g.commits[1].refs;
         assert_eq!(refs[0].kind, RefKind::Head);
@@ -196,8 +246,43 @@ mod tests {
     #[test]
     fn empty_repo_has_no_commits() {
         let t = TempRepo::new();
-        let g = load_graph(t.path(), 100).unwrap();
+        let g = History::load(t.path(), 1).unwrap().page(0, 100).unwrap();
         assert!(g.commits.is_empty());
         assert_eq!(g.width, 0);
+    }
+}
+
+#[cfg(test)]
+mod paging_tests {
+    use super::*;
+    use crate::testutil::TempRepo;
+
+    #[test]
+    fn pages_cover_the_history_and_locate_finds_rows() {
+        let t = TempRepo::new();
+        let mut ids = Vec::new();
+        for i in 0..25 {
+            let parents: Vec<Oid> = ids.last().copied().into_iter().collect();
+            ids.push(t.commit(Some("HEAD"), &format!("commit {i}"), &parents));
+        }
+        let h = History::load(t.path(), 7).unwrap();
+        assert_eq!(h.total(), 25);
+
+        let first = h.page(0, 10).unwrap();
+        let last = h.page(20, 10).unwrap();
+        assert_eq!(
+            (first.snapshot, first.total, first.commits.len()),
+            (7, 25, 10)
+        );
+        assert_eq!((last.offset, last.commits.len()), (20, 5));
+        assert_eq!(first.commits[0].summary, "commit 24");
+        assert_eq!(last.commits[4].summary, "commit 0");
+        // The edge out of row 9 still points down to row 10.
+        assert_eq!(first.commits[9].edges.len(), 1);
+
+        assert_eq!(h.locate(&ids[0].to_string()), Some(24));
+        assert_eq!(h.locate("0000000000000000000000000000000000000000"), None);
+        assert_eq!(h.locate("not a sha"), None);
+        assert!(h.page(100, 10).unwrap().commits.is_empty());
     }
 }

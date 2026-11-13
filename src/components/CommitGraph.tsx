@@ -20,6 +20,10 @@ const rowY = (row: number) => row * ROW_HEIGHT + ROW_HEIGHT / 2;
 // At least wide enough for the "Graph" column heading.
 export const graphWidth = (lanes: number) => Math.max(Math.max(lanes, 1) * LANE_WIDTH + GRAPH_PADDING, 64);
 
+/** The graph column's width: very wide graphs are clipped. */
+export const graphColumnWidth = (lanes: number) => Math.min(graphWidth(lanes), MAX_GRAPH_COLUMN);
+const MAX_GRAPH_COLUMN = 320;
+
 function edgePath(row: number, from: number, to: number) {
   const x1 = laneX(from);
   const x2 = laneX(to);
@@ -32,24 +36,34 @@ function edgePath(row: number, from: number, to: number) {
 }
 
 type GraphProps = {
-  commits: GraphCommit[];
+  /** The rows to draw; `commits[0]` is row `firstRow`. Unloaded rows are empty. */
+  commits: (GraphCommit | undefined)[];
+  firstRow: number;
   width: number;
   selected: string | null;
 };
 
-/** The lanes, edges and dots for every row, drawn as one SVG behind the rows. */
-export const GraphSvg = memo(function GraphSvg({ commits, width, selected }: GraphProps) {
-  const height = commits.length * ROW_HEIGHT;
+/**
+ * The lanes, edges and dots for a window of rows, drawn as one SVG behind
+ * them. Edges out of the last row run into the next (undrawn) row, which the
+ * window's overscan keeps off screen.
+ */
+export const GraphSvg = memo(function GraphSvg({ commits, firstRow, width, selected }: GraphProps) {
   return (
-    <svg className="graph-svg" width={graphWidth(width)} height={height} aria-hidden="true">
+    <svg
+      className="graph-svg"
+      width={graphWidth(width)}
+      height={(commits.length + 1) * ROW_HEIGHT}
+      style={{ top: firstRow * ROW_HEIGHT }}
+      aria-hidden="true"
+    >
       <g fill="none" strokeWidth={2}>
         {commits.map((c, row) =>
-          c.edges.map((e, i) => (
-            <path key={`${row}-${i}`} d={edgePath(row, e.from, e.to)} stroke={laneColor(e.lane)} />
-          )),
+          c?.edges.map((e, i) => <path key={`${c.id}-${i}`} d={edgePath(row, e.from, e.to)} stroke={laneColor(e.lane)} />),
         )}
       </g>
       {commits.map((c, row) => {
+        if (!c) return null;
         const color = laneColor(c.column);
         const isMerge = c.parents.length > 1;
         const isHead = c.refs.some((r) => r.isHead);

@@ -261,12 +261,37 @@ body,
   position: relative;
 }
 
-.graph-svg {
+.graph-clip {
   position: absolute;
   top: 0;
+  bottom: 0;
   left: var(--refs-width);
+  width: var(--graph-width);
+  overflow: hidden;
   pointer-events: none;
   z-index: 1;
+}
+
+.graph-svg {
+  position: absolute;
+  left: 0;
+}
+
+.commit-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+
+.commit-row.pending {
+  pointer-events: none;
+}
+
+.skeleton {
+  height: 10px;
+  max-width: 320px;
+  border-radius: 4px;
+  background: var(--bg-hover);
 }
 
 .commit-row {

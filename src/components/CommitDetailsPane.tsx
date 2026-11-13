@@ -114,11 +114,10 @@ type Props = {
   activeFile: string | null;
   onOpenFile: (path: string) => void;
   onSelectCommit: (id: string) => void;
-  isInGraph: (id: string) => boolean;
   onClose: () => void;
 };
 
-export function CommitDetailsPane({ details, loading, error, activeFile, onOpenFile, onSelectCommit, isInGraph, onClose }: Props) {
+export function CommitDetailsPane({ details, loading, error, activeFile, onOpenFile, onSelectCommit, onClose }: Props) {
   const [copied, setCopied] = useState(false);
 
   async function copySha() {
@@ -167,17 +166,11 @@ export function CommitDetailsPane({ details, loading, error, activeFile, onOpenF
           {details.parents.length > 0 && (
             <div className="parents">
               <span className="muted">{details.parents.length > 1 ? "Parents" : "Parent"}</span>
-              {details.parents.map((p) =>
-                isInGraph(p) ? (
-                  <button key={p} type="button" className="link-button" onClick={() => onSelectCommit(p)} title={p}>
-                    <code>{shortSha(p)}</code>
-                  </button>
-                ) : (
-                  <code key={p} title={p}>
-                    {shortSha(p)}
-                  </code>
-                ),
-              )}
+              {details.parents.map((p) => (
+                <button key={p} type="button" className="link-button" onClick={() => onSelectCommit(p)} title={p}>
+                  <code>{shortSha(p)}</code>
+                </button>
+              ))}
               {details.parents.length > 1 && <span className="muted">· changes vs first parent</span>}
             </div>
           )}
