@@ -11,6 +11,9 @@ use crate::ui::widgets;
 pub enum Action {
     OpenFile(String),
     Select(String),
+    StashApply,
+    StashPop,
+    StashDrop,
     Close,
 }
 
@@ -21,11 +24,17 @@ pub fn show(
     loading: bool,
     active_file: Option<&str>,
     now: i64,
+    // For a stash: its controls are shown (`busy` disables them).
+    stash: Option<bool>,
 ) -> Option<Action> {
     let mut action = None;
     ui.horizontal(|ui| {
         ui.set_height(36.0);
-        ui.label(widgets::section_label("Commit"));
+        ui.label(widgets::section_label(if stash.is_some() {
+            "Stash"
+        } else {
+            "Commit"
+        }));
         let mut text = egui::text::LayoutJob::default();
         text.append(
             format::short_sha(id),
@@ -58,6 +67,33 @@ pub fn show(
         Stroke::new(1.0, theme::BORDER),
     );
     ui.add_space(8.0);
+    if let Some(busy) = stash {
+        ui.horizontal(|ui| {
+            let buttons = [
+                (
+                    "Apply",
+                    "Put these changes back into the working tree, keeping the stash",
+                    Action::StashApply,
+                ),
+                (
+                    "Pop",
+                    "Apply, then remove the stash (it is kept if applying conflicts)",
+                    Action::StashPop,
+                ),
+                ("Drop", "Delete the stash (asks first)", Action::StashDrop),
+            ];
+            for (label, tip, act) in buttons {
+                if ui
+                    .add_enabled(!busy, egui::Button::new(label))
+                    .on_hover_text(tip)
+                    .clicked()
+                {
+                    action = Some(act);
+                }
+            }
+        });
+        ui.add_space(4.0);
+    }
 
     let d = match details {
         Some(Ok(d)) => d,

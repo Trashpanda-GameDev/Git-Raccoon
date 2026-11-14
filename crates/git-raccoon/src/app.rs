@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, Frame, Margin, Panel, RichText};
 
-use crate::repo_view::{self, Loaded, Op, RepoView, Source};
+use crate::repo_view::{self, Dialog, Loaded, Op, RepoView, Source};
 use crate::settings::{self, Settings};
 use crate::task::Task;
 use crate::theme;
@@ -143,6 +143,10 @@ impl App {
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
         let Some(repo) = &mut self.repo else { return };
+        // An open dialog has the keyboard (Esc closes just the dialog).
+        if repo.dialog.is_some() {
+            return;
+        }
         let (find, escape) = ctx.input(|i| {
             (
                 i.modifiers.command && i.key_pressed(egui::Key::F),
@@ -296,8 +300,12 @@ impl eframe::App for App {
                     )
                 })
                 .inner;
-            if let Some(id) = jump {
-                repo.select(&id);
+            match jump {
+                Some(sidebar::Action::Jump(id)) => repo.select(&id),
+                Some(sidebar::Action::StashApply(id)) => repo.run(&ctx, Op::StashApply(id)),
+                Some(sidebar::Action::StashPop(id)) => repo.run(&ctx, Op::StashPop(id)),
+                Some(sidebar::Action::StashDrop(id)) => repo.confirm_drop(id),
+                None => {}
             }
         }
 
@@ -316,6 +324,7 @@ impl eframe::App for App {
                 .size_range(280.0..=640.0)
                 .frame(pane)
                 .show(ui, |ui| {
+                    let stash = repo.stash(&id).map(|_| repo.is_staging());
                     details::show(
                         ui,
                         &id,
@@ -323,6 +332,7 @@ impl eframe::App for App {
                         repo.details.is_loading(),
                         repo.active_file.as_deref(),
                         now,
+                        stash,
                     )
                 })
                 .inner;
@@ -330,6 +340,9 @@ impl eframe::App for App {
                 Some(details::Action::OpenFile(f)) => repo.active_file = Some(f),
                 Some(details::Action::Select(p)) => repo.select(&p),
                 Some(details::Action::Close) => repo.deselect(),
+                Some(details::Action::StashApply) => repo.run(&ctx, Op::StashApply(id.clone())),
+                Some(details::Action::StashPop) => repo.run(&ctx, Op::StashPop(id.clone())),
+                Some(details::Action::StashDrop) => repo.confirm_drop(id.clone()),
                 None => {}
             }
         } else if repo.working_selected {
@@ -366,6 +379,13 @@ impl eframe::App for App {
                 Some(working::Action::UnstageAll) => repo.run(&ctx, Op::UnstageAll),
                 Some(working::Action::SetAmend(on)) => repo.set_amend(on),
                 Some(working::Action::Commit) => repo.commit(&ctx),
+                Some(working::Action::Discard(files)) => repo.confirm_discard(files),
+                Some(working::Action::Stash) => {
+                    repo.dialog = Some(Dialog::Stash {
+                        message: String::new(),
+                        untracked: true,
+                    });
+                }
                 Some(working::Action::Close) => repo.deselect(),
                 None => {}
             }
@@ -438,6 +458,9 @@ impl eframe::App for App {
                     None => {}
                 }
             });
+        if let Some(op) = dialog(&ctx, &mut repo.dialog) {
+            repo.run(&ctx, op);
+        }
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
@@ -446,5 +469,67 @@ impl eframe::App for App {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, Settings::KEY, &self.settings);
+    }
+}
+
+/// Shows the open dialog, if any. Returns the operation to run when the
+/// user confirms; closes the dialog on confirm, cancel or Esc.
+fn dialog(ctx: &egui::Context, open: &mut Option<Dialog>) -> Option<Op> {
+    let current = open.as_mut()?;
+    let mut answer: Option<bool> = None;
+    let modal = egui::Modal::new(egui::Id::new("dialog")).show(ctx, |ui| {
+        ui.set_width(420.0);
+        match current {
+            Dialog::Confirm { title, body, button, .. } => {
+                ui.label(RichText::new(title.as_str()).strong().size(15.0));
+                ui.add_space(6.0);
+                ui.label(RichText::new(body.as_str()).color(theme::MUTED));
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    let go = egui::Button::new(RichText::new(button.as_str()).color(egui::Color32::WHITE).strong()).fill(theme::DANGER.gamma_multiply(0.8));
+                    if ui.add(go).clicked() {
+                        answer = Some(true);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        answer = Some(false);
+                    }
+                });
+            }
+            Dialog::Stash { message, untracked } => {
+                ui.label(RichText::new("Stash changes").strong().size(15.0));
+                ui.add_space(6.0);
+                ui.label(RichText::new("Puts all uncommitted changes aside, leaving a clean working tree. Apply or pop the stash later to get them back.").color(theme::MUTED));
+                ui.add_space(8.0);
+                let field = ui.add(egui::TextEdit::singleline(message).hint_text("Message (optional)").desired_width(f32::INFINITY));
+                ui.ctx().accesskit_node_builder(field.id, |n| n.set_label("Stash message"));
+                if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    answer = Some(true);
+                }
+                ui.checkbox(untracked, "Include untracked files");
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    let go = egui::Button::new(RichText::new("Stash").color(theme::ON_ACCENT).strong()).fill(theme::ACCENT);
+                    if ui.add(go).clicked() {
+                        answer = Some(true);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        answer = Some(false);
+                    }
+                });
+            }
+        }
+    });
+    if modal.should_close() && answer.is_none() {
+        answer = Some(false);
+    }
+    match answer? {
+        false => {
+            *open = None;
+            None
+        }
+        true => match open.take()? {
+            Dialog::Confirm { op, .. } => Some(op),
+            Dialog::Stash { message, untracked } => Some(Op::Stash { message, untracked }),
+        },
     }
 }

@@ -235,7 +235,7 @@ struct Ctx<'s> {
     collapsed: &'s mut HashSet<String>,
     filtering: bool,
     selected: Option<&'s str>,
-    jump: Option<String>,
+    action: Option<Action>,
 }
 
 impl Ctx<'_> {
@@ -279,14 +279,23 @@ fn tree<T>(
     }
 }
 
-/// Shows the sidebar; returns a commit to jump to, if one was clicked.
+/// What the user did in the sidebar.
+pub enum Action {
+    /// Select this commit.
+    Jump(String),
+    StashApply(String),
+    StashPop(String),
+    StashDrop(String),
+}
+
+/// Shows the sidebar.
 pub fn show(
     ui: &mut egui::Ui,
     refs: &Refs,
     filter: &mut String,
     collapsed: &mut HashSet<String>,
     selected: Option<&str>,
-) -> Option<String> {
+) -> Option<Action> {
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.add_space(4.0);
@@ -332,7 +341,7 @@ pub fn show(
         collapsed,
         filtering: !f.is_empty(),
         selected,
-        jump: None,
+        action: None,
     };
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -411,7 +420,7 @@ pub fn show(
                         )
                         .clicked()
                         {
-                            c.jump = Some(b.target.clone());
+                            c.action = Some(Action::Jump(b.target.clone()));
                         }
                     },
                 );
@@ -456,7 +465,7 @@ pub fn show(
                                 )
                                 .clicked()
                                 {
-                                    c.jump = Some(b.target.clone());
+                                    c.action = Some(Action::Jump(b.target.clone()));
                                 }
                             },
                         );
@@ -491,7 +500,7 @@ pub fn show(
                     )
                     .clicked()
                     {
-                        c.jump = Some(t.target.clone());
+                        c.action = Some(Action::Jump(t.target.clone()));
                     }
                 }
             }
@@ -507,7 +516,7 @@ pub fn show(
                 }
                 for s in &stashes {
                     let tip = format!("stash@{{{}}}: {}", s.index, s.message);
-                    if row(
+                    let response = row(
                         ui,
                         0,
                         icon::STACK,
@@ -516,16 +525,28 @@ pub fn show(
                         c.selected == Some(s.target.as_str()),
                         false,
                         &tip,
-                    )
-                    .clicked()
-                    {
-                        c.jump = Some(s.target.clone());
+                    );
+                    if response.clicked() {
+                        c.action = Some(Action::Jump(s.target.clone()));
                     }
+                    response.context_menu(|ui| {
+                        let items = [
+                            ("Apply", Action::StashApply(s.target.clone())),
+                            ("Pop", Action::StashPop(s.target.clone())),
+                            ("Drop…", Action::StashDrop(s.target.clone())),
+                        ];
+                        for (label, act) in items {
+                            if ui.button(label).clicked() {
+                                c.action = Some(act);
+                                ui.close();
+                            }
+                        }
+                    });
                 }
             }
             ui.add_space(12.0);
         });
-    c.jump
+    c.action
 }
 
 #[cfg(test)]

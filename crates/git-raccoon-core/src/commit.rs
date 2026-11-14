@@ -1,9 +1,6 @@
 //! Committing, through the user's own `git`, so their hooks, signing
 //! settings and identity apply exactly as on the command line.
 
-use std::io::Write as _;
-use std::process::{Command, Stdio};
-
 use git2::Repository;
 
 use crate::{Error, Result};
@@ -15,23 +12,6 @@ pub struct Committed {
     pub id: String,
 }
 
-/// A `git` command for the repository at `path`, without a console window
-/// on Windows and never waiting on an editor.
-fn git(path: &str) -> Command {
-    let mut cmd = Command::new("git");
-    cmd.arg("-C")
-        .arg(path)
-        .env("GIT_EDITOR", "true")
-        .env("GIT_TERMINAL_PROMPT", "0");
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt as _;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    cmd
-}
-
 /// Commits what is staged with `message` (or, with `amend`, replaces the
 /// last commit, keeping its parent). Hook output and Git's own complaints
 /// come back as [`Error::Command`] text.
@@ -39,43 +19,11 @@ pub fn commit(path: &str, message: &str, amend: bool) -> Result<Committed> {
     if message.trim().is_empty() {
         return Err(Error::Unsupported("a commit needs a message".into()));
     }
-    let mut cmd = git(path);
-    cmd.args(["commit", "--file=-", "--cleanup=strip"]);
+    let mut args = vec!["commit", "--file=-", "--cleanup=strip"];
     if amend {
-        cmd.arg("--amend");
+        args.push("--amend");
     }
-    let mut child = cmd
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => {
-                Error::Command("Git isn't installed, or isn't on PATH.".into())
-            }
-            _ => Error::Command(format!("could not run git: {e}")),
-        })?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(message.as_bytes())
-            .map_err(|e| Error::Command(format!("could not send the message to git: {e}")))?;
-    }
-    let output = child
-        .wait_with_output()
-        .map_err(|e| Error::Command(format!("git did not finish: {e}")))?;
-    if !output.status.success() {
-        let text = [output.stderr, output.stdout]
-            .iter()
-            .map(|b| String::from_utf8_lossy(b).trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join("\n");
-        return Err(Error::Command(if text.is_empty() {
-            format!("git commit failed ({})", output.status)
-        } else {
-            text
-        }));
-    }
+    crate::cli::run(path, &args, Some(message))?;
     let repo = Repository::discover(path)?;
     let id = repo.head()?.peel_to_commit()?.id().to_string();
     Ok(Committed { id })

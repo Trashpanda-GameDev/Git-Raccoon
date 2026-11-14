@@ -14,6 +14,7 @@ use git_raccoon_core::repo::{GraphCommit, History};
 use git_raccoon_core::stage::{self, Pick};
 use git_raccoon_core::watch::{Changes, RepoWatcher};
 use git_raccoon_core::working::{self, Side, WorkingStatus};
+use git_raccoon_core::{discard, stash};
 
 use crate::highlight::RenderedDiff;
 use crate::images::ImagePair;
@@ -131,6 +132,17 @@ pub enum Op {
         pick: Pick,
         headers: Vec<String>,
     },
+    /// Discard unstaged changes; current versions go to the Recycle Bin
+    /// (or to the folder given, in tests).
+    Discard(Vec<String>, Option<std::path::PathBuf>),
+    Stash {
+        message: String,
+        untracked: bool,
+    },
+    /// Stash operations, by stash commit id.
+    StashApply(String),
+    StashPop(String),
+    StashDrop(String),
 }
 
 impl Op {
@@ -152,6 +164,14 @@ impl Op {
                 pick,
                 headers,
             } => stage::unstage_lines(path, &file, &pick, &headers),
+            Op::Discard(files, None) => discard::discard(path, &files).map(drop),
+            Op::Discard(files, Some(folder)) => {
+                discard::discard_into(path, &files, &folder).map(drop)
+            }
+            Op::Stash { message, untracked } => stash::save(path, &message, untracked),
+            Op::StashApply(id) => stash::apply(path, &id),
+            Op::StashPop(id) => stash::pop(path, &id),
+            Op::StashDrop(id) => stash::drop_stash(path, &id),
         }
         .map_err(|e| e.to_string())
     }
@@ -169,8 +189,52 @@ impl Op {
             | Op::Lines {
                 side: Side::Staged, ..
             } => "unstage",
+            Op::Discard(..) => "discard",
+            Op::Stash { .. } => "stash",
+            Op::StashApply(_) => "apply the stash",
+            Op::StashPop(_) => "pop the stash",
+            Op::StashDrop(_) => "drop the stash",
         }
     }
+
+    /// Stash operations change refs, so the history and sidebar reload too.
+    fn changes_refs(&self) -> bool {
+        matches!(
+            self,
+            Op::Stash { .. } | Op::StashApply(_) | Op::StashPop(_) | Op::StashDrop(_)
+        )
+    }
+}
+
+/// An operation running in the background.
+struct Running {
+    /// What it does, for error messages ("stage", "pop the stash").
+    verb: &'static str,
+    /// It changes refs, so the history reloads afterwards.
+    refs: bool,
+    task: Task<Result<(), String>>,
+}
+
+/// What this system calls its trash.
+pub fn trash_name() -> &'static str {
+    if cfg!(windows) {
+        "Recycle Bin"
+    } else {
+        "Trash"
+    }
+}
+
+/// A question to answer before something happens.
+pub enum Dialog {
+    /// "Are you sure?" before a risky operation.
+    Confirm {
+        title: String,
+        body: String,
+        button: String,
+        op: Op,
+    },
+    /// Stash the working changes, with an optional message.
+    Stash { message: String, untracked: bool },
 }
 
 /// How often to re-check the working tree when it can't be watched.
@@ -202,8 +266,12 @@ pub struct RepoView {
     committing: Option<Task<Result<Committed, String>>>,
     /// Where a Shift-click range of picks starts.
     pick_anchor: Option<(usize, usize)>,
-    /// A staging operation in progress, and what it was.
-    op: Option<(&'static str, Task<Result<(), String>>)>,
+    /// An operation in progress.
+    op: Option<Running>,
+    /// A dialog waiting for an answer.
+    pub dialog: Option<Dialog>,
+    /// Tests only: where discarded files go instead of the Recycle Bin.
+    pub trash_override: Option<std::path::PathBuf>,
     pub diff: Keyed<DiffKey, Result<Arc<RenderedDiff>, String>>,
     pub images: Keyed<DiffKey, Result<Arc<ImagePair>, String>>,
     pub search: Search,
@@ -262,6 +330,8 @@ impl RepoView {
             picked: std::collections::BTreeSet::new(),
             pick_anchor: None,
             op: None,
+            dialog: None,
+            trash_override: None,
             draft: CommitDraft::default(),
             committing: None,
             diff: Keyed::default(),
@@ -360,14 +430,57 @@ impl RepoView {
         self.op.is_some()
     }
 
-    /// Starts a staging operation unless one is already running.
+    /// The stash with this commit id, if the id is a stash.
+    pub fn stash(&self, id: &str) -> Option<&git_raccoon_core::refs::Stash> {
+        self.refs.stashes.iter().find(|s| s.target == id)
+    }
+
+    /// Asks before discarding unstaged changes to `files`.
+    pub fn confirm_discard(&mut self, files: Vec<String>) {
+        let what = match files.as_slice() {
+            [one] => one.clone(),
+            many => format!("{} files", many.len()),
+        };
+        self.dialog = Some(Dialog::Confirm {
+            title: format!("Discard changes to {what}?"),
+            body: format!(
+                "Unstaged changes are thrown away; staged changes stay. Each file's current version is moved to the {} first, so you can get it back from there.",
+                trash_name()
+            ),
+            button: "Discard".into(),
+            op: Op::Discard(files, self.trash_override.clone()),
+        });
+    }
+
+    /// Asks before dropping a stash.
+    pub fn confirm_drop(&mut self, id: String) {
+        let name = self.stash(&id).map_or_else(
+            || "This stash".to_string(),
+            |s| format!("\u{201c}{}\u{201d}", s.message),
+        );
+        self.dialog = Some(Dialog::Confirm {
+            title: "Drop this stash?".into(),
+            body: format!(
+                "{name} will be deleted. Its contents can still be recovered from its id ({}) until Git cleans up.",
+                &id[..7.min(id.len())]
+            ),
+            button: "Drop stash".into(),
+            op: Op::StashDrop(id),
+        });
+    }
+
+    /// Starts an operation unless one is already running.
     pub fn run(&mut self, ctx: &egui::Context, op: Op) {
         if self.op.is_some() {
             return;
         }
-        let verb = op.verb();
+        let (verb, refs) = (op.verb(), op.changes_refs());
         let path = self.path().to_string();
-        self.op = Some((verb, Task::spawn(ctx, move || op.run(&path))));
+        self.op = Some(Running {
+            verb,
+            refs,
+            task: Task::spawn(ctx, move || op.run(&path)),
+        });
     }
 
     /// The open diff, if it has loaded.
@@ -496,17 +609,21 @@ impl RepoView {
                 Err(e) => self.refresh_error = Some(format!("Could not commit:\n{e}")),
             }
         }
-        if let Some((verb, task)) = &self.op
-            && let Some(result) = task.poll()
+        if let Some(running) = &self.op
+            && let Some(result) = running.task.poll()
         {
-            let verb = *verb;
+            let (verb, refs) = (running.verb, running.refs);
             self.op = None;
             self.picked.clear();
             self.pick_anchor = None;
             if let Err(e) = result {
-                self.refresh_error = Some(format!("Could not {verb}: {e}"));
+                self.refresh_error = Some(format!("Could not {verb}:\n{e}"));
             }
-            self.refresh_status(ctx);
+            if refs {
+                self.refresh(ctx);
+            } else {
+                self.refresh_status(ctx);
+            }
         }
         if let Some(task) = &self.status_task
             && let Some(result) = task.poll()

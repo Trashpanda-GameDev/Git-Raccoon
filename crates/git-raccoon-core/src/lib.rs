@@ -3,14 +3,17 @@
 //!
 //! Nothing here depends on the user interface.
 
+mod cli;
 pub mod commit;
 pub mod details;
+pub mod discard;
 mod error;
 pub mod graph;
 pub mod refs;
 pub mod repo;
 pub mod search;
 pub mod stage;
+pub mod stash;
 #[cfg(test)]
 mod testutil;
 pub mod watch;

@@ -910,3 +910,149 @@ fn shows_hook_failures_and_keeps_the_message() {
     assert_eq!(head_message(&sample), "Redraw icon and rename loader");
     screenshot(&mut h, "12-hook-failure");
 }
+
+fn read(sample: &Sample, file: &str) -> Option<String> {
+    std::fs::read_to_string(sample.dir.join(file)).ok()
+}
+
+#[test]
+fn discards_into_the_bin_after_asking() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    let bin = sample.dir.with_extension("bin");
+    h.state_mut().repo_mut().unwrap().trash_override = Some(bin.clone());
+
+    let original = read(&sample, "src/repo_loader.rs").unwrap();
+    sample.write("src/repo_loader.rs", "// my unsaved idea\n");
+    sample.write("scratch.txt", "scratch\n");
+    wait_for(&mut h, "the WIP row", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.unstaged.len() == 2)
+    });
+    h.get_by_label("Working changes").click();
+    settle(&mut h);
+
+    // Asking first; Cancel changes nothing.
+    h.get_by_label("Discard changes to src/repo_loader.rs")
+        .click();
+    h.run_ok();
+    h.get_by_label("Discard changes to src/repo_loader.rs?");
+    screenshot(&mut h, "13-discard-confirm");
+    h.get_by_label("Cancel").click();
+    h.run_ok();
+    assert!(h.state().repo().unwrap().dialog.is_none());
+    assert_eq!(
+        read(&sample, "src/repo_loader.rs").as_deref(),
+        Some("// my unsaved idea\n")
+    );
+
+    // Confirmed: the file is restored and the discarded version kept.
+    h.get_by_label("Discard changes to src/repo_loader.rs")
+        .click();
+    h.run_ok();
+    h.get_by_label("Discard").click();
+    wait_for(&mut h, "the discard", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.unstaged.len() == 1)
+    });
+    assert_eq!(read(&sample, "src/repo_loader.rs").unwrap(), original);
+    assert_eq!(
+        std::fs::read_to_string(bin.join("repo_loader.rs")).unwrap(),
+        "// my unsaved idea\n"
+    );
+
+    // Discard all, also asking first.
+    h.get_by_label("Discard all unstaged changes").click();
+    h.run_ok();
+    h.get_by_label("Discard").click();
+    wait_for(&mut h, "a clean tree", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.is_clean())
+    });
+    assert_eq!(read(&sample, "scratch.txt"), None);
+    assert_eq!(
+        std::fs::read_to_string(bin.join("scratch.txt")).unwrap(),
+        "scratch\n"
+    );
+    let _ = std::fs::remove_dir_all(&bin);
+}
+
+#[test]
+fn stashes_pops_and_drops() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    let stashes = |app: &App| app.repo().unwrap().refs.stashes.len();
+    assert_eq!(stashes(h.state()), 1, "the sample starts with one stash");
+
+    sample.write("src/repo_loader.rs", "// stash me\n");
+    sample.write("new.txt", "untracked too\n");
+    wait_for(&mut h, "the WIP row", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| !s.is_clean())
+    });
+    h.get_by_label("Working changes").click();
+    settle(&mut h);
+
+    h.get_by_label("Stash changes").click();
+    h.run_ok();
+    type_into(&mut h, "Stash message", "try another approach");
+    screenshot(&mut h, "14-stash-dialog");
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Stash")
+        .click();
+    wait_for(&mut h, "the stash", |app| {
+        app.repo().unwrap().refs.stashes.len() == 2
+    });
+    wait_for(&mut h, "a clean tree", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.is_clean())
+    });
+    assert_eq!(
+        read(&sample, "new.txt"),
+        None,
+        "untracked files were stashed too"
+    );
+
+    // Pop it from the details pane.
+    h.get_by_label_contains("try another approach").click();
+    settle(&mut h);
+    h.get_by_label("Pop").click();
+    wait_for(&mut h, "the pop", move |app| stashes(app) == 1);
+    wait_for(&mut h, "changes back", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| !s.is_clean())
+    });
+    assert_eq!(
+        read(&sample, "src/repo_loader.rs").as_deref(),
+        Some("// stash me\n")
+    );
+    assert_eq!(read(&sample, "new.txt").as_deref(), Some("untracked too\n"));
+
+    // Drop the sample's own stash, after confirming.
+    h.get_by_label_contains("half-done README tweak").click();
+    settle(&mut h);
+    h.get_by_label("Drop").click();
+    h.run_ok();
+    h.get_by_label("Drop this stash?");
+    h.get_by_label("Drop stash").click();
+    wait_for(&mut h, "the drop", move |app| stashes(app) == 0);
+}

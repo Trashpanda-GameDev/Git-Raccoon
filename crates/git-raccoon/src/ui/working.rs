@@ -22,6 +22,10 @@ pub enum Action {
     UnstageAll,
     SetAmend(bool),
     Commit,
+    /// Discard unstaged changes (after asking).
+    Discard(Vec<String>),
+    /// Open the stash dialog.
+    Stash,
     Close,
 }
 
@@ -51,6 +55,18 @@ pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if widgets::icon_button(ui, icon::X, "Close (Esc)").clicked() {
                 action = Some(Action::Close);
+            }
+            let has_changes = status.is_some_and(|s| !s.is_clean());
+            let stash =
+                egui::Button::new(RichText::new(format!("{}  Stash", icon::STACK)).size(12.0));
+            let stash = ui.add_enabled(has_changes && !staging && !committing, stash);
+            ui.ctx()
+                .accesskit_node_builder(stash.id, |n| n.set_label("Stash changes"));
+            if stash
+                .on_hover_text("Put all uncommitted changes aside in a stash")
+                .clicked()
+            {
+                action = Some(Action::Stash);
             }
             if loading || staging || committing {
                 ui.spinner();
@@ -136,6 +152,19 @@ fn file_list(
             if ui.add_enabled(!busy && !files.is_empty(), button).clicked() {
                 action = Some(all_action);
             }
+            if side == Side::Unstaged
+                && widgets::named_icon_button(
+                    ui,
+                    icon::ARROW_COUNTER_CLOCKWISE,
+                    "Discard all unstaged changes",
+                    !busy && !files.is_empty(),
+                )
+                .clicked()
+            {
+                action = Some(Action::Discard(
+                    files.iter().map(|f| f.path.clone()).collect(),
+                ));
+            }
         });
     });
     ui.spacing_mut().item_spacing.y = 0.0;
@@ -146,7 +175,9 @@ fn file_list(
         let is_active = active.is_some_and(|(s, p)| s == side && p == f.path);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            let row_width = ui.available_width() - 26.0;
+            // Room for the buttons: stage/unstage, plus discard when unstaged.
+            let buttons = if side == Side::Unstaged { 2.0 } else { 1.0 };
+            let row_width = ui.available_width() - 26.0 * buttons;
             let row = ui
                 .allocate_ui(egui::vec2(row_width, 26.0), |ui| {
                     details::file_row(ui, &as_changed(f), is_active)
@@ -159,6 +190,17 @@ fn file_list(
                 Side::Unstaged => (icon::PLUS, "Stage"),
                 Side::Staged => (icon::MINUS, "Unstage"),
             };
+            if side == Side::Unstaged
+                && widgets::named_icon_button(
+                    ui,
+                    icon::ARROW_COUNTER_CLOCKWISE,
+                    &format!("Discard changes to {}", f.path),
+                    !busy,
+                )
+                .clicked()
+            {
+                action = Some(Action::Discard(vec![f.path.clone()]));
+            }
             if widgets::named_icon_button(ui, glyph, &format!("{verb} {}", f.path), !busy).clicked()
             {
                 action = Some(match side {
