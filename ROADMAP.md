@@ -36,7 +36,7 @@ Everyday local work without leaving the app.
 
 - [x] Working-changes row at the top of the graph, with staged and unstaged files and their diffs
 - [x] Stage and unstage files, hunks and individual lines
-- [ ] Commit, amend, and a commit message editor with a summary length guide
+- [x] Commit, amend, and a commit message editor with a summary length guide (through the user's own `git`, so hooks and signing apply)
 - [ ] Discard changes (with confirmation)
 - [ ] Stash: save, apply, pop and drop
 - [ ] Branches: create, check out, rename and delete

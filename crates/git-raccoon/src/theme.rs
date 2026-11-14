@@ -12,6 +12,7 @@ pub const MUTED: Color32 = Color32::from_rgb(0x8a, 0x91, 0xa0);
 pub const ACCENT: Color32 = Color32::from_rgb(0x2e, 0xce, 0x9d);
 pub const ON_ACCENT: Color32 = Color32::from_rgb(0x10, 0x23, 0x1d);
 pub const DANGER: Color32 = Color32::from_rgb(0xff, 0x6b, 0x6b);
+pub const DANGER_BG: Color32 = Color32::from_rgb(0x3b, 0x24, 0x28);
 pub const ADD: Color32 = Color32::from_rgb(0x4c, 0xc3, 0x8a);
 pub const DEL: Color32 = Color32::from_rgb(0xf2, 0x6d, 0x6d);
 pub const MODIFIED: Color32 = Color32::from_rgb(0xe5, 0xb9, 0x4b);
@@ -104,6 +105,8 @@ pub fn apply(ctx: &egui::Context) {
         v.widgets.inactive.weak_bg_fill = BG_RAISED;
         v.widgets.inactive.bg_fill = BG_RAISED;
         v.widgets.inactive.fg_stroke = Stroke::new(1.0, TEXT);
+        // A visible edge, so checkboxes and buttons stand out from raised panels.
+        v.widgets.inactive.bg_stroke = Stroke::new(1.0, BORDER);
         v.widgets.hovered.weak_bg_fill = BG_HOVER;
         v.widgets.hovered.bg_fill = BG_HOVER;
         v.widgets.hovered.bg_stroke = Stroke::new(1.0, BORDER);

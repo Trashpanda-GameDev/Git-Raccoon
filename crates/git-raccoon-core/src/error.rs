@@ -13,6 +13,9 @@ pub enum Error {
     Stale(String),
     #[error("not possible: {0}")]
     Unsupported(String),
+    /// A `git` command failed; the text is what it printed.
+    #[error("{0}")]
+    Command(String),
 }
 
 impl Error {

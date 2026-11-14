@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use egui::Key;
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable as _;
+use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use git_raccoon::App;
 use git_raccoon::settings::Settings;
 use git2::{Oid, Repository, Signature, Time, build::CheckoutBuilder};
@@ -39,6 +39,11 @@ impl Sample {
         let _ = std::fs::remove_dir_all(&dir);
         let repo = Repository::init(&dir).unwrap();
         repo.set_head("refs/heads/main").unwrap();
+        // Commits made through `git` need an identity, whatever the machine has.
+        let mut config = repo.config().unwrap();
+        config.set_str("user.name", "Rocky Raccoon").unwrap();
+        config.set_str("user.email", "rocky@example.com").unwrap();
+        config.set_bool("commit.gpgsign", false).unwrap();
         let now = git_raccoon::settings::now();
         Sample { dir, repo, now }
     }
@@ -742,4 +747,166 @@ fn stages_files_hunks_and_lines() {
         staged(&sample, "notes.txt").unwrap(),
         numbered(|_| None).replacen("line 2\n", "line 2\nline 2 edited\n", 1)
     );
+}
+
+/// Clicks into a text field, then types (typing goes to the focused widget).
+fn type_into(h: &mut Harness<'_, App>, label: &str, text: &str) {
+    h.get_by_label(label).click();
+    h.run_ok();
+    h.get_by_label(label).type_text(text);
+    h.run_ok();
+}
+
+fn head_message(sample: &Sample) -> String {
+    let repo = Repository::open(&sample.dir).unwrap();
+    let head = repo.head().unwrap().peel_to_commit().unwrap();
+    head.message().unwrap().to_string()
+}
+
+#[test]
+fn commits_and_amends() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    let before = h.state().repo().unwrap().history.total();
+
+    sample.write("notes.md", "notes\n");
+    sample.write("scratch.txt", "not for this commit\n");
+    wait_for(&mut h, "the WIP row", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.unstaged.len() == 2)
+    });
+    h.get_by_label("Working changes").click();
+    settle(&mut h);
+
+    // HEAD is already on origin/main, so amending it warns.
+    h.get_by_label("Amend last commit").click();
+    settle(&mut h);
+    h.get_by_label_contains("already pushed");
+    assert_eq!(
+        h.state().repo().unwrap().draft.summary,
+        "Redraw icon and rename loader",
+        "amend fills in the last message"
+    );
+    h.get_by_label("Amend last commit").click();
+    settle(&mut h);
+    assert!(
+        h.state().repo().unwrap().draft.summary.is_empty(),
+        "and un-ticking clears it again"
+    );
+
+    // Nothing staged yet: the commit button is disabled.
+    assert!(
+        h.get_by_label("Commit 0 files")
+            .accesskit_node()
+            .is_disabled()
+    );
+    h.get_by_label("Stage notes.md").click();
+    wait_for(&mut h, "notes.md staged", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.staged.len() == 1)
+    });
+
+    type_into(&mut h, "Commit summary", "Add notes");
+    type_into(&mut h, "Commit description", "Written from Git Raccoon.");
+    h.run_ok();
+    screenshot(&mut h, "11-commit-box");
+    h.get_by_label("Commit 1 file").click();
+    wait_for(&mut h, "the new commit", move |app| {
+        app.repo().unwrap().history.total() == before + 1
+    });
+    assert_eq!(
+        head_message(&sample),
+        "Add notes\n\nWritten from Git Raccoon.\n"
+    );
+    let status = h.state().repo().unwrap().status.clone().unwrap();
+    assert!(status.staged.is_empty());
+    assert_eq!(status.unstaged.len(), 1, "scratch.txt stays uncommitted");
+    assert!(
+        h.state().repo().unwrap().draft.summary.is_empty(),
+        "the box is cleared"
+    );
+    h.get_by_label("Add notes");
+
+    // Amend the new (unpushed) commit's message.
+    h.get_by_label("Working changes").click();
+    settle(&mut h);
+    h.get_by_label("Amend last commit").click();
+    settle(&mut h);
+    assert!(h.query_by_label_contains("already pushed").is_none());
+    h.state_mut().repo_mut().unwrap().draft.summary = "Add project notes".into();
+    h.run_ok();
+    h.get_by_label("Amend commit").click();
+    wait_for(&mut h, "the amended commit", |app| {
+        app.repo().unwrap().draft.summary.is_empty() && !app.is_busy()
+    });
+    assert_eq!(
+        head_message(&sample),
+        "Add project notes\n\nWritten from Git Raccoon.\n"
+    );
+    assert_eq!(
+        h.state().repo().unwrap().history.total(),
+        before + 1,
+        "amending adds no commit"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn shows_hook_failures_and_keeps_the_message() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let sample = Sample::build();
+    let hook = sample.dir.join(".git/hooks/pre-commit");
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\necho 'lint: missing licence header' >&2\nexit 1\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+
+    sample.write("notes.md", "notes\n");
+    wait_for(&mut h, "the WIP row", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| !s.is_clean())
+    });
+    h.get_by_label("Working changes").click();
+    settle(&mut h);
+    h.get_by_label("Stage notes.md").click();
+    wait_for(&mut h, "staged", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.staged.len() == 1)
+    });
+    type_into(&mut h, "Commit summary", "Blocked");
+    h.run_ok();
+    h.get_by_label("Commit 1 file").click();
+    wait_for(&mut h, "the hook to fail", |app| app.error().is_some());
+    assert!(
+        h.state()
+            .error()
+            .unwrap()
+            .contains("missing licence header"),
+        "{:?}",
+        h.state().error()
+    );
+    assert_eq!(
+        h.state().repo().unwrap().draft.summary,
+        "Blocked",
+        "the message is kept to retry"
+    );
+    assert_eq!(head_message(&sample), "Redraw icon and rename loader");
+    screenshot(&mut h, "12-hook-failure");
 }

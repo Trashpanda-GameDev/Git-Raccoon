@@ -91,6 +91,7 @@ impl App {
                     || r.is_loading_selection()
                     || r.is_loading_status()
                     || r.is_staging()
+                    || r.is_committing()
                     || r.details.is_loading()
                     || r.diff.is_loading()
                     || r.images.is_loading()
@@ -190,7 +191,7 @@ impl eframe::App for App {
         if let Some(repo) = &mut self.repo {
             repo.poll(ctx);
             if let Some(e) = repo.refresh_error.take() {
-                self.error = Some(format!("Could not refresh: {e}"));
+                self.error = Some(e);
             }
         }
         self.shortcuts(ctx);
@@ -245,7 +246,7 @@ impl eframe::App for App {
             Panel::top("error")
                 .frame(
                     Frame::new()
-                        .fill(theme::DANGER.gamma_multiply(0.12))
+                        .fill(theme::DANGER_BG)
                         .inner_margin(Margin::symmetric(12, 8)),
                 )
                 .show(ui, |ui| {
@@ -339,12 +340,21 @@ impl eframe::App for App {
                 .size_range(280.0..=640.0)
                 .frame(pane)
                 .show(ui, |ui| {
-                    working::show(
-                        ui,
-                        repo.status.as_ref(),
+                    let (loading, staging, committing) = (
                         repo.is_loading_status(),
                         repo.is_staging(),
-                        active.as_ref().map(|(s, f)| (*s, f.as_str())),
+                        repo.is_committing(),
+                    );
+                    working::show(
+                        ui,
+                        working::State {
+                            status: repo.status.as_ref(),
+                            loading,
+                            staging,
+                            committing,
+                            active: active.as_ref().map(|(s, f)| (*s, f.as_str())),
+                            draft: &mut repo.draft,
+                        },
                     )
                 })
                 .inner;
@@ -354,6 +364,8 @@ impl eframe::App for App {
                 Some(working::Action::Unstage(f)) => repo.run(&ctx, Op::UnstageFile(f)),
                 Some(working::Action::StageAll) => repo.run(&ctx, Op::StageAll),
                 Some(working::Action::UnstageAll) => repo.run(&ctx, Op::UnstageAll),
+                Some(working::Action::SetAmend(on)) => repo.set_amend(on),
+                Some(working::Action::Commit) => repo.commit(&ctx),
                 Some(working::Action::Close) => repo.deselect(),
                 None => {}
             }

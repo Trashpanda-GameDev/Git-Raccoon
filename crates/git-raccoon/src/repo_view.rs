@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use eframe::egui;
+use git_raccoon_core::commit::{self, Committed};
 use git_raccoon_core::details::{self, CommitDetails, LineKind};
 use git_raccoon_core::refs::{self, Refs};
 use git_raccoon_core::repo::{GraphCommit, History};
@@ -94,6 +95,28 @@ pub enum Source {
 
 pub type DiffKey = (Source, String);
 
+/// The commit message being written.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CommitDraft {
+    pub summary: String,
+    pub body: String,
+    /// Replace the last commit instead of adding one.
+    pub amend: bool,
+    /// The last commit is already on the upstream (amending rewrites it).
+    pub head_pushed: bool,
+}
+
+impl CommitDraft {
+    pub fn message(&self) -> String {
+        let body = self.body.trim();
+        if body.is_empty() {
+            self.summary.trim().to_string()
+        } else {
+            format!("{}\n\n{body}", self.summary.trim())
+        }
+    }
+}
+
 /// A change to the index the user asked for.
 #[derive(Debug, Clone)]
 pub enum Op {
@@ -175,6 +198,8 @@ pub struct RepoView {
     pub active_side: Side,
     /// Lines picked in the open working diff, as (hunk, line).
     pub picked: std::collections::BTreeSet<(usize, usize)>,
+    pub draft: CommitDraft,
+    committing: Option<Task<Result<Committed, String>>>,
     /// Where a Shift-click range of picks starts.
     pick_anchor: Option<(usize, usize)>,
     /// A staging operation in progress, and what it was.
@@ -191,6 +216,7 @@ pub struct RepoView {
     history_changed: Arc<AtomicBool>,
     status_changed: Arc<AtomicBool>,
     refreshing: Option<Task<Result<Loaded, String>>>,
+    /// A background failure to show (already worded for the user).
     pub refresh_error: Option<String>,
 }
 
@@ -236,6 +262,8 @@ impl RepoView {
             picked: std::collections::BTreeSet::new(),
             pick_anchor: None,
             op: None,
+            draft: CommitDraft::default(),
+            committing: None,
             diff: Keyed::default(),
             images: Keyed::default(),
             search: Search::default(),
@@ -282,6 +310,50 @@ impl RepoView {
 
     pub fn is_loading_status(&self) -> bool {
         self.status_task.is_some() || self.status_changed.load(Ordering::Relaxed)
+    }
+
+    pub fn is_committing(&self) -> bool {
+        self.committing.is_some()
+    }
+
+    /// Commits (or amends) with the draft message, through `git`.
+    pub fn commit(&mut self, ctx: &egui::Context) {
+        if self.committing.is_some() || self.draft.summary.trim().is_empty() {
+            return;
+        }
+        let (path, message, amend) = (
+            self.path().to_string(),
+            self.draft.message(),
+            self.draft.amend,
+        );
+        self.committing = Some(Task::spawn(ctx, move || {
+            commit::commit(&path, &message, amend).map_err(|e| e.to_string())
+        }));
+    }
+
+    /// Switches amending on or off. Turning it on fills in the last commit's
+    /// message (if nothing was typed yet); turning it off clears that again.
+    pub fn set_amend(&mut self, amend: bool) {
+        if amend == self.draft.amend {
+            return;
+        }
+        let path = self.path().to_string();
+        let last = commit::head_message(&path)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let (summary, body) = last
+            .split_once('\n')
+            .map_or((last.as_str(), ""), |(s, b)| (s, b.trim()));
+        if amend && self.draft.summary.trim().is_empty() && self.draft.body.trim().is_empty() {
+            self.draft.summary = summary.to_string();
+            self.draft.body = body.to_string();
+        } else if !amend && self.draft.summary == summary && self.draft.body.trim() == body {
+            self.draft.summary.clear();
+            self.draft.body.clear();
+        }
+        self.draft.amend = amend;
+        self.draft.head_pushed = amend && commit::head_is_pushed(&path).unwrap_or(false);
     }
 
     pub fn is_staging(&self) -> bool {
@@ -409,7 +481,19 @@ impl RepoView {
             self.refreshing = None;
             match result {
                 Ok(loaded) => self.replace(loaded),
-                Err(e) => self.refresh_error = Some(e),
+                Err(e) => self.refresh_error = Some(format!("Could not refresh: {e}")),
+            }
+        }
+        if let Some(task) = &self.committing
+            && let Some(result) = task.poll()
+        {
+            self.committing = None;
+            match result {
+                Ok(_) => {
+                    self.draft = CommitDraft::default();
+                    self.refresh(ctx);
+                }
+                Err(e) => self.refresh_error = Some(format!("Could not commit:\n{e}")),
             }
         }
         if let Some((verb, task)) = &self.op
@@ -430,7 +514,7 @@ impl RepoView {
             self.status_task = None;
             match result {
                 Ok(status) => self.set_status(status),
-                Err(e) => self.refresh_error = Some(e),
+                Err(e) => self.refresh_error = Some(format!("Could not refresh: {e}")),
             }
             if std::mem::take(&mut self.status_stale) {
                 self.refresh_status(ctx);
