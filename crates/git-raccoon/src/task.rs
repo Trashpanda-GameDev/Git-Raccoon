@@ -34,6 +34,8 @@ impl<T: Send + 'static> Task<T> {
 pub struct Keyed<K, T> {
     pending: Option<(K, Task<T>)>,
     loaded: Option<(K, T)>,
+    /// The loaded result is out of date: load it again, showing it meanwhile.
+    stale: bool,
 }
 
 impl<K, T> Default for Keyed<K, T> {
@@ -41,6 +43,7 @@ impl<K, T> Default for Keyed<K, T> {
         Keyed {
             pending: None,
             loaded: None,
+            stale: false,
         }
     }
 }
@@ -53,7 +56,7 @@ impl<K: PartialEq + Clone + Send + 'static, T: Send + 'static> Keyed<K, T> {
         key: &K,
         load: impl FnOnce(K) -> T + Send + 'static,
     ) {
-        let have = self.loaded.as_ref().is_some_and(|(k, _)| k == key);
+        let have = !self.stale && self.loaded.as_ref().is_some_and(|(k, _)| k == key);
         let loading = self.pending.as_ref().is_some_and(|(k, _)| k == key);
         if !have && !loading {
             let k = key.clone();
@@ -68,6 +71,7 @@ impl<K: PartialEq + Clone + Send + 'static, T: Send + 'static> Keyed<K, T> {
         {
             self.loaded = Some((key.clone(), value));
             self.pending = None;
+            self.stale = false;
         }
     }
 
@@ -86,6 +90,13 @@ impl<K: PartialEq + Clone + Send + 'static, T: Send + 'static> Keyed<K, T> {
 
     pub fn is_loading(&self) -> bool {
         self.pending.is_some()
+    }
+
+    /// Loads the current key again on the next `want`, keeping the old
+    /// result visible until the new one arrives.
+    pub fn reload(&mut self) {
+        self.stale = true;
+        self.pending = None;
     }
 
     pub fn clear(&mut self) {

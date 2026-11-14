@@ -77,13 +77,19 @@ fn row_top(row: usize) -> f32 {
     row as f32 * ROW_HEIGHT
 }
 
-/// Shows the history; returns the row clicked, if any.
+/// What was clicked in the history.
+pub enum Click {
+    Row(usize),
+    Working,
+}
+
+/// Shows the history; returns what was clicked, if anything.
 pub fn show(
     ui: &mut egui::Ui,
     repo: &mut RepoView,
     scroll: &mut Scroll,
     now: i64,
-) -> Option<usize> {
+) -> Option<Click> {
     let total = repo.history.total();
     let width = ui.available_width();
     let cols = Columns::new(width, repo.history.width());
@@ -123,6 +129,10 @@ pub fn show(
         header.bottom(),
         Stroke::new(1.0, theme::BORDER),
     );
+
+    if working_row(ui, repo, &cols, width) {
+        return Some(Click::Working);
+    }
 
     if total == 0 {
         ui.add_space(40.0);
@@ -201,7 +211,7 @@ pub fn show(
                 ui.painter().rect_filled(rect, 0, theme::BG_HOVER);
             }
             if response.clicked() && commit.is_some() {
-                clicked = Some(row);
+                clicked = Some(Click::Row(row));
             }
         }
 
@@ -323,6 +333,107 @@ pub fn show(
     scroll.offset = output.state.offset.y;
     scroll.height = output.inner_rect.height();
     clicked
+}
+
+/// The "Working changes" row above the commits, shown while there are
+/// uncommitted changes. Returns whether it was clicked.
+fn working_row(ui: &mut egui::Ui, repo: &mut RepoView, cols: &Columns, width: f32) -> bool {
+    let Some(status) = repo.status.as_ref().filter(|s| !s.is_clean()) else {
+        return false;
+    };
+    let (staged, unstaged) = (status.staged.len(), status.unstaged.len());
+    // Sit in HEAD's lane, so the row reads as "on top of" the checked-out commit.
+    let lane = repo.history.head_row().map_or(0, |row| {
+        repo.rows.ensure(row..row + 1);
+        repo.rows.get(row).map_or(0, |c| c.column)
+    });
+
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, ROW_HEIGHT), Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Working changes")
+    });
+    let painter = ui.painter();
+    if repo.working_selected {
+        painter.rect_filled(rect, 0, theme::BG_SELECTED);
+        painter.rect_filled(
+            Rect::from_min_size(rect.min, egui::vec2(3.0, ROW_HEIGHT)),
+            0,
+            theme::MUTED,
+        );
+    } else if response.hovered() {
+        painter.rect_filled(rect, 0, theme::BG_HOVER);
+    }
+
+    let cell = |x: f32, w: f32| {
+        Rect::from_min_size(
+            Pos2::new(rect.left() + x + 8.0, rect.top()),
+            egui::vec2((w - 16.0).max(0.0), ROW_HEIGHT),
+        )
+    };
+    widgets::pill(
+        painter,
+        Pos2::new(rect.left() + 8.0, rect.center().y),
+        cols.refs - 16.0,
+        "// WIP",
+        theme::MUTED,
+        false,
+    );
+
+    // A hollow, dashed node with a dashed line down towards HEAD.
+    let centre = Pos2::new(lane_x(rect.left() + cols.refs, lane), rect.center().y);
+    let dashed = Stroke::new(2.0, theme::MUTED);
+    painter.extend(egui::Shape::dashed_line(
+        &[
+            Pos2::new(centre.x, centre.y + DOT_RADIUS),
+            Pos2::new(centre.x, rect.bottom()),
+        ],
+        dashed,
+        3.0,
+        3.0,
+    ));
+    painter.circle_filled(centre, DOT_RADIUS, theme::BG);
+    let points: Vec<Pos2> = (0..=24)
+        .map(|i| {
+            #[expect(clippy::cast_precision_loss, reason = "i <= 24")]
+            let a = i as f32 / 24.0 * std::f32::consts::TAU;
+            centre + egui::vec2(a.cos(), a.sin()) * (DOT_RADIUS - 1.0)
+        })
+        .collect();
+    painter.extend(egui::Shape::dashed_line(&points, dashed, 2.5, 2.0));
+
+    // Title, then the counts in the same (wide) column so they never get cut.
+    let message = cell(
+        cols.refs + cols.graph,
+        cols.message(width) + cols.author + cols.date + cols.sha,
+    );
+    let title = widgets::text_in(
+        painter,
+        message,
+        "Working changes",
+        theme::body(theme::FONT_SIZE),
+        theme::TEXT,
+    );
+    let mut parts = Vec::new();
+    if unstaged > 0 {
+        parts.push(format!("{unstaged} unstaged"));
+    }
+    if staged > 0 {
+        parts.push(format!("{staged} staged"));
+    }
+    let counts = Rect::from_min_max(Pos2::new(title.right() + 12.0, message.top()), message.max);
+    widgets::text_in(
+        painter,
+        counts,
+        &parts.join(" · "),
+        theme::body(12.0),
+        theme::MUTED,
+    );
+    painter.hline(
+        rect.x_range(),
+        rect.bottom(),
+        Stroke::new(1.0, theme::BORDER),
+    );
+    response.clicked()
 }
 
 fn ref_pills(painter: &egui::Painter, cell: Rect, c: &GraphCommit, dim: bool) {

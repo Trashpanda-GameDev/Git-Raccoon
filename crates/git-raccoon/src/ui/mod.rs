@@ -8,3 +8,4 @@ pub mod sidebar;
 pub mod toolbar;
 pub mod welcome;
 pub mod widgets;
+pub mod working;

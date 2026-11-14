@@ -34,7 +34,7 @@ A pleasant way to browse any repository.
 
 Everyday local work without leaving the app.
 
-- [ ] Working-changes row at the top of the graph
+- [x] Working-changes row at the top of the graph, with staged and unstaged files and their diffs
 - [ ] Stage and unstage files, hunks and individual lines
 - [ ] Commit, amend, and a commit message editor with a summary length guide
 - [ ] Discard changes (with confirmation)

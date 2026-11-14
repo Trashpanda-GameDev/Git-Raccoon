@@ -17,6 +17,10 @@ pub enum FileStatus {
     Renamed,
     Copied,
     Typechange,
+    /// A new file Git doesn't track yet (working tree only).
+    Untracked,
+    /// A merge conflict (working tree only).
+    Conflicted,
 }
 
 #[derive(Debug)]
@@ -100,19 +104,21 @@ fn commit_diff<'r>(repo: &'r Repository, commit: &Commit) -> Result<Diff<'r>> {
     Ok(diff)
 }
 
-fn status_of(delta: Delta) -> FileStatus {
+pub(crate) fn status_of(delta: Delta) -> FileStatus {
     match delta {
         Delta::Added => FileStatus::Added,
         Delta::Deleted => FileStatus::Deleted,
         Delta::Renamed => FileStatus::Renamed,
         Delta::Copied => FileStatus::Copied,
         Delta::Typechange => FileStatus::Typechange,
+        Delta::Untracked => FileStatus::Untracked,
+        Delta::Conflicted => FileStatus::Conflicted,
         _ => FileStatus::Modified,
     }
 }
 
 /// The path shown for a file, plus its old path when renamed or copied.
-fn paths_of(delta: &git2::DiffDelta) -> (String, Option<String>) {
+pub(crate) fn paths_of(delta: &git2::DiffDelta) -> (String, Option<String>) {
     let lossy = |p: Option<&std::path::Path>| {
         p.map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default()
@@ -185,13 +191,17 @@ pub fn file_diff(path: &str, id: &str, file: &str) -> Result<FileDiff> {
     let repo = Repository::discover(path)?;
     let commit = find_commit(&repo, id)?;
     let diff = commit_diff(&repo, &commit)?;
-
     let index = find_delta(&diff, file)?;
+    patch_lines(&diff, index)
+}
+
+/// The lines of one file's change in `diff`.
+pub(crate) fn patch_lines(diff: &Diff, index: usize) -> Result<FileDiff> {
     let delta = diff.get_delta(index).expect("index came from deltas()");
     let (path, old_path) = paths_of(&delta);
     let status = status_of(delta.status());
 
-    let patch = Patch::from_diff(&diff, index)?;
+    let patch = Patch::from_diff(diff, index)?;
     let binary = patch.as_ref().is_none_or(|p| p.delta().flags().is_binary());
     let mut hunks = Vec::new();
     let mut truncated = false;
@@ -255,14 +265,14 @@ pub fn file_diff(path: &str, id: &str, file: &str) -> Result<FileDiff> {
 }
 
 /// The index of the delta for `file` (its new path, or old path if deleted).
-fn find_delta(diff: &Diff, file: &str) -> Result<usize> {
+pub(crate) fn find_delta(diff: &Diff, file: &str) -> Result<usize> {
     diff.deltas()
         .position(|d| paths_of(&d).0 == file)
         .ok_or_else(|| crate::Error::NotChanged(file.to_string()))
 }
 
 /// Blobs larger than this are reported by size only.
-const MAX_BLOB_BYTES: usize = 20 * 1024 * 1024;
+pub(crate) const MAX_BLOB_BYTES: usize = 20 * 1024 * 1024;
 
 /// One version of a file's contents, for previews such as images.
 #[derive(Debug)]
@@ -287,19 +297,21 @@ pub fn file_blobs(path: &str, id: &str, file: &str) -> Result<FileBlobs> {
     let delta = diff
         .get_delta(find_delta(&diff, file)?)
         .expect("index came from deltas()");
-    let load = |side: git2::DiffFile| -> Result<Option<BlobData>> {
-        if side.id().is_zero() {
-            return Ok(None);
-        }
-        let blob = repo.find_blob(side.id())?;
-        let size = blob.size();
-        let bytes = (size <= MAX_BLOB_BYTES).then(|| blob.content().to_vec());
-        Ok(Some(BlobData { size, bytes }))
-    };
     Ok(FileBlobs {
-        old: load(delta.old_file())?,
-        new: load(delta.new_file())?,
+        old: stored_blob(&repo, &delta.old_file())?,
+        new: stored_blob(&repo, &delta.new_file())?,
     })
+}
+
+/// One side of a delta as stored in Git, or `None` if the file is absent there.
+pub(crate) fn stored_blob(repo: &Repository, side: &git2::DiffFile) -> Result<Option<BlobData>> {
+    if side.id().is_zero() {
+        return Ok(None);
+    }
+    let blob = repo.find_blob(side.id())?;
+    let size = blob.size();
+    let bytes = (size <= MAX_BLOB_BYTES).then(|| blob.content().to_vec());
+    Ok(Some(BlobData { size, bytes }))
 }
 
 fn header_of(hunk: &git2::DiffHunk) -> String {

@@ -13,5 +13,6 @@ pub mod search;
 mod testutil;
 pub mod watch;
 pub mod words;
+pub mod working;
 
 pub use error::{Error, Result};

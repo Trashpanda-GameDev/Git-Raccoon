@@ -494,3 +494,110 @@ fn big_repo_stays_responsive() {
     eprintln!("worst frame {worst:?}");
     assert!(worst < Duration::from_millis(250), "a frame took {worst:?}");
 }
+
+/// Waits (stepping frames) until `done` holds.
+fn wait_for(h: &mut Harness<'_, App>, what: &str, done: impl Fn(&App) -> bool) {
+    let start = Instant::now();
+    while !done(h.state()) {
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "timed out waiting for {what}"
+        );
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    settle(h);
+}
+
+fn diff_text(h: &Harness<'_, App>) -> String {
+    let repo = h.state().repo().unwrap();
+    let key = repo.diff_key().expect("a diff is open");
+    match repo.diff.get(&key) {
+        Some(Ok(d)) => d
+            .diff
+            .hunks
+            .iter()
+            .flat_map(|hk| &hk.lines)
+            .map(|l| l.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        other => panic!("diff not loaded: {:?}", other.map(|r| r.as_ref().err())),
+    }
+}
+
+#[test]
+fn shows_working_changes_and_follows_edits() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    assert!(
+        h.query_by_label("Working changes").is_none(),
+        "a clean repo has no WIP row"
+    );
+
+    sample.write("src/repo_loader.rs", "// edited outside the app\n");
+    sample.write("TODO.md", "- stage things\n");
+    sample.write("README.md", "# Sample\n\nStaged change.\n");
+    let mut index = sample.repo.index().unwrap();
+    index.add_path(Path::new("README.md")).unwrap();
+    index.write().unwrap();
+
+    wait_for(&mut h, "the WIP row", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| !s.is_clean())
+    });
+    let status = h.state().repo().unwrap().status.clone().unwrap();
+    let names = |files: &[git_raccoon_core::working::WorkingFile]| {
+        files.iter().map(|f| f.path.clone()).collect::<Vec<_>>()
+    };
+    assert_eq!(names(&status.staged), ["README.md"]);
+    assert_eq!(names(&status.unstaged), ["TODO.md", "src/repo_loader.rs"]);
+
+    h.get_by_label("Working changes").click();
+    settle(&mut h);
+    h.get_by_label("TODO.md");
+    h.get_by_label("README.md");
+    screenshot(&mut h, "8-working-changes");
+
+    h.get_by_label("src/repo_loader.rs").click();
+    settle(&mut h);
+    h.get_by_label("Unstaged");
+    assert!(diff_text(&h).contains("// edited outside the app"));
+    screenshot(&mut h, "9-working-diff");
+
+    // Editing the open file again updates its diff.
+    sample.write("src/repo_loader.rs", "// edited twice\n");
+    wait_for(&mut h, "the diff to update", |app| {
+        let repo = app.repo().unwrap();
+        repo.diff_key()
+            .and_then(|k| {
+                repo.diff.get(&k).and_then(|d| d.as_ref().ok()).map(|d| {
+                    d.diff
+                        .hunks
+                        .iter()
+                        .flat_map(|hk| &hk.lines)
+                        .any(|l| l.content == "// edited twice")
+                })
+            })
+            .unwrap_or(false)
+    });
+
+    // Undo everything: the WIP row goes away and the selection with it.
+    std::fs::remove_file(sample.dir.join("TODO.md")).unwrap();
+    sample
+        .repo
+        .checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+        .unwrap();
+    wait_for(&mut h, "a clean status", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(git_raccoon_core::working::WorkingStatus::is_clean)
+    });
+    assert!(!h.state().repo().unwrap().working_selected);
+    assert!(h.query_by_label("Working changes").is_none());
+}

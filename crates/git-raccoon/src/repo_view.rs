@@ -10,7 +10,8 @@ use eframe::egui;
 use git_raccoon_core::details::{self, CommitDetails};
 use git_raccoon_core::refs::{self, Refs};
 use git_raccoon_core::repo::{GraphCommit, History};
-use git_raccoon_core::watch::RepoWatcher;
+use git_raccoon_core::watch::{Changes, RepoWatcher};
+use git_raccoon_core::working::{self, Side, WorkingStatus};
 
 use crate::highlight::RenderedDiff;
 use crate::images::ImagePair;
@@ -83,18 +84,38 @@ pub struct Selection {
     pub row: Option<usize>,
 }
 
-pub type DiffKey = (String, String);
+/// Where a diff comes from: a commit, or one side of the working changes.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Source {
+    Commit(String),
+    Working(Side),
+}
+
+pub type DiffKey = (Source, String);
+
+/// How often to re-check the working tree when it can't be watched.
+const STATUS_POLL: std::time::Duration = std::time::Duration::from_secs(3);
 
 pub struct RepoView {
     pub history: Arc<History>,
     pub refs: Refs,
     pub rows: RowCache,
     pub selected: Option<Selection>,
+    /// The working changes are selected (instead of a commit).
+    pub working_selected: bool,
+    /// Uncommitted changes; `None` until first loaded or for bare repos.
+    pub status: Option<WorkingStatus>,
+    status_task: Option<Task<Result<Option<WorkingStatus>, String>>>,
+    /// Another status reload was requested while one was running.
+    status_stale: bool,
+    status_checked: std::time::Instant,
     /// Row to bring into view on the next frame.
     pub scroll_to: Option<usize>,
     pub details: Keyed<String, Result<Arc<CommitDetails>, String>>,
     /// The file whose diff is open, if any.
     pub active_file: Option<String>,
+    /// For working changes: whether the open diff is the staged or unstaged one.
+    pub active_side: Side,
     pub diff: Keyed<DiffKey, Result<Arc<RenderedDiff>, String>>,
     pub images: Keyed<DiffKey, Result<Arc<ImagePair>, String>>,
     pub search: Search,
@@ -102,7 +123,10 @@ pub struct RepoView {
     /// Sidebar sections and folders the user collapsed.
     pub collapsed: std::collections::HashSet<String>,
     _watcher: Option<RepoWatcher>,
-    changed: Arc<AtomicBool>,
+    /// Whether the working tree is watched; if not, the status is polled.
+    watching_files: bool,
+    history_changed: Arc<AtomicBool>,
+    status_changed: Arc<AtomicBool>,
     refreshing: Option<Task<Result<Loaded, String>>>,
     pub refresh_error: Option<String>,
 }
@@ -110,32 +134,51 @@ pub struct RepoView {
 impl RepoView {
     pub fn new(ctx: &egui::Context, loaded: Loaded) -> Self {
         let history = Arc::new(loaded.history);
-        let changed = Arc::new(AtomicBool::new(false));
+        let history_changed = Arc::new(AtomicBool::new(false));
+        let status_changed = Arc::new(AtomicBool::new(false));
         let watcher = {
-            let changed = changed.clone();
+            let (h, s) = (history_changed.clone(), status_changed.clone());
             let ctx = ctx.clone();
             // Without a watcher the app still works; refresh is manual.
-            RepoWatcher::new(history.path(), move || {
-                changed.store(true, Ordering::Relaxed);
+            RepoWatcher::new(history.path(), move |c: Changes| {
+                if c.history {
+                    h.store(true, Ordering::Relaxed);
+                }
+                if c.status {
+                    s.store(true, Ordering::Relaxed);
+                }
                 ctx.request_repaint();
             })
             .ok()
         };
+        let watching_files = watcher
+            .as_ref()
+            .is_some_and(RepoWatcher::watches_working_tree);
+        // Load the status straight away.
+        status_changed.store(true, Ordering::Relaxed);
         RepoView {
             rows: RowCache::new(history.clone()),
             history,
             refs: loaded.refs,
             selected: None,
+            working_selected: false,
+            status: None,
+            status_task: None,
+            status_stale: false,
+            status_checked: std::time::Instant::now(),
             scroll_to: None,
             details: Keyed::default(),
             active_file: None,
+            active_side: Side::Unstaged,
             diff: Keyed::default(),
             images: Keyed::default(),
             search: Search::default(),
             sidebar_filter: String::new(),
             collapsed: std::collections::HashSet::new(),
             _watcher: watcher,
-            changed,
+            watching_files,
+            history_changed,
+            status_changed,
             refreshing: None,
             refresh_error: None,
         }
@@ -145,22 +188,47 @@ impl RepoView {
         self.history.path()
     }
 
+    /// The open diff's key: the source (commit or working side) and file.
+    pub fn diff_key(&self) -> Option<DiffKey> {
+        let file = self.active_file.clone()?;
+        if self.working_selected {
+            Some((Source::Working(self.active_side), file))
+        } else {
+            Some((Source::Commit(self.selected.as_ref()?.id.clone()), file))
+        }
+    }
+
     /// Whether the selection's details (or the open diff) are still missing.
     pub fn is_loading_selection(&self) -> bool {
-        let Some(sel) = &self.selected else {
-            return false;
-        };
-        if self.details.get(&sel.id).is_none() {
+        if let Some(sel) = &self.selected
+            && self.details.get(&sel.id).is_none()
+        {
             return true;
         }
-        match &self.active_file {
-            Some(file) => {
-                let key = (sel.id.clone(), file.clone());
+        match (self.diff_key(), &self.active_file) {
+            (Some(key), Some(file)) => {
                 self.diff.get(&key).is_none()
                     || (crate::images::is_image(file) && self.images.get(&key).is_none())
             }
-            None => false,
+            _ => false,
         }
+    }
+
+    pub fn is_loading_status(&self) -> bool {
+        self.status_task.is_some() || self.status_changed.load(Ordering::Relaxed)
+    }
+
+    /// Re-reads the working changes in the background.
+    pub fn refresh_status(&mut self, ctx: &egui::Context) {
+        if self.status_task.is_some() {
+            self.status_stale = true;
+            return;
+        }
+        let path = self.path().to_string();
+        self.status_checked = std::time::Instant::now();
+        self.status_task = Some(Task::spawn(ctx, move || {
+            working::working_status(&path).map_err(|e| e.to_string())
+        }));
     }
 
     pub fn is_refreshing(&self) -> bool {
@@ -171,6 +239,7 @@ impl RepoView {
     pub fn refresh(&mut self, ctx: &egui::Context) {
         let path = self.path().to_string();
         self.refreshing = Some(Task::spawn(ctx, move || load(&path)));
+        self.refresh_status(ctx);
     }
 
     /// Polls background work; call once per frame.
@@ -180,8 +249,17 @@ impl RepoView {
         self.images.poll();
         self.search.poll();
 
-        if self.changed.swap(false, Ordering::Relaxed) && self.refreshing.is_none() {
+        if self.history_changed.swap(false, Ordering::Relaxed) && self.refreshing.is_none() {
             self.refresh(ctx);
+        }
+        if self.status_changed.swap(false, Ordering::Relaxed) {
+            self.refresh_status(ctx);
+        }
+        if !self.watching_files {
+            if self.status_checked.elapsed() >= STATUS_POLL {
+                self.refresh_status(ctx);
+            }
+            ctx.request_repaint_after(STATUS_POLL);
         }
         if let Some(task) = &self.refreshing
             && let Some(result) = task.poll()
@@ -190,6 +268,18 @@ impl RepoView {
             match result {
                 Ok(loaded) => self.replace(loaded),
                 Err(e) => self.refresh_error = Some(e),
+            }
+        }
+        if let Some(task) = &self.status_task
+            && let Some(result) = task.poll()
+        {
+            self.status_task = None;
+            match result {
+                Ok(status) => self.set_status(status),
+                Err(e) => self.refresh_error = Some(e),
+            }
+            if std::mem::take(&mut self.status_stale) {
+                self.refresh_status(ctx);
             }
         }
 
@@ -201,25 +291,73 @@ impl RepoView {
                     .map(Arc::new)
                     .map_err(|e| e.to_string())
             });
-            if let Some(file) = &self.active_file {
-                let key = (sel.id.clone(), file.clone());
-                let path = self.path().to_string();
-                self.diff.want(ctx, &key, move |(id, file)| {
-                    details::file_diff(&path, &id, &file)
-                        .map(|d| Arc::new(RenderedDiff::new(d)))
-                        .map_err(|e| e.to_string())
-                });
-                if crate::images::is_image(file) {
-                    let path = self.path().to_string();
-                    let ctx2 = ctx.clone();
-                    self.images.want(ctx, &key, move |(id, file)| {
-                        details::file_blobs(&path, &id, &file)
-                            .map(|b| Arc::new(ImagePair::decode(&ctx2, &file, b)))
-                            .map_err(|e| e.to_string())
-                    });
+        }
+        if let Some(key) = self.diff_key() {
+            // Working diffs change as files are edited: reload with each status.
+            let path = self.path().to_string();
+            self.diff.want(ctx, &key, move |(source, file)| {
+                match source {
+                    Source::Commit(id) => details::file_diff(&path, &id, &file),
+                    Source::Working(side) => working::working_diff(&path, side, &file),
                 }
+                .map(|d| Arc::new(RenderedDiff::new(d)))
+                .map_err(|e| e.to_string())
+            });
+            if crate::images::is_image(&key.1) {
+                let path = self.path().to_string();
+                let ctx2 = ctx.clone();
+                self.images.want(ctx, &key, move |(source, file)| {
+                    match source {
+                        Source::Commit(id) => details::file_blobs(&path, &id, &file),
+                        Source::Working(side) => working::working_blobs(&path, side, &file),
+                    }
+                    .map(|b| Arc::new(ImagePair::decode(&ctx2, &file, b)))
+                    .map_err(|e| e.to_string())
+                });
             }
         }
+    }
+
+    /// Takes in a newly read status. An open working diff is reloaded, and
+    /// closed if its file is no longer changed.
+    fn set_status(&mut self, status: Option<WorkingStatus>) {
+        self.status = status;
+        if !self.working_selected {
+            return;
+        }
+        // The file may have been edited even if the list looks the same.
+        if let Some(Source::Working(_)) = self.diff_key().map(|k| k.0) {
+            self.diff.reload();
+            self.images.reload();
+        }
+        let still_listed = |file: &str, side| {
+            self.status
+                .as_ref()
+                .is_some_and(|s| s.files(side).iter().any(|f| f.path == file))
+        };
+        if let Some(file) = &self.active_file
+            && !still_listed(file, self.active_side)
+        {
+            self.active_file = None;
+        }
+        if self.status.as_ref().is_none_or(WorkingStatus::is_clean) {
+            self.working_selected = false;
+        }
+    }
+
+    /// Selects the working changes.
+    pub fn select_working(&mut self) {
+        if !self.working_selected {
+            self.active_file = None;
+        }
+        self.selected = None;
+        self.working_selected = true;
+    }
+
+    /// Opens a working file's staged or unstaged diff.
+    pub fn open_working_file(&mut self, side: Side, file: String) {
+        self.active_side = side;
+        self.active_file = Some(file);
     }
 
     /// Swaps in a reloaded history, keeping the selection and open diff.
@@ -241,9 +379,10 @@ impl RepoView {
     }
 
     pub fn select_row(&mut self, id: String, row: Option<usize>) {
-        if self.selected.as_ref().is_some_and(|s| s.id != id) {
+        if self.working_selected || self.selected.as_ref().is_some_and(|s| s.id != id) {
             self.active_file = None;
         }
+        self.working_selected = false;
         self.selected = Some(Selection { id, row });
         self.scroll_to = row;
     }
@@ -259,6 +398,7 @@ impl RepoView {
 
     pub fn deselect(&mut self) {
         self.selected = None;
+        self.working_selected = false;
         self.active_file = None;
     }
 

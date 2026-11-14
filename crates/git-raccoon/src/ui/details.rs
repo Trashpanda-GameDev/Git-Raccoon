@@ -176,7 +176,7 @@ fn change_bar(ui: &mut egui::Ui, additions: usize, deletions: usize) {
     }
 }
 
-fn file_row(ui: &mut egui::Ui, f: &ChangedFile, active: bool) -> egui::Response {
+pub fn file_row(ui: &mut egui::Ui, f: &ChangedFile, active: bool) -> egui::Response {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &f.path));

@@ -60,6 +60,8 @@ pub struct History {
     git_dir: std::path::PathBuf,
     path: String,
     branch: Option<String>,
+    /// The commit HEAD points at, if any.
+    head: Option<Oid>,
     ids: Vec<Oid>,
     index: HashMap<Oid, usize>,
     layout: graph::Layout,
@@ -144,6 +146,7 @@ impl History {
             git_dir: repo.path().to_path_buf(),
             path: workdir.display().to_string(),
             branch: head_branch.map(|n| n.trim_start_matches("refs/heads/").to_string()),
+            head: head.as_ref().and_then(|h| h.target()),
             ids,
             index,
             layout,
@@ -157,6 +160,11 @@ impl History {
     }
 
     /// Checked-out branch name, or `None` when HEAD is detached or unborn.
+    /// The row of the commit HEAD points at.
+    pub fn head_row(&self) -> Option<usize> {
+        self.head.and_then(|id| self.index.get(&id).copied())
+    }
+
     pub fn branch(&self) -> Option<&str> {
         self.branch.as_deref()
     }
@@ -302,6 +310,7 @@ mod paging_tests {
         assert_eq!(first.commits[9].edges.len(), 1);
 
         assert_eq!(h.locate(&ids[0].to_string()), Some(24));
+        assert_eq!(h.head_row(), Some(0));
         assert_eq!(h.locate("0000000000000000000000000000000000000000"), None);
         assert_eq!(h.locate("not a sha"), None);
         assert!(h.page(100, 10).unwrap().commits.is_empty());

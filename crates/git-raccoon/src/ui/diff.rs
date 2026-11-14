@@ -25,6 +25,7 @@ pub enum Action {
 pub fn show(
     ui: &mut egui::Ui,
     file: &str,
+    side_label: Option<&str>,
     diff: Option<&Result<Arc<RenderedDiff>, String>>,
     loading: bool,
     images: Option<&Result<Arc<ImagePair>, String>>,
@@ -49,6 +50,9 @@ pub fn show(
                     None => file.to_string(),
                 };
                 ui.label(RichText::new(title).strong());
+                if let Some(label) = side_label {
+                    ui.label(RichText::new(label).size(12.0).color(theme::MUTED));
+                }
                 if loading {
                     ui.spinner();
                 }

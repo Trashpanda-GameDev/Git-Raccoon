@@ -1,5 +1,6 @@
-//! Watching a repository's Git directory for changes to branches, tags,
-//! HEAD and config, so the UI can refresh when Git is used elsewhere.
+//! Watching a repository for changes made outside the app: branches, tags,
+//! HEAD and config (the history), and the index and working tree (the
+//! status), so the UI can refresh what changed.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -13,9 +14,17 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 /// Changes closer together than this are reported once.
 const DEBOUNCE: Duration = Duration::from_millis(300);
 
-/// Whether a changed path inside a Git directory affects what the UI shows.
-/// Objects, the index, logs and lock files churn without changing history
-/// or refs on their own.
+/// What changed in a burst of file events.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Changes {
+    /// Branches, tags, HEAD or config: the history and refs need reloading.
+    pub history: bool,
+    /// The index or working tree: the uncommitted changes need reloading.
+    pub status: bool,
+}
+
+/// Whether a changed path inside a Git directory affects the history or
+/// refs. Objects, logs and lock files churn without changing them.
 pub fn is_relevant(relative: &Path) -> bool {
     if relative.extension().is_some_and(|e| e == "lock") {
         return false;
@@ -31,7 +40,7 @@ pub fn is_relevant(relative: &Path) -> bool {
 }
 
 /// Whether an event kind can change a file's contents or existence. Reads
-/// (including the app's own reads of refs) and metadata changes cannot.
+/// (including the app's own reads) and metadata changes cannot.
 fn is_write(kind: &EventKind) -> bool {
     match kind {
         EventKind::Create(_) | EventKind::Remove(_) => true,
@@ -41,43 +50,86 @@ fn is_write(kind: &EventKind) -> bool {
     }
 }
 
+struct Classifier {
+    git_dirs: Vec<PathBuf>,
+    workdir: Option<PathBuf>,
+    repo: Option<Repository>,
+}
+
+impl Classifier {
+    fn add(&self, path: &Path, changes: &mut Changes) {
+        for root in &self.git_dirs {
+            if let Ok(rel) = path.strip_prefix(root) {
+                if rel == Path::new("index") {
+                    changes.status = true;
+                } else if is_relevant(rel) {
+                    changes.history = true;
+                }
+                return;
+            }
+        }
+        let Some(workdir) = &self.workdir else { return };
+        let Ok(rel) = path.strip_prefix(workdir) else {
+            return;
+        };
+        if rel.as_os_str().is_empty() || rel.starts_with(".git") {
+            return;
+        }
+        // Files the repository ignores (build output) don't change the status.
+        let ignored = self
+            .repo
+            .as_ref()
+            .is_some_and(|r| r.status_should_ignore(rel).unwrap_or(false));
+        if !ignored {
+            changes.status = true;
+        }
+    }
+}
+
 /// Watches a repository until dropped.
 pub struct RepoWatcher {
     _watcher: RecommendedWatcher,
+    working_tree: bool,
 }
 
 impl RepoWatcher {
     /// Calls `on_change` (from a background thread) after relevant changes.
-    pub fn new(path: &str, on_change: impl Fn() + Send + 'static) -> Result<Self> {
+    pub fn new(path: &str, on_change: impl Fn(Changes) + Send + 'static) -> Result<Self> {
         let repo = Repository::discover(path)?;
-        // In a linked worktree, HEAD lives in the worktree's git dir while
-        // refs, packed-refs and config live in the common dir.
+        // In a linked worktree, HEAD and the index live in the worktree's git
+        // dir while refs, packed-refs and config live in the common dir.
         let mut git_dirs = vec![repo.path().to_path_buf(), repo.commondir().to_path_buf()];
         git_dirs.dedup();
+        let workdir = repo.workdir().map(Path::to_path_buf);
 
-        let (tx, rx) = mpsc::channel::<()>();
-        let roots: Vec<PathBuf> = git_dirs.clone();
+        let (tx, rx) = mpsc::channel::<PathBuf>();
         let mut watcher =
             notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
                 let Ok(event) = result else { return };
-                let relevant = is_write(&event.kind)
-                    && event.paths.iter().any(|p| {
-                        roots
-                            .iter()
-                            .filter_map(|root| p.strip_prefix(root).ok())
-                            .any(is_relevant)
-                    });
-                if relevant {
-                    let _ = tx.send(());
+                if is_write(&event.kind) {
+                    for p in event.paths {
+                        let _ = tx.send(p);
+                    }
                 }
             })?;
 
-        // Coalesce bursts (a commit or fetch touches several files) into one
+        // Coalesce bursts (a commit or a build touches many files) into one
         // call. The thread ends when the watcher, and so the sender, drops.
+        let classifier = Classifier {
+            git_dirs: git_dirs.clone(),
+            workdir: workdir.clone(),
+            repo: Repository::open(repo.path()).ok(),
+        };
         std::thread::spawn(move || {
-            while rx.recv().is_ok() {
-                while rx.recv_timeout(DEBOUNCE).is_ok() {}
-                on_change();
+            while let Ok(first) = rx.recv() {
+                let mut changes = Changes::default();
+                classifier.add(&first, &mut changes);
+                while let Ok(p) = rx.recv_timeout(DEBOUNCE) {
+                    classifier.add(&p, &mut changes);
+                }
+                if changes != Changes::default() {
+                    on_change(changes);
+                }
             }
         });
 
@@ -88,7 +140,27 @@ impl RepoWatcher {
                 watcher.watch(&refs, RecursiveMode::Recursive)?;
             }
         }
-        Ok(RepoWatcher { _watcher: watcher })
+        // Huge working trees can exceed the system's watch limit; then only
+        // the Git directory is watched and callers poll the status instead.
+        let working_tree = match &workdir {
+            Some(dir) => match watcher.watch(dir, RecursiveMode::Recursive) {
+                Ok(()) => true,
+                Err(_) => {
+                    let _ = watcher.unwatch(dir);
+                    false
+                }
+            },
+            None => false,
+        };
+        Ok(RepoWatcher {
+            _watcher: watcher,
+            working_tree,
+        })
+    }
+
+    /// Whether working tree edits are reported (see [`RepoWatcher::new`]).
+    pub fn watches_working_tree(&self) -> bool {
+        self.working_tree
     }
 }
 
@@ -123,48 +195,73 @@ mod tests {
         }
     }
 
-    fn quiet(rx: &Receiver<()>, what: &str) {
-        assert!(
-            rx.recv_timeout(Duration::from_millis(800)).is_err(),
-            "{what} was reported"
-        );
+    fn quiet(rx: &Receiver<Changes>, what: &str) {
+        if let Ok(c) = rx.recv_timeout(Duration::from_millis(800)) {
+            panic!("{what} was reported: {c:?}");
+        }
     }
 
-    fn reported(rx: &Receiver<()>, what: &str) {
-        rx.recv_timeout(Duration::from_secs(5))
+    fn reported(rx: &Receiver<Changes>, what: &str) -> Changes {
+        let changes = rx
+            .recv_timeout(Duration::from_secs(5))
             .unwrap_or_else(|_| panic!("{what} was not reported"));
         // One burst, one report.
         quiet(rx, &format!("{what} (a second time)"));
+        changes
     }
 
+    const HISTORY: Changes = Changes {
+        history: true,
+        status: false,
+    };
+    const STATUS: Changes = Changes {
+        history: false,
+        status: true,
+    };
+
     #[test]
-    fn reports_ref_changes_but_not_reads_or_working_tree_edits() {
+    fn reports_history_and_status_changes_but_not_reads() {
         let t = TempRepo::new();
+        t.write(".gitignore", "target/\n");
         t.write("a", "1");
         let first = t.commit_all("first");
         let (tx, rx) = mpsc::channel();
-        let _watcher = RepoWatcher::new(t.path(), move || {
-            let _ = tx.send(());
+        let watcher = RepoWatcher::new(t.path(), move |c| {
+            let _ = tx.send(c);
         })
         .unwrap();
+        assert!(watcher.watches_working_tree());
 
-        // The app reads refs on every refresh; that must not loop.
+        // The app reads refs, history and status on every refresh; that must not loop.
         crate::refs::load_refs(t.path()).unwrap();
         crate::repo::History::load(t.path(), 1).unwrap();
-        quiet(&rx, "reading refs");
+        crate::working::working_status(t.path()).unwrap();
+        quiet(&rx, "reading");
+
+        t.write("target/build.o", "binary");
+        quiet(&rx, "an ignored file");
 
         t.write("a", "2");
-        quiet(&rx, "a working tree edit");
+        assert_eq!(reported(&rx, "a working tree edit"), STATUS);
+
+        let mut index = t.repo.index().unwrap();
+        index.add_path(Path::new("a")).unwrap();
+        index.write().unwrap();
+        assert_eq!(reported(&rx, "staging"), STATUS);
 
         t.repo
             .branch("feature", &t.repo.find_commit(first).unwrap(), false)
             .unwrap();
-        reported(&rx, "a new branch");
+        assert_eq!(reported(&rx, "a new branch"), HISTORY);
 
-        t.commit_all("second");
-        reported(&rx, "a commit");
+        let commit = reported_after(&rx, || {
+            t.commit_all("second");
+        });
+        assert!(commit.history, "a commit moves the branch");
+    }
 
-        t.repo.set_head("refs/heads/feature").unwrap();
-        reported(&rx, "a checkout");
+    fn reported_after(rx: &Receiver<Changes>, act: impl FnOnce()) -> Changes {
+        act();
+        reported(rx, "the action")
     }
 }

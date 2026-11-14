@@ -85,6 +85,8 @@ pub fn status_colour(status: FileStatus) -> (char, Color32) {
         FileStatus::Renamed => ('R', theme::RENAMED),
         FileStatus::Copied => ('C', theme::RENAMED),
         FileStatus::Typechange => ('T', theme::TYPECHANGE),
+        FileStatus::Untracked => ('?', theme::ADD),
+        FileStatus::Conflicted => ('!', theme::DANGER),
     }
 }
 

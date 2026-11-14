@@ -2,11 +2,12 @@
 
 use eframe::egui::{self, Frame, Margin, Panel, RichText};
 
-use crate::repo_view::{self, Loaded, RepoView};
+use crate::repo_view::{self, Loaded, RepoView, Source};
 use crate::settings::{self, Settings};
 use crate::task::Task;
 use crate::theme;
-use crate::ui::{details, diff, history, search_bar, sidebar, toolbar, welcome, widgets};
+use crate::ui::{details, diff, history, search_bar, sidebar, toolbar, welcome, widgets, working};
+use git_raccoon_core::working::Side;
 
 pub struct App {
     settings: Settings,
@@ -88,6 +89,7 @@ impl App {
             || self.repo.as_ref().is_some_and(|r| {
                 r.is_refreshing()
                     || r.is_loading_selection()
+                    || r.is_loading_status()
                     || r.details.is_loading()
                     || r.diff.is_loading()
                     || r.images.is_loading()
@@ -297,19 +299,20 @@ impl eframe::App for App {
             }
         }
 
-        // Details pane.
+        // Details pane: a commit, or the working changes.
+        let pane = Frame::new().fill(theme::BG_RAISED).inner_margin(Margin {
+            left: 12,
+            right: 8,
+            top: 0,
+            bottom: 8,
+        });
         if let Some(sel) = &repo.selected {
             let id = sel.id.clone();
             let action = Panel::right("details")
                 .resizable(true)
                 .default_size(380.0)
                 .size_range(280.0..=640.0)
-                .frame(Frame::new().fill(theme::BG_RAISED).inner_margin(Margin {
-                    left: 12,
-                    right: 8,
-                    top: 0,
-                    bottom: 8,
-                }))
+                .frame(pane)
                 .show(ui, |ui| {
                     details::show(
                         ui,
@@ -327,22 +330,49 @@ impl eframe::App for App {
                 Some(details::Action::Close) => repo.deselect(),
                 None => {}
             }
+        } else if repo.working_selected {
+            let active = repo.active_file.clone().map(|f| (repo.active_side, f));
+            let action = Panel::right("details")
+                .resizable(true)
+                .default_size(380.0)
+                .size_range(280.0..=640.0)
+                .frame(pane)
+                .show(ui, |ui| {
+                    working::show(
+                        ui,
+                        repo.status.as_ref(),
+                        repo.is_loading_status(),
+                        active.as_ref().map(|(s, f)| (*s, f.as_str())),
+                    )
+                })
+                .inner;
+            match action {
+                Some(working::Action::Open(side, f)) => repo.open_working_file(side, f),
+                Some(working::Action::Close) => repo.deselect(),
+                None => {}
+            }
         }
 
         // History (or a diff over it).
         egui::CentralPanel::no_frame()
             .frame(Frame::new().fill(theme::BG))
             .show(ui, |ui| {
-                if let (Some(file), Some(sel)) = (repo.active_file.clone(), &repo.selected) {
-                    let key = (sel.id.clone(), file.clone());
+                if let Some(key) = repo.diff_key() {
+                    let file = key.1.clone();
                     let images = if crate::images::is_image(&file) {
                         repo.images.get(&key)
                     } else {
                         None
                     };
+                    let side_label = match key.0 {
+                        Source::Working(Side::Staged) => Some("Staged"),
+                        Source::Working(Side::Unstaged) => Some("Unstaged"),
+                        Source::Commit(_) => None,
+                    };
                     let action = diff::show(
                         ui,
                         &file,
+                        side_label,
                         repo.diff.get(&key),
                         repo.diff.is_loading(),
                         images,
@@ -366,9 +396,13 @@ impl eframe::App for App {
                     ui.cursor().top(),
                     egui::Stroke::new(1.0, theme::BORDER),
                 );
-                if let Some(row) = history::show(ui, repo, &mut self.scroll, now) {
-                    repo.select_index(row);
-                    repo.scroll_to = None;
+                match history::show(ui, repo, &mut self.scroll, now) {
+                    Some(history::Click::Row(row)) => {
+                        repo.select_index(row);
+                        repo.scroll_to = None;
+                    }
+                    Some(history::Click::Working) => repo.select_working(),
+                    None => {}
                 }
             });
     }
