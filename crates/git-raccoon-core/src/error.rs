@@ -9,6 +9,10 @@ pub enum Error {
     NotChanged(String),
     #[error("could not watch the repository: {0}")]
     Watch(#[from] notify::Error),
+    #[error("{0} changed since it was shown; look at it again and retry")]
+    Stale(String),
+    #[error("not possible: {0}")]
+    Unsupported(String),
 }
 
 impl Error {

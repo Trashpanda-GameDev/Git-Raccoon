@@ -1,10 +1,12 @@
 //! A file's diff, shown over the history when a file is opened.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use eframe::egui::{self, Color32, Pos2, Rect, RichText, Sense, Stroke};
 use egui_phosphor::regular as icon;
 use git_raccoon_core::details::{DiffLine, LineKind};
+use git_raccoon_core::working::Side as WorkSide;
 
 use crate::format;
 use crate::highlight::{RenderedDiff, Row, SplitRow};
@@ -20,8 +22,39 @@ const IMAGE_BOX: f32 = 220.0;
 pub enum Action {
     Close,
     SetSplit(bool),
+    /// Stage (or unstage) a whole hunk.
+    StageHunk(usize),
+    /// Pick or unpick a line; `extend` picks the range from the last pick.
+    ToggleLine {
+        hunk: usize,
+        line: usize,
+        extend: bool,
+    },
+    StagePicked,
+    ClearPicked,
 }
 
+/// For a working file's diff: which side it is, and the lines picked.
+pub struct Staging<'a> {
+    pub side: WorkSide,
+    pub picked: &'a BTreeSet<(usize, usize)>,
+    /// A staging operation is running.
+    pub busy: bool,
+}
+
+impl Staging<'_> {
+    fn verb(&self) -> &'static str {
+        match self.side {
+            WorkSide::Unstaged => "Stage",
+            WorkSide::Staged => "Unstage",
+        }
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one call site; each argument is a distinct piece of what the view shows"
+)]
 pub fn show(
     ui: &mut egui::Ui,
     file: &str,
@@ -30,6 +63,7 @@ pub fn show(
     loading: bool,
     images: Option<&Result<Arc<ImagePair>, String>>,
     split: bool,
+    staging: Option<&Staging<'_>>,
 ) -> Option<Action> {
     let mut action = None;
     let ready = diff.and_then(|d| d.as_ref().ok());
@@ -61,6 +95,27 @@ pub fn show(
                         action = Some(Action::Close);
                     }
                     ui.add_space(4.0);
+                    if let Some(st) = staging
+                        && !st.picked.is_empty()
+                    {
+                        let n = st.picked.len();
+                        let label = format!(
+                            "{} {n} {}",
+                            st.verb(),
+                            if n == 1 { "line" } else { "lines" }
+                        );
+                        let stage = egui::Button::new(
+                            RichText::new(label).color(theme::ON_ACCENT).strong(),
+                        )
+                        .fill(theme::ACCENT);
+                        if ui.add_enabled(!st.busy, stage).clicked() {
+                            action = Some(Action::StagePicked);
+                        }
+                        if ui.button("Clear").clicked() {
+                            action = Some(Action::ClearPicked);
+                        }
+                        ui.add_space(8.0);
+                    }
                     let chosen =
                         widgets::segmented(ui, split, &[(true, "Split"), (false, "Unified")]);
                     if chosen != split {
@@ -90,7 +145,11 @@ pub fn show(
             ui.add_space(12.0);
             ui.colored_label(theme::DANGER, e);
         }
-        Some(Ok(d)) => body(ui, d, split, images.is_some()),
+        Some(Ok(d)) => {
+            if let Some(a) = body(ui, d, split, images.is_some(), staging) {
+                action = Some(a);
+            }
+        }
     }
     action
 }
@@ -100,17 +159,24 @@ fn notice(ui: &mut egui::Ui, text: &str) {
     ui.vertical_centered(|ui| ui.label(RichText::new(text).color(theme::MUTED)));
 }
 
-fn body(ui: &mut egui::Ui, d: &RenderedDiff, split: bool, has_images: bool) {
+fn body(
+    ui: &mut egui::Ui,
+    d: &RenderedDiff,
+    split: bool,
+    has_images: bool,
+    staging: Option<&Staging<'_>>,
+) -> Option<Action> {
     if d.diff.binary {
         if !has_images {
             notice(ui, "Binary file not shown.");
         }
-        return;
+        return None;
     }
     if d.diff.hunks.is_empty() {
         notice(ui, "No content changes (mode or rename only).");
-        return;
+        return None;
     }
+    let mut action = None;
 
     let char_width = ui
         .painter()
@@ -146,14 +212,55 @@ fn body(ui: &mut egui::Ui, d: &RenderedDiff, split: bool, has_images: bool) {
             let left = ui.max_rect().left();
             #[expect(clippy::cast_precision_loss, reason = "visible row count is small")]
             ui.allocate_exact_size(egui::vec2(width, LINE * range.len() as f32), Sense::hover());
-            let painter = ui.painter();
+            let painter = ui.painter().clone();
+            let painter = &painter;
+            let shift = ui.input(|i| i.modifiers.shift);
+            // A click on a changed line's numbers picks it (working diffs only).
+            let gutter = |ui: &mut egui::Ui, rect: Rect, h: usize, l: usize| -> Option<Action> {
+                let st = staging?;
+                let line = &d.diff.hunks[h].lines[l];
+                if !matches!(line.kind, LineKind::Add | LineKind::Delete) {
+                    return None;
+                }
+                let response = ui.interact(rect, ui.id().with(("pick", h, l)), Sense::click());
+                let name = format!("Pick line: {}", line.content.trim());
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Checkbox, true, &name)
+                });
+                let picked = st.picked.contains(&(h, l));
+                if picked {
+                    painter.rect_filled(rect, 0, theme::ACCENT.gamma_multiply(0.35));
+                    painter.text(
+                        Pos2::new(rect.left() + 9.0, rect.center().y),
+                        egui::Align2::CENTER_CENTER,
+                        icon::CHECK,
+                        theme::body(11.0),
+                        theme::TEXT,
+                    );
+                } else if response.hovered() {
+                    painter.rect_filled(rect, 0, theme::ACCENT.gamma_multiply(0.15));
+                }
+                response
+                    .on_hover_text("Pick this line to stage it on its own (Shift: a range)")
+                    .clicked()
+                    .then_some(Action::ToggleLine {
+                        hunk: h,
+                        line: l,
+                        extend: shift,
+                    })
+            };
             for (n, row) in range.enumerate() {
                 #[expect(clippy::cast_precision_loss, reason = "visible row count is small")]
                 let top = start_y + n as f32 * LINE;
                 let rect = Rect::from_min_size(Pos2::new(left, top), egui::vec2(width, LINE));
                 if split {
                     match d.split[row] {
-                        SplitRow::Header(h) => header(painter, rect, &d.diff.hunks[h].header),
+                        SplitRow::Header(h) => {
+                            header(painter, rect, &d.diff.hunks[h].header);
+                            if let Some(a) = hunk_button(ui, rect, h, staging) {
+                                action = Some(a);
+                            }
+                        }
                         SplitRow::Pair(a, b) => {
                             let half = width / 2.0;
                             let l = Rect::from_min_size(rect.min, egui::vec2(half, LINE));
@@ -163,14 +270,48 @@ fn body(ui: &mut egui::Ui, d: &RenderedDiff, split: bool, has_images: bool) {
                             );
                             side(painter, l, d, a, false);
                             side(painter, r, d, b, true);
+                            // Deletions are picked on the left, additions on the right.
+                            let deleted = a.filter(|&(h, i)| {
+                                d.diff.hunks[h].lines[i].kind == LineKind::Delete
+                            });
+                            let added =
+                                b.filter(|&(h, i)| d.diff.hunks[h].lines[i].kind == LineKind::Add);
+                            for (at, half_rect) in [(deleted, l), (added, r)] {
+                                if let Some((h, i)) = at
+                                    && let Some(picked) = gutter(
+                                        ui,
+                                        Rect::from_min_size(
+                                            half_rect.min,
+                                            egui::vec2(NUMBER, LINE),
+                                        ),
+                                        h,
+                                        i,
+                                    )
+                                {
+                                    action = Some(picked);
+                                }
+                            }
                             painter.vline(l.right(), l.y_range(), Stroke::new(1.0, theme::BORDER));
                         }
                     }
                 } else {
                     match d.unified[row] {
-                        Row::Header(h) => header(painter, rect, &d.diff.hunks[h].header),
+                        Row::Header(h) => {
+                            header(painter, rect, &d.diff.hunks[h].header);
+                            if let Some(a) = hunk_button(ui, rect, h, staging) {
+                                action = Some(a);
+                            }
+                        }
                         Row::Line(h, l) => {
-                            unified_line(painter, rect, &d.diff.hunks[h].lines[l], &d.jobs[h][l])
+                            unified_line(painter, rect, &d.diff.hunks[h].lines[l], &d.jobs[h][l]);
+                            if let Some(a) = gutter(
+                                ui,
+                                Rect::from_min_size(rect.min, egui::vec2(2.0 * NUMBER, LINE)),
+                                h,
+                                l,
+                            ) {
+                                action = Some(a);
+                            }
                         }
                     }
                 }
@@ -182,6 +323,37 @@ fn body(ui: &mut egui::Ui, d: &RenderedDiff, split: bool, has_images: bool) {
             "This diff is too large; only the first 20,000 lines are shown.",
         );
     }
+    action
+}
+
+/// "Stage hunk" / "Unstage hunk" at the right of a hunk header.
+fn hunk_button(
+    ui: &mut egui::Ui,
+    header: Rect,
+    hunk: usize,
+    staging: Option<&Staging<'_>>,
+) -> Option<Action> {
+    let st = staging?;
+    let label = format!("{} hunk", st.verb());
+    let rect = Rect::from_min_size(
+        Pos2::new(
+            header.right().min(ui.clip_rect().right()) - 118.0,
+            header.top() + 1.0,
+        ),
+        egui::vec2(110.0, LINE - 2.0),
+    );
+    let button = egui::Button::new(RichText::new(label).size(11.0))
+        .fill(theme::BG_RAISED)
+        .stroke(Stroke::new(1.0, theme::BORDER))
+        .small();
+    // Buttons default to a 24 px minimum height; keep this one inside the row.
+    let response = ui
+        .scope(|ui| {
+            ui.spacing_mut().interact_size.y = LINE - 4.0;
+            ui.put(rect.shrink2(egui::vec2(0.0, 1.0)), button)
+        })
+        .inner;
+    (response.clicked() && !st.busy).then_some(Action::StageHunk(hunk))
 }
 
 fn backgrounds(kind: LineKind) -> (Color32, Color32) {
@@ -296,8 +468,8 @@ fn image_preview(ui: &mut egui::Ui, pair: &ImagePair) {
             let w = ((ui.available_width() - gap) / 2.0).max(120.0);
             ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing.x = gap;
-                image_side(ui, "Before", pair.old.as_ref(), "Added in this commit", w);
-                image_side(ui, "After", pair.new.as_ref(), "Deleted in this commit", w);
+                image_side(ui, "Before", pair.old.as_ref(), "New file", w);
+                image_side(ui, "After", pair.new.as_ref(), "Deleted", w);
             });
         });
     ui.painter().hline(

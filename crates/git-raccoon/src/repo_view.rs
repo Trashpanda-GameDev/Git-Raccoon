@@ -7,9 +7,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use eframe::egui;
-use git_raccoon_core::details::{self, CommitDetails};
+use git_raccoon_core::details::{self, CommitDetails, LineKind};
 use git_raccoon_core::refs::{self, Refs};
 use git_raccoon_core::repo::{GraphCommit, History};
+use git_raccoon_core::stage::{self, Pick};
 use git_raccoon_core::watch::{Changes, RepoWatcher};
 use git_raccoon_core::working::{self, Side, WorkingStatus};
 
@@ -93,6 +94,62 @@ pub enum Source {
 
 pub type DiffKey = (Source, String);
 
+/// A change to the index the user asked for.
+#[derive(Debug, Clone)]
+pub enum Op {
+    StageFile(String),
+    UnstageFile(String),
+    StageAll,
+    UnstageAll,
+    /// Stage (or, on the staged side, unstage) part of the open diff.
+    Lines {
+        side: Side,
+        file: String,
+        pick: Pick,
+        headers: Vec<String>,
+    },
+}
+
+impl Op {
+    fn run(self, path: &str) -> Result<(), String> {
+        match self {
+            Op::StageFile(f) => stage::stage_file(path, &f),
+            Op::UnstageFile(f) => stage::unstage_file(path, &f),
+            Op::StageAll => stage::stage_all(path),
+            Op::UnstageAll => stage::unstage_all(path),
+            Op::Lines {
+                side: Side::Unstaged,
+                file,
+                pick,
+                headers,
+            } => stage::stage_lines(path, &file, &pick, &headers),
+            Op::Lines {
+                side: Side::Staged,
+                file,
+                pick,
+                headers,
+            } => stage::unstage_lines(path, &file, &pick, &headers),
+        }
+        .map_err(|e| e.to_string())
+    }
+
+    fn verb(&self) -> &'static str {
+        match self {
+            Op::StageFile(_)
+            | Op::StageAll
+            | Op::Lines {
+                side: Side::Unstaged,
+                ..
+            } => "stage",
+            Op::UnstageFile(_)
+            | Op::UnstageAll
+            | Op::Lines {
+                side: Side::Staged, ..
+            } => "unstage",
+        }
+    }
+}
+
 /// How often to re-check the working tree when it can't be watched.
 const STATUS_POLL: std::time::Duration = std::time::Duration::from_secs(3);
 
@@ -116,6 +173,12 @@ pub struct RepoView {
     pub active_file: Option<String>,
     /// For working changes: whether the open diff is the staged or unstaged one.
     pub active_side: Side,
+    /// Lines picked in the open working diff, as (hunk, line).
+    pub picked: std::collections::BTreeSet<(usize, usize)>,
+    /// Where a Shift-click range of picks starts.
+    pick_anchor: Option<(usize, usize)>,
+    /// A staging operation in progress, and what it was.
+    op: Option<(&'static str, Task<Result<(), String>>)>,
     pub diff: Keyed<DiffKey, Result<Arc<RenderedDiff>, String>>,
     pub images: Keyed<DiffKey, Result<Arc<ImagePair>, String>>,
     pub search: Search,
@@ -170,6 +233,9 @@ impl RepoView {
             details: Keyed::default(),
             active_file: None,
             active_side: Side::Unstaged,
+            picked: std::collections::BTreeSet::new(),
+            pick_anchor: None,
+            op: None,
             diff: Keyed::default(),
             images: Keyed::default(),
             search: Search::default(),
@@ -216,6 +282,82 @@ impl RepoView {
 
     pub fn is_loading_status(&self) -> bool {
         self.status_task.is_some() || self.status_changed.load(Ordering::Relaxed)
+    }
+
+    pub fn is_staging(&self) -> bool {
+        self.op.is_some()
+    }
+
+    /// Starts a staging operation unless one is already running.
+    pub fn run(&mut self, ctx: &egui::Context, op: Op) {
+        if self.op.is_some() {
+            return;
+        }
+        let verb = op.verb();
+        let path = self.path().to_string();
+        self.op = Some((verb, Task::spawn(ctx, move || op.run(&path))));
+    }
+
+    /// The open diff, if it has loaded.
+    fn open_diff(&self) -> Option<Arc<RenderedDiff>> {
+        let key = self.diff_key()?;
+        self.diff.get(&key)?.as_ref().ok().cloned()
+    }
+
+    /// Picks or unpicks a changed line of the open working diff. With
+    /// `extend`, every changed line from the last pick to this one is picked.
+    pub fn toggle_pick(&mut self, hunk: usize, line: usize, extend: bool) {
+        let Some(diff) = self.open_diff() else { return };
+        match (extend, self.pick_anchor) {
+            (true, Some(anchor)) => {
+                let (from, to) = if anchor <= (hunk, line) {
+                    (anchor, (hunk, line))
+                } else {
+                    ((hunk, line), anchor)
+                };
+                for (h, hk) in diff.diff.hunks.iter().enumerate() {
+                    for (l, ln) in hk.lines.iter().enumerate() {
+                        let changed = matches!(ln.kind, LineKind::Add | LineKind::Delete);
+                        if changed && (h, l) >= from && (h, l) <= to {
+                            self.picked.insert((h, l));
+                        }
+                    }
+                }
+            }
+            _ => {
+                if !self.picked.remove(&(hunk, line)) {
+                    self.picked.insert((hunk, line));
+                }
+                self.pick_anchor = Some((hunk, line));
+            }
+        }
+    }
+
+    fn lines_op(&self, pick: Pick) -> Option<Op> {
+        let diff = self.open_diff()?;
+        Some(Op::Lines {
+            side: self.active_side,
+            file: self.active_file.clone()?,
+            pick,
+            headers: diff.diff.hunks.iter().map(|h| h.header.clone()).collect(),
+        })
+    }
+
+    /// Stages (or unstages) a whole hunk of the open working diff.
+    pub fn stage_hunk(&mut self, ctx: &egui::Context, hunk: usize) {
+        if let Some(op) = self.lines_op(Pick::Hunk(hunk)) {
+            self.run(ctx, op);
+        }
+    }
+
+    /// Stages (or unstages) the picked lines of the open working diff.
+    pub fn stage_picked(&mut self, ctx: &egui::Context) {
+        if self.picked.is_empty() {
+            return;
+        }
+        if let Some(op) = self.lines_op(Pick::Lines(self.picked.iter().copied().collect())) {
+            self.run(ctx, op);
+        }
     }
 
     /// Re-reads the working changes in the background.
@@ -269,6 +411,18 @@ impl RepoView {
                 Ok(loaded) => self.replace(loaded),
                 Err(e) => self.refresh_error = Some(e),
             }
+        }
+        if let Some((verb, task)) = &self.op
+            && let Some(result) = task.poll()
+        {
+            let verb = *verb;
+            self.op = None;
+            self.picked.clear();
+            self.pick_anchor = None;
+            if let Err(e) = result {
+                self.refresh_error = Some(format!("Could not {verb}: {e}"));
+            }
+            self.refresh_status(ctx);
         }
         if let Some(task) = &self.status_task
             && let Some(result) = task.poll()
@@ -335,10 +489,20 @@ impl RepoView {
                 .as_ref()
                 .is_some_and(|s| s.files(side).iter().any(|f| f.path == file))
         };
-        if let Some(file) = &self.active_file
-            && !still_listed(file, self.active_side)
+        if let Some(file) = self.active_file.clone()
+            && !still_listed(&file, self.active_side)
         {
-            self.active_file = None;
+            // Fully staged (or unstaged): follow the file to the other side.
+            let other = match self.active_side {
+                Side::Staged => Side::Unstaged,
+                Side::Unstaged => Side::Staged,
+            };
+            if still_listed(&file, other) {
+                self.active_side = other;
+            } else {
+                self.active_file = None;
+            }
+            self.picked.clear();
         }
         if self.status.as_ref().is_none_or(WorkingStatus::is_clean) {
             self.working_selected = false;
@@ -356,6 +520,9 @@ impl RepoView {
 
     /// Opens a working file's staged or unstaged diff.
     pub fn open_working_file(&mut self, side: Side, file: String) {
+        if self.active_side != side || self.active_file.as_deref() != Some(file.as_str()) {
+            self.picked.clear();
+        }
         self.active_side = side;
         self.active_file = Some(file);
     }

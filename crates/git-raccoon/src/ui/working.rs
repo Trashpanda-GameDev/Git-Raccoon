@@ -10,13 +10,19 @@ use crate::ui::{details, widgets};
 
 pub enum Action {
     Open(Side, String),
+    Stage(String),
+    Unstage(String),
+    StageAll,
+    UnstageAll,
     Close,
 }
 
+/// `busy`: a staging operation is running, so the buttons are disabled.
 pub fn show(
     ui: &mut egui::Ui,
     status: Option<&WorkingStatus>,
     loading: bool,
+    busy: bool,
     active: Option<(Side, &str)>,
 ) -> Option<Action> {
     let mut action = None;
@@ -27,7 +33,7 @@ pub fn show(
             if widgets::icon_button(ui, icon::X, "Close (Esc)").clicked() {
                 action = Some(Action::Close);
             }
-            if loading {
+            if loading || busy {
                 ui.spinner();
             }
         });
@@ -51,11 +57,22 @@ pub fn show(
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            for (side, title) in [
-                (Side::Unstaged, "Unstaged files"),
-                (Side::Staged, "Staged files"),
-            ] {
+            for side in [Side::Unstaged, Side::Staged] {
                 let files = status.files(side);
+                let (title, all_label, all_glyph, all_action) = match side {
+                    Side::Unstaged => (
+                        "Unstaged files",
+                        "Stage all",
+                        icon::PLUS_CIRCLE,
+                        Action::StageAll,
+                    ),
+                    Side::Staged => (
+                        "Staged files",
+                        "Unstage all",
+                        icon::MINUS_CIRCLE,
+                        Action::UnstageAll,
+                    ),
+                };
                 ui.horizontal(|ui| {
                     ui.label(widgets::section_label(title));
                     ui.label(
@@ -63,6 +80,14 @@ pub fn show(
                             .size(11.0)
                             .color(theme::MUTED),
                     );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let button = egui::Button::new(
+                            RichText::new(format!("{all_glyph}  {all_label}")).size(12.0),
+                        );
+                        if ui.add_enabled(!busy && !files.is_empty(), button).clicked() {
+                            action = Some(all_action);
+                        }
+                    });
                 });
                 ui.spacing_mut().item_spacing.y = 0.0;
                 if files.is_empty() {
@@ -70,9 +95,29 @@ pub fn show(
                 }
                 for f in files {
                     let is_active = active.is_some_and(|(s, p)| s == side && p == f.path);
-                    if details::file_row(ui, &as_changed(f), is_active).clicked() {
-                        action = Some(Action::Open(side, f.path.clone()));
-                    }
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        let row_width = ui.available_width() - 26.0;
+                        let row = ui
+                            .allocate_ui(egui::vec2(row_width, 26.0), |ui| {
+                                details::file_row(ui, &as_changed(f), is_active)
+                            })
+                            .inner;
+                        if row.clicked() {
+                            action = Some(Action::Open(side, f.path.clone()));
+                        }
+                        let (glyph, verb) = match side {
+                            Side::Unstaged => (icon::PLUS, "Stage"),
+                            Side::Staged => (icon::MINUS, "Unstage"),
+                        };
+                        let name = format!("{verb} {}", f.path);
+                        if widgets::named_icon_button(ui, glyph, &name, !busy).clicked() {
+                            action = Some(match side {
+                                Side::Unstaged => Action::Stage(f.path.clone()),
+                                Side::Staged => Action::Unstage(f.path.clone()),
+                            });
+                        }
+                    });
                 }
                 ui.add_space(14.0);
                 ui.spacing_mut().item_spacing.y = 6.0;

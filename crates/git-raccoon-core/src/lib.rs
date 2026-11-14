@@ -9,6 +9,7 @@ pub mod graph;
 pub mod refs;
 pub mod repo;
 pub mod search;
+pub mod stage;
 #[cfg(test)]
 mod testutil;
 pub mod watch;

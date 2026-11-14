@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, Frame, Margin, Panel, RichText};
 
-use crate::repo_view::{self, Loaded, RepoView, Source};
+use crate::repo_view::{self, Loaded, Op, RepoView, Source};
 use crate::settings::{self, Settings};
 use crate::task::Task;
 use crate::theme;
@@ -90,6 +90,7 @@ impl App {
                 r.is_refreshing()
                     || r.is_loading_selection()
                     || r.is_loading_status()
+                    || r.is_staging()
                     || r.details.is_loading()
                     || r.diff.is_loading()
                     || r.images.is_loading()
@@ -342,12 +343,17 @@ impl eframe::App for App {
                         ui,
                         repo.status.as_ref(),
                         repo.is_loading_status(),
+                        repo.is_staging(),
                         active.as_ref().map(|(s, f)| (*s, f.as_str())),
                     )
                 })
                 .inner;
             match action {
                 Some(working::Action::Open(side, f)) => repo.open_working_file(side, f),
+                Some(working::Action::Stage(f)) => repo.run(&ctx, Op::StageFile(f)),
+                Some(working::Action::Unstage(f)) => repo.run(&ctx, Op::UnstageFile(f)),
+                Some(working::Action::StageAll) => repo.run(&ctx, Op::StageAll),
+                Some(working::Action::UnstageAll) => repo.run(&ctx, Op::UnstageAll),
                 Some(working::Action::Close) => repo.deselect(),
                 None => {}
             }
@@ -369,6 +375,14 @@ impl eframe::App for App {
                         Source::Working(Side::Unstaged) => Some("Unstaged"),
                         Source::Commit(_) => None,
                     };
+                    let staging = match key.0 {
+                        Source::Working(side) => Some(diff::Staging {
+                            side,
+                            picked: &repo.picked,
+                            busy: repo.is_staging(),
+                        }),
+                        Source::Commit(_) => None,
+                    };
                     let action = diff::show(
                         ui,
                         &file,
@@ -377,10 +391,17 @@ impl eframe::App for App {
                         repo.diff.is_loading(),
                         images,
                         self.settings.split_diff,
+                        staging.as_ref(),
                     );
                     match action {
                         Some(diff::Action::Close) => repo.active_file = None,
                         Some(diff::Action::SetSplit(s)) => self.settings.split_diff = s,
+                        Some(diff::Action::StageHunk(h)) => repo.stage_hunk(&ctx, h),
+                        Some(diff::Action::ToggleLine { hunk, line, extend }) => {
+                            repo.toggle_pick(hunk, line, extend)
+                        }
+                        Some(diff::Action::StagePicked) => repo.stage_picked(&ctx),
+                        Some(diff::Action::ClearPicked) => repo.picked.clear(),
                         None => {}
                     }
                     return;

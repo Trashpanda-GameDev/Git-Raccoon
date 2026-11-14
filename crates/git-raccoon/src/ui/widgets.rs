@@ -161,3 +161,15 @@ pub fn section_label(text: &str) -> RichText {
 }
 
 pub const ICON_CLOSE: &str = icon::X;
+
+/// An icon button with a readable name for screen readers (and tests) and
+/// the same text as its tooltip.
+pub fn named_icon_button(ui: &mut Ui, glyph: &str, name: &str, enabled: bool) -> Response {
+    let response = ui.add_enabled(
+        enabled,
+        egui::Button::new(RichText::new(glyph).size(15.0).color(theme::MUTED)).frame(false),
+    );
+    ui.ctx()
+        .accesskit_node_builder(response.id, |node| node.set_label(name));
+    response.on_hover_text(name)
+}

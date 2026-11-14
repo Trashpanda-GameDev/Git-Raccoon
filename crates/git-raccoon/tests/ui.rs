@@ -601,3 +601,145 @@ fn shows_working_changes_and_follows_edits() {
     assert!(!h.state().repo().unwrap().working_selected);
     assert!(h.query_by_label("Working changes").is_none());
 }
+
+/// The index's version of a file, read fresh from disk.
+fn staged(sample: &Sample, file: &str) -> Option<String> {
+    let repo = Repository::open(&sample.dir).unwrap();
+    let index = repo.index().unwrap();
+    let entry = index.get_path(Path::new(file), 0)?;
+    Some(String::from_utf8(repo.find_blob(entry.id).unwrap().content().to_vec()).unwrap())
+}
+
+fn numbered(edit: impl Fn(usize) -> Option<&'static str>) -> String {
+    (1..=20)
+        .map(|i| edit(i).map_or_else(|| format!("line {i}\n"), |s| format!("{s}\n")))
+        .collect()
+}
+
+#[test]
+fn stages_files_hunks_and_lines() {
+    let sample = Sample::build();
+    sample.write("notes.txt", numbered(|_| None));
+    sample.commit("Add notes", 1);
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+
+    let edited = numbered(|i| match i {
+        2 => Some("line 2 edited"),
+        18 => Some("line 18 edited"),
+        _ => None,
+    });
+    sample.write("notes.txt", &edited);
+    sample.write("todo.md", "- one\n");
+    wait_for(&mut h, "the WIP row", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.unstaged.len() == 2)
+    });
+    h.get_by_label("Working changes").click();
+    settle(&mut h);
+
+    // Whole files, with the row buttons.
+    h.get_by_label("Stage todo.md").click();
+    wait_for(&mut h, "todo.md staged", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.staged.len() == 1)
+    });
+    assert_eq!(staged(&sample, "todo.md").as_deref(), Some("- one\n"));
+    h.get_by_label("Unstage todo.md").click();
+    wait_for(&mut h, "todo.md unstaged", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.staged.is_empty())
+    });
+    assert_eq!(
+        staged(&sample, "todo.md"),
+        None,
+        "a new file leaves the index again"
+    );
+
+    // Everything at once, and back.
+    h.get_by_label_contains("Stage all").click();
+    wait_for(&mut h, "all staged", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.unstaged.is_empty())
+    });
+    h.get_by_label_contains("Unstage all").click();
+    wait_for(&mut h, "all unstaged", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.staged.is_empty())
+    });
+
+    // One hunk of notes.txt, from its diff.
+    h.get_by_label("notes.txt").click();
+    settle(&mut h);
+    let hunk_buttons = h.get_all_by_label("Stage hunk").count();
+    assert_eq!(hunk_buttons, 2);
+    h.get_all_by_label("Stage hunk").nth(1).unwrap().click();
+    wait_for(&mut h, "the second hunk staged", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.staged.len() == 1)
+    });
+    assert_eq!(
+        staged(&sample, "notes.txt").unwrap(),
+        numbered(|i| (i == 18).then_some("line 18 edited"))
+    );
+    assert_eq!(
+        std::fs::read_to_string(sample.dir.join("notes.txt")).unwrap(),
+        edited,
+        "the file itself is untouched"
+    );
+
+    // A single line: pick the added "line 2 edited" without removing "line 2".
+    h.get_by_label("Pick line: line 2 edited").click();
+    h.run_ok();
+    assert_eq!(h.state().repo().unwrap().picked.len(), 1);
+    screenshot(&mut h, "10-pick-line");
+    h.get_by_label("Stage 1 line").click();
+    wait_for(&mut h, "the line staged", |app| {
+        app.repo().unwrap().picked.is_empty() && !app.is_busy()
+    });
+    let expected: String = numbered(|i| (i == 18).then_some("line 18 edited")).replacen(
+        "line 2\n",
+        "line 2\nline 2 edited\n",
+        1,
+    );
+    assert_eq!(staged(&sample, "notes.txt").unwrap(), expected);
+
+    // From the staged side (the pane stays beside the diff): unstage the 18 hunk again.
+    let button = egui::accesskit::Role::Button;
+    let staged_rows = h.get_all_by_role_and_label(button, "notes.txt").count();
+    assert_eq!(staged_rows, 2, "notes.txt is both staged and unstaged");
+    h.get_all_by_role_and_label(button, "notes.txt")
+        .nth(1)
+        .unwrap()
+        .click();
+    settle(&mut h);
+    h.get_by_label("Staged");
+    let unstage_buttons: Vec<_> = h.get_all_by_label("Unstage hunk").collect();
+    let last = unstage_buttons.len() - 1;
+    unstage_buttons.into_iter().nth(last).unwrap().click();
+    wait_for(&mut h, "the hunk unstaged", |_| {
+        staged(&sample, "notes.txt").is_some_and(|s| !s.contains("line 18 edited"))
+    });
+    assert_eq!(
+        staged(&sample, "notes.txt").unwrap(),
+        numbered(|_| None).replacen("line 2\n", "line 2\nline 2 edited\n", 1)
+    );
+}
