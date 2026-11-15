@@ -73,7 +73,7 @@ pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
             ui.ctx()
                 .accesskit_node_builder(stash.id, |n| n.set_label("Stash changes"));
             if stash
-                .on_hover_text("Put all uncommitted changes aside in a stash")
+                .on_hover_text("Put uncommitted changes aside in a stash: all of them, or just the staged ones")
                 .clicked()
             {
                 action = Some(Action::Stash);
@@ -109,14 +109,17 @@ pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
             }
         });
 
+    ui.add_space(8.0);
+    if status.is_clean() {
+        ui.label(RichText::new("No uncommitted changes.").color(theme::muted()));
+        return action;
+    }
+    // Conflicts first, scrolling within a third of the height at most.
     egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
+        .id_salt("conflicted")
+        .max_height(ui.available_height() / 3.0)
+        .auto_shrink([false, true])
         .show(ui, |ui| {
-            ui.add_space(8.0);
-            if status.is_clean() {
-                ui.label(RichText::new("No uncommitted changes.").color(theme::muted()));
-                return;
-            }
             if !status.conflicted.is_empty() {
                 ui.horizontal(|ui| {
                     ui.label(widgets::section_label("Conflicted files").color(theme::danger()));
@@ -140,13 +143,50 @@ pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
                 ui.add_space(14.0);
                 ui.spacing_mut().item_spacing.y = 6.0;
             }
-            for side in [Side::Unstaged, Side::Staged] {
-                if let Some(a) = file_list(ui, status, side, staging, active) {
-                    action = Some(a);
-                }
-            }
         });
+    // Unstaged and staged files share the rest, each list scrolling on its
+    // own, so staged files are in view however many unstaged ones there are.
+    let (unstaged, staged) = split(
+        ui.available_height() - 2.0 * LIST_CHROME,
+        list_height(status.unstaged.len()),
+        list_height(status.staged.len()),
+    );
+    for (side, height) in [(Side::Unstaged, unstaged), (Side::Staged, staged)] {
+        if let Some(a) = file_list(ui, status, side, staging, active, height) {
+            action = Some(a);
+        }
+    }
     action
+}
+
+const FILE_ROW: f32 = 26.0;
+/// A list's heading and the space after it.
+const LIST_CHROME: f32 = 50.0;
+
+/// The height a list of `files` needs ("None" when empty).
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "file counts are far below f32 limits"
+)]
+fn list_height(files: usize) -> f32 {
+    (files as f32 * FILE_ROW).max(20.0)
+}
+
+/// Shares `space` between two lists: each gets what it needs if both fit;
+/// otherwise a short one keeps its height and the other gets the rest, or
+/// two long ones get half each.
+fn split(space: f32, first: f32, second: f32) -> (f32, f32) {
+    let space = space.max(2.0 * FILE_ROW);
+    let half = space / 2.0;
+    if first + second <= space {
+        (first, second)
+    } else if second <= half {
+        (space - second, second)
+    } else if first <= half {
+        (first, space - first)
+    } else {
+        (half, half)
+    }
 }
 
 fn file_list(
@@ -155,6 +195,7 @@ fn file_list(
     side: Side,
     busy: bool,
     active: Option<(Side, &str)>,
+    height: f32,
 ) -> Option<Action> {
     let mut action = None;
     let files = status.files(side);
@@ -204,45 +245,52 @@ fn file_list(
     if files.is_empty() {
         ui.label(RichText::new("None").size(12.0).color(theme::muted()));
     }
-    for f in files {
-        let is_active = active.is_some_and(|(s, p)| s == side && p == f.path);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
-            // Room for the buttons: stage/unstage, plus discard when unstaged.
-            let buttons = if side == Side::Unstaged { 2.0 } else { 1.0 };
-            let row_width = ui.available_width() - 26.0 * buttons;
-            let row = ui
-                .allocate_ui(egui::vec2(row_width, 26.0), |ui| {
-                    details::file_row(ui, &as_changed(f), is_active)
-                })
-                .inner;
-            if row.clicked() {
-                action = Some(Action::Open(side, f.path.clone()));
-            }
-            let (glyph, verb) = match side {
-                Side::Unstaged => (icon::PLUS, "Stage"),
-                Side::Staged => (icon::MINUS, "Unstage"),
-            };
-            if side == Side::Unstaged
-                && widgets::named_icon_button(
-                    ui,
-                    icon::ARROW_COUNTER_CLOCKWISE,
-                    &format!("Discard changes to {}", f.path),
-                    !busy,
-                )
-                .clicked()
-            {
-                action = Some(Action::Discard(vec![f.path.clone()]));
-            }
-            if widgets::named_icon_button(ui, glyph, &format!("{verb} {}", f.path), !busy).clicked()
-            {
-                action = Some(match side {
-                    Side::Unstaged => Action::Stage(f.path.clone()),
-                    Side::Staged => Action::Unstage(f.path.clone()),
+    egui::ScrollArea::vertical()
+        .id_salt(("files", side == Side::Staged))
+        .max_height(height)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            for f in files {
+                let is_active = active.is_some_and(|(s, p)| s == side && p == f.path);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    // Room for the buttons: stage/unstage, plus discard when unstaged.
+                    let buttons = if side == Side::Unstaged { 2.0 } else { 1.0 };
+                    let row_width = ui.available_width() - 26.0 * buttons;
+                    let row = ui
+                        .allocate_ui(egui::vec2(row_width, 26.0), |ui| {
+                            details::file_row(ui, &as_changed(f), is_active)
+                        })
+                        .inner;
+                    if row.clicked() {
+                        action = Some(Action::Open(side, f.path.clone()));
+                    }
+                    let (glyph, verb) = match side {
+                        Side::Unstaged => (icon::PLUS, "Stage"),
+                        Side::Staged => (icon::MINUS, "Unstage"),
+                    };
+                    if side == Side::Unstaged
+                        && widgets::named_icon_button(
+                            ui,
+                            icon::ARROW_COUNTER_CLOCKWISE,
+                            &format!("Discard changes to {}", f.path),
+                            !busy,
+                        )
+                        .clicked()
+                    {
+                        action = Some(Action::Discard(vec![f.path.clone()]));
+                    }
+                    if widgets::named_icon_button(ui, glyph, &format!("{verb} {}", f.path), !busy)
+                        .clicked()
+                    {
+                        action = Some(match side {
+                            Side::Unstaged => Action::Stage(f.path.clone()),
+                            Side::Staged => Action::Unstage(f.path.clone()),
+                        });
+                    }
                 });
             }
         });
-    }
     ui.add_space(14.0);
     ui.spacing_mut().item_spacing.y = 6.0;
     action
@@ -371,5 +419,22 @@ fn as_changed(f: &WorkingFile) -> ChangedFile {
         additions: 0,
         deletions: 0,
         binary: false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shares_the_height_between_the_lists() {
+        // Both fit: each as tall as it needs.
+        assert_eq!(split(400.0, 100.0, 50.0), (100.0, 50.0));
+        // Many unstaged, a few staged: the staged list keeps its height.
+        assert_eq!(split(400.0, 2000.0, 52.0), (348.0, 52.0));
+        // And the other way round.
+        assert_eq!(split(400.0, 26.0, 2000.0), (26.0, 374.0));
+        // Both long: half each.
+        assert_eq!(split(400.0, 2000.0, 2000.0), (200.0, 200.0));
     }
 }

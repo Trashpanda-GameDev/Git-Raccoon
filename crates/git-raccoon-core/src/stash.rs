@@ -10,9 +10,13 @@ use crate::cli;
 use crate::{Error, Result};
 
 /// Stashes all uncommitted changes (and untracked files, if asked).
-pub fn save(path: &str, message: &str, include_untracked: bool) -> Result<()> {
+/// Stashes the uncommitted changes, untracked files too if asked; or with
+/// `staged_only`, just the staged changes, leaving the rest as it is.
+pub fn save(path: &str, message: &str, include_untracked: bool, staged_only: bool) -> Result<()> {
     let mut args = vec!["stash", "push"];
-    if include_untracked {
+    if staged_only {
+        args.push("--staged");
+    } else if include_untracked {
         args.push("--include-untracked");
     }
     let message = message.trim();
@@ -46,6 +50,16 @@ pub fn apply(path: &str, id: &str) -> Result<()> {
 /// Applies a stash and removes it. If applying conflicts, Git keeps the stash.
 pub fn pop(path: &str, id: &str) -> Result<()> {
     cli::run(path, &["stash", "pop", &reference(path, id)?], None).map(drop)
+}
+
+/// Applies a stash and removes it, with its staged changes staged again.
+pub fn pop_staged(path: &str, id: &str) -> Result<()> {
+    cli::run(
+        path,
+        &["stash", "pop", "--index", &reference(path, id)?],
+        None,
+    )
+    .map(drop)
 }
 
 /// Deletes a stash. Its commit stays recoverable by id until Git prunes it.
@@ -103,7 +117,7 @@ mod tests {
         let t = repo();
         t.write("f.txt", "two\n");
         t.write("new.txt", "untracked\n");
-        save(t.path(), "half done", true).unwrap();
+        save(t.path(), "half done", true, false).unwrap();
         assert!(
             working_status(t.path()).unwrap().unwrap().is_clean(),
             "untracked files went too"
@@ -119,7 +133,7 @@ mod tests {
         assert_eq!(stash_ids(&t).len(), 1, "apply keeps the stash");
 
         // Put the changes away again, then pop the older stash by id.
-        save(t.path(), "second", true).unwrap();
+        save(t.path(), "second", true, false).unwrap();
         assert_eq!(stash_ids(&t).len(), 2);
         pop(t.path(), &id).unwrap();
         let left = stash_ids(&t);
@@ -135,10 +149,37 @@ mod tests {
     }
 
     #[test]
+    fn stashes_just_the_staged_changes() {
+        let t = repo();
+        t.write("g.txt", "one\n");
+        t.commit_all("second");
+        // f.txt staged, g.txt changed but not staged.
+        t.write("f.txt", "staged\n");
+        t.write("g.txt", "not staged\n");
+        crate::cli::run(t.path(), &["add", "f.txt"], None).unwrap();
+
+        save(t.path(), "just f", false, true).unwrap();
+        assert_eq!(read(&t, "f.txt").as_deref(), Some("one\n"), "stashed");
+        assert_eq!(read(&t, "g.txt").as_deref(), Some("not staged\n"), "kept");
+        let status = working_status(t.path()).unwrap().unwrap();
+        assert!(status.staged.is_empty());
+        assert_eq!(status.unstaged.len(), 1);
+
+        // Popped back as it was: staged.
+        let id = stash_ids(&t)[0].0.clone();
+        pop_staged(t.path(), &id).unwrap();
+        assert_eq!(read(&t, "f.txt").as_deref(), Some("staged\n"));
+        let status = working_status(t.path()).unwrap().unwrap();
+        assert_eq!(status.staged.len(), 1);
+        assert_eq!(status.staged[0].path, "f.txt");
+        assert!(stash_ids(&t).is_empty());
+    }
+
+    #[test]
     fn a_conflicting_pop_keeps_the_stash() {
         let t = repo();
         t.write("f.txt", "stashed version\n");
-        save(t.path(), "", false).unwrap();
+        save(t.path(), "", false, false).unwrap();
         let id = stash_ids(&t)[0].0.clone();
         t.write("f.txt", "conflicting edit\n");
         t.commit_all("meanwhile");

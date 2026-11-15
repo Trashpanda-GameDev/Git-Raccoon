@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, Frame, Margin, Panel, RichText};
 
-use crate::repo_view::{self, Dialog, Loaded, Op, RepoView, Source};
+use crate::repo_view::{self, Loaded, Op, RepoView, Source};
 use crate::settings::{self, Settings, ThemeChoice};
 use crate::task::Task;
 use crate::theme;
@@ -854,10 +854,7 @@ impl App {
                     Command::StageAll => repo.run(ctx, Op::StageAll),
                     Command::UnstageAll => repo.run(ctx, Op::UnstageAll),
                     Command::Stash => {
-                        repo.dialog = Some(Dialog::Stash {
-                            message: String::new(),
-                            untracked: true,
-                        });
+                        repo.dialog = Some(repo.stash_dialog());
                     }
                     Command::PopStash => {
                         if let Some(s) = repo.refs.stashes.first() {
@@ -1341,10 +1338,7 @@ impl App {
                 Some(working::Action::Commit) => repo.commit(&ctx),
                 Some(working::Action::Discard(files)) => repo.confirm_discard(files),
                 Some(working::Action::Stash) => {
-                    repo.dialog = Some(Dialog::Stash {
-                        message: String::new(),
-                        untracked: true,
-                    });
+                    repo.dialog = Some(repo.stash_dialog());
                 }
                 Some(working::Action::Close) => repo.deselect(),
                 None => {}

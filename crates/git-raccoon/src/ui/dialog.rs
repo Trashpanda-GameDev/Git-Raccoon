@@ -102,18 +102,34 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
                 heading(ui, title, Some(body));
                 (button.clone(), *danger, true)
             }
-            Dialog::Stash { message, untracked } => {
-                heading(
-                    ui,
-                    "Stash changes",
-                    Some(
-                        "Puts all uncommitted changes aside, leaving a clean working tree. Apply or pop the stash later to get them back.",
-                    ),
-                );
+            Dialog::Stash {
+                message,
+                untracked,
+                staged_files,
+                staged,
+            } => {
+                let about = if *staged {
+                    "Puts the staged changes aside; the rest stay as they are. Apply or pop the stash later to get them back."
+                } else {
+                    "Puts all uncommitted changes aside, leaving a clean working tree. Apply or pop the stash later to get them back."
+                };
+                heading(ui, "Stash changes", Some(about));
+                if *staged_files > 0 {
+                    let files = if *staged_files == 1 {
+                        "1 file".to_string()
+                    } else {
+                        format!("{staged_files} files")
+                    };
+                    ui.radio_value(staged, true, format!("Only the staged changes ({files})"));
+                    ui.radio_value(staged, false, "All changes");
+                    ui.add_space(6.0);
+                }
                 if field(ui, message, "Message (optional)", "Stash message", None) {
                     answer = Some(Some(0));
                 }
-                ui.checkbox(untracked, "Include untracked files");
+                ui.add_enabled_ui(!*staged, |ui| {
+                    ui.checkbox(untracked, "Include untracked files");
+                });
                 ("Stash".into(), false, true)
             }
             Dialog::NewBranch {
@@ -263,7 +279,16 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
                 }
             }
             Dialog::Confirm { op, .. } => Some(op),
-            Dialog::Stash { message, untracked } => Some(Op::Stash { message, untracked }),
+            Dialog::Stash {
+                message,
+                untracked,
+                staged,
+                ..
+            } => Some(Op::Stash {
+                message,
+                untracked,
+                staged,
+            }),
             Dialog::NewBranch {
                 start,
                 name,

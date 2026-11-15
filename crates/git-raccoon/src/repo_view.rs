@@ -167,10 +167,14 @@ pub enum Op {
     Stash {
         message: String,
         untracked: bool,
+        /// Only the staged changes.
+        staged: bool,
     },
     /// Stash operations, by stash commit id.
     StashApply(String),
     StashPop(String),
+    /// Pop, with its staged changes staged again (undoing a stash of them).
+    StashPopStaged(String),
     StashDrop(String),
     CreateBranch {
         name: String,
@@ -342,9 +346,14 @@ impl Op {
             Op::Discard(files, Some(folder)) => {
                 discard::discard_into(path, &files, &folder).map(drop)
             }
-            Op::Stash { message, untracked } => stash::save(path, &message, untracked),
+            Op::Stash {
+                message,
+                untracked,
+                staged,
+            } => stash::save(path, &message, untracked, staged),
             Op::StashApply(id) => stash::apply(path, &id),
             Op::StashPop(id) => stash::pop(path, &id),
+            Op::StashPopStaged(id) => stash::pop_staged(path, &id),
             Op::StashDrop(id) => stash::drop_stash(path, &id),
             Op::CreateBranch {
                 name,
@@ -364,7 +373,12 @@ impl Op {
             Op::DeleteTag(name) => branch::delete_tag(path, &name),
             Op::StashThen(op) => {
                 let what = op.verb();
-                stash::save(path, &format!("Stashed by Git Raccoon to {what}"), true)?;
+                stash::save(
+                    path,
+                    &format!("Stashed by Git Raccoon to {what}"),
+                    true,
+                    false,
+                )?;
                 op.run(path, ctl)
             }
             Op::UndoCommit { expected, to } => undo::reset_soft(path, &expected, &to),
@@ -432,7 +446,7 @@ impl Op {
             Op::Discard(..) => "discard",
             Op::Stash { .. } => "stash",
             Op::StashApply(_) => "apply the stash",
-            Op::StashPop(_) => "pop the stash",
+            Op::StashPop(_) | Op::StashPopStaged(_) => "pop the stash",
             Op::StashDrop(_) => "drop the stash",
             Op::CreateBranch { checkout: true, .. } => "create and check out the branch",
             Op::CreateBranch { .. } => "create the branch",
@@ -700,12 +714,18 @@ fn undo_for(op: &Op, before: Before, path: &str) -> Option<Undoable> {
                 id: before.tag?,
             }],
         ),
-        Op::Stash { .. } => {
+        Op::Stash { staged, .. } => {
             let top = stash::top(path).ok()??;
             if before.stash_top.as_ref() == Some(&top) {
                 return None; // nothing was stashed
             }
-            ("Undo stash".into(), vec![Op::StashPop(top)])
+            // Staged changes come back staged.
+            let pop = if *staged {
+                Op::StashPopStaged(top)
+            } else {
+                Op::StashPop(top)
+            };
+            ("Undo stash".into(), vec![pop])
         }
         Op::StashDrop(id) => (
             "Undo drop stash".into(),
@@ -989,6 +1009,10 @@ pub enum Dialog {
     Stash {
         message: String,
         untracked: bool,
+        /// How many files are staged: if any, stashing just those is offered.
+        staged_files: usize,
+        /// Stash only the staged changes.
+        staged: bool,
     },
     /// Name a new branch starting at `start` (a commit id or "HEAD").
     NewBranch {
@@ -1369,6 +1393,18 @@ impl RepoView {
     }
 
     /// Checks out a local branch (nothing to do if it is already checked out).
+    /// The stash dialog: stashing just the staged changes is offered (and
+    /// chosen) when some are staged.
+    pub fn stash_dialog(&self) -> Dialog {
+        let staged_files = self.status.as_ref().map_or(0, |s| s.staged.len());
+        Dialog::Stash {
+            message: String::new(),
+            untracked: true,
+            staged_files,
+            staged: staged_files > 0,
+        }
+    }
+
     pub fn checkout(&mut self, ctx: &egui::Context, name: String) {
         if self.head_branch() != Some(name.as_str()) {
             self.run(ctx, Op::Checkout(name));

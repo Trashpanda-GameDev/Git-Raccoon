@@ -1024,6 +1024,35 @@ fn discards_into_the_bin_after_asking() {
 }
 
 #[test]
+fn staged_files_stay_in_view_beside_many_unstaged_ones() {
+    let sample = Sample::build();
+    for i in 0..40 {
+        sample.write(&format!("notes/{i:02}.txt"), "new\n");
+    }
+    sample.write("README.md", "# Sample\n\nStaged.\n");
+    git(&sample, &["add", "README.md"]);
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    wait_for(&mut h, "the WIP row", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.unstaged.len() == 40)
+    });
+    h.get_by_label("Working changes").click();
+    settle(&mut h);
+    screenshot(&mut h, "45-many-changes");
+    // The staged file is shown above the commit box, not scrolled away.
+    let staged = h.get_by_label("README.md").rect();
+    let commit = h.get_by_label("Commit summary").rect();
+    assert!(
+        staged.bottom() < commit.top(),
+        "staged file at {staged:?}, commit box at {commit:?}"
+    );
+}
+
+#[test]
 fn stashes_pops_and_drops() {
     let sample = Sample::build();
     let mut h = harness(Settings::default());
@@ -1082,6 +1111,45 @@ fn stashes_pops_and_drops() {
         Some("// stash me\n")
     );
     assert_eq!(read(&sample, "new.txt").as_deref(), Some("untracked too\n"));
+
+    // Stage one change and stash just that: offered, and chosen, first.
+    let readme = read(&sample, "README.md").unwrap();
+    sample.write("README.md", "# Sample\n\nStaged for later.\n");
+    git(&sample, &["add", "README.md"]);
+    wait_for(&mut h, "the staged change", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.staged.len() == 1)
+    });
+    h.get_by_label("Working changes").click();
+    settle(&mut h);
+    h.get_by_label("Stash changes").click();
+    h.run_ok();
+    h.get_by_label("Only the staged changes (1 file)");
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Stash")
+        .click();
+    wait_for(&mut h, "the staged stash", move |app| stashes(app) == 2);
+    assert_eq!(read(&sample, "README.md"), Some(readme), "stashed");
+    assert_eq!(
+        read(&sample, "src/repo_loader.rs").as_deref(),
+        Some("// stash me\n"),
+        "the unstaged change stays"
+    );
+    assert_eq!(read(&sample, "new.txt").as_deref(), Some("untracked too\n"));
+    // Undo brings it back, staged.
+    wait_for(&mut h, "the undo", |app| undo_label(app).is_some());
+    h.get_by_label("Undo").click();
+    wait_for(&mut h, "the stash undone", move |app| {
+        stashes(app) == 1
+            && app
+                .repo()
+                .unwrap()
+                .status
+                .as_ref()
+                .is_some_and(|s| s.staged.iter().any(|f| f.path == "README.md"))
+    });
 
     // Drop the sample's own stash, after confirming.
     h.get_by_label_contains("half-done README tweak").click();

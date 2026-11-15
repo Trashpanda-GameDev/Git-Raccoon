@@ -311,7 +311,7 @@ mod tests {
     fn stores_a_dropped_stash_back() {
         let t = repo();
         t.write("f.txt", "stashed\n");
-        stash::save(t.path(), "keep me", false).unwrap();
+        stash::save(t.path(), "keep me", false, false).unwrap();
         let s = refs::load_refs(t.path()).unwrap().stashes.remove(0);
         stash::drop_stash(t.path(), &s.target).unwrap();
         assert!(refs::load_refs(t.path()).unwrap().stashes.is_empty());

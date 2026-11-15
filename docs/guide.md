@@ -53,11 +53,11 @@ The toolbar has the repository menu (your recent repositories, to switch to one)
 
 When you have uncommitted changes, a **// WIP** row sits at the top of the graph. Click it to see your changes:
 
-- **Unstaged** and **staged** files, each with buttons to stage, unstage or discard. Discarded files go to the Recycle Bin or Trash, so they can be recovered.
+- **Unstaged** and **staged** files, each in a list of its own (so staged files stay in view, however many unstaged ones there are), with buttons to stage, unstage or discard. Discarded files go to the Recycle Bin or Trash, so they can be recovered.
 - Open a file's diff to stage **single hunks**, or pick **individual lines** in the gutter and stage just those.
 - Write a **summary** (the counter turns amber past 50 characters and red past 72) and an optional description, then **Commit** (or Ctrl+Enter).
 - **Amend last commit** replaces the last commit instead; it warns if that commit is already pushed.
-- **Stash** puts all your changes aside; the stash appears in the sidebar, where you can apply, pop or drop it.
+- **Stash** puts your changes aside: all of them, or, when some are staged, just the staged ones (the rest stay as they are). The stash appears in the sidebar, where you can apply, pop or drop it.
 
 Your hooks run as usual. If one refuses the commit, its message is shown and your commit message is kept.
 
