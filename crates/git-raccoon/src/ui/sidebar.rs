@@ -94,6 +94,9 @@ fn row(
     active: bool,
     current: bool,
     tooltip: &str,
+    // The checked-out branch: drawn as a filled label, as on the graph,
+    // with a cloud when its upstream is at the same commit.
+    head: Option<bool>,
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), ROW),
@@ -113,17 +116,19 @@ fn row(
     } else {
         theme::text()
     };
-    painter.text(
-        Pos2::new(x + 7.0, rect.center().y),
-        Align2::CENTER_CENTER,
-        glyph,
-        theme::body(13.0),
-        if current {
-            theme::accent()
-        } else {
-            theme::muted()
-        },
-    );
+    if head.is_none() {
+        painter.text(
+            Pos2::new(x + 7.0, rect.center().y),
+            Align2::CENTER_CENTER,
+            glyph,
+            theme::body(13.0),
+            if current {
+                theme::accent()
+            } else {
+                theme::muted()
+            },
+        );
+    }
 
     // Badges from the right edge.
     let mut right = rect.right() - 10.0;
@@ -146,11 +151,27 @@ fn row(
     } else {
         theme::body(13.0)
     };
-    let label = Rect::from_min_max(
-        Pos2::new(x + 20.0, rect.top()),
-        Pos2::new(right - 4.0, rect.bottom()),
-    );
-    widgets::text_in(painter, label, text, font, colour);
+    if let Some(on_remote) = head {
+        let mut label = format!("{} {text}", icon::CHECK);
+        if on_remote {
+            label.push_str("  ");
+            label.push_str(icon::CLOUD);
+        }
+        widgets::pill(
+            painter,
+            Pos2::new(x - 2.0, rect.center().y),
+            right - 4.0 - x,
+            &label,
+            theme::accent(),
+            true,
+        );
+    } else {
+        let label = Rect::from_min_max(
+            Pos2::new(x + 20.0, rect.top()),
+            Pos2::new(right - 4.0, rect.bottom()),
+        );
+        widgets::text_in(painter, label, text, font, colour);
+    }
     if !tooltip.is_empty() {
         response.clone().on_hover_text(tooltip);
     }
@@ -553,6 +574,11 @@ pub fn show(
                             c.selected == Some(b.target.as_str()),
                             b.is_head,
                             &tooltip,
+                            b.is_head.then(|| {
+                                b.upstream
+                                    .as_ref()
+                                    .is_some_and(|u| !u.gone && u.ahead == 0 && u.behind == 0)
+                            }),
                         );
                         if response.double_clicked() {
                             c.action = Some(Action::Checkout(b.name.clone()));
@@ -647,6 +673,7 @@ pub fn show(
                                     c.selected == Some(b.target.as_str()),
                                     false,
                                     &b.full_name,
+                                    None,
                                 );
                                 if response.double_clicked() {
                                     c.action = Some(Action::CheckoutRemote(b.full_name.clone()));
@@ -721,6 +748,7 @@ pub fn show(
                         c.selected == Some(t.target.as_str()),
                         false,
                         &tip,
+                        None,
                     );
                     if response.clicked() {
                         c.action = Some(Action::Jump(t.target.clone()));
@@ -762,6 +790,7 @@ pub fn show(
                         c.selected == Some(s.target.as_str()),
                         false,
                         &tip,
+                        None,
                     );
                     if response.clicked() {
                         c.action = Some(Action::Jump(s.target.clone()));
@@ -817,7 +846,8 @@ pub fn show(
                     } else {
                         icon::FOLDER_SIMPLE
                     };
-                    let response = row(ui, 0, glyph, &folder, &badges, false, w.current, &tip);
+                    let response =
+                        row(ui, 0, glyph, &folder, &badges, false, w.current, &tip, None);
                     if response.double_clicked() && !w.current {
                         c.action = Some(Action::OpenPath(w.path.clone()));
                     }
@@ -886,8 +916,17 @@ pub fn show(
                             .to_string_lossy()
                             .into_owned();
                         let cloned = s.state != SubmoduleState::Uninitialized;
-                        let response =
-                            row(ui, 0, icon::PACKAGE, &s.path, &badges, false, false, &tip);
+                        let response = row(
+                            ui,
+                            0,
+                            icon::PACKAGE,
+                            &s.path,
+                            &badges,
+                            false,
+                            false,
+                            &tip,
+                            None,
+                        );
                         if response.double_clicked() && cloned {
                             c.action = Some(Action::OpenPath(full.clone()));
                         }
