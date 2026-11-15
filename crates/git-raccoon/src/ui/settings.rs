@@ -32,10 +32,10 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings) -> Option<Action> {
         ui.add_space(4.0);
         let system = ctx.system_theme();
         let choices = [
+            ThemeChoice::Raccoon,
             ThemeChoice::System,
             ThemeChoice::Dark,
             ThemeChoice::Light,
-            ThemeChoice::Raccoon,
             ThemeChoice::Pastel,
             ThemeChoice::Abyss,
             ThemeChoice::Forest,

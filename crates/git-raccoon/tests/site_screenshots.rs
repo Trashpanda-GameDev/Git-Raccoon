@@ -280,7 +280,7 @@ fn website_screenshots() {
     let demo = Demo::build();
 
     // The graph, with a commit's details.
-    let mut h = harness(ThemeChoice::Dark);
+    let mut h = harness(ThemeChoice::Raccoon);
     open(&mut h, &demo.dir);
     click(&mut h, INDEX_COMMIT);
     shot(&mut h, "history");
@@ -328,7 +328,7 @@ fn website_screenshots() {
 
     // The same view in other themes (before the edits below).
     for (theme, name) in [
-        (ThemeChoice::Raccoon, "raccoon"),
+        (ThemeChoice::Dark, "dark"),
         (ThemeChoice::Light, "light"),
         (ThemeChoice::Pastel, "pastel"),
         (ThemeChoice::Abyss, "abyss"),
@@ -341,8 +341,8 @@ fn website_screenshots() {
         small_shot(&mut h, &format!("theme-{name}"));
     }
 
-    // Working changes, back in the dark theme: stage some lines of an edit.
-    let mut h = harness(ThemeChoice::Dark);
+    // Working changes, back in the Raccoon theme: stage some lines of an edit.
+    let mut h = harness(ThemeChoice::Raccoon);
     open(&mut h, &demo.dir);
     demo.write("src/cache.rs", CACHE_2);
     demo.write(

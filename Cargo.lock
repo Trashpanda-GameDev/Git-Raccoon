@@ -1469,6 +1469,7 @@ dependencies = [
  "image",
  "raw-window-handle",
  "rfd",
+ "ron",
  "serde",
  "syntect",
  "two-face",

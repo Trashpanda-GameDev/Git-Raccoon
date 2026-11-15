@@ -149,7 +149,7 @@ def social(w=1280, h=640):
     img = gradient(w, h)
     draw = ImageDraw.Draw(img)
     # The app, in the Raccoon theme, running off the right edge.
-    shot = Image.open(ROOT / "site/screenshots/theme-raccoon.png").convert("RGB")
+    shot = Image.open(ROOT / "site/screenshots/history.png").convert("RGB")
     sw = 760
     shot = shot.resize((sw, round(shot.height * sw / shot.width)), Image.LANCZOS)
     shot = rounded(shot, 14)

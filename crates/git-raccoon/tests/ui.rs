@@ -2163,10 +2163,12 @@ fn switches_theme_and_size_in_settings() {
     let sample = Sample::build();
     let mut h = harness(Settings::default());
     open(&mut h, sample.path());
-    assert!(
-        h.ctx.theme() == egui::Theme::Dark,
-        "dark unless the system says light"
+    assert_eq!(
+        h.state().settings().theme,
+        ThemeChoice::Raccoon,
+        "Raccoon is the default look"
     );
+    assert!(h.ctx.theme() == egui::Theme::Dark);
 
     // A diff open, to see it in both themes.
     h.get_by_label("Reject bare repositories when loading")

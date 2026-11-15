@@ -34,7 +34,7 @@ pub fn now() -> i64 {
         .unwrap_or(0)
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub recent: Vec<RecentRepo>,
@@ -53,15 +53,23 @@ pub struct Settings {
     pub zoom: Option<f32>,
     /// Don't look for updates.
     pub no_update_checks: bool,
+    /// Which defaults these settings were saved with (see `upgrade`):
+    /// 0 when missing, from a version before there was this field.
+    #[serde(default)]
+    pub defaults: u32,
 }
+
+/// The current defaults: 1 since Raccoon became the default look.
+const DEFAULTS: u32 = 1;
 
 /// A look, or light or dark following the system.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ThemeChoice {
-    #[default]
     System,
     Dark,
     Light,
+    /// Git Raccoon's own look, and the default.
+    #[default]
     Raccoon,
     Pastel,
     Abyss,
@@ -73,8 +81,38 @@ pub enum ThemeChoice {
 /// The interface sizes offered.
 pub const ZOOMS: [f32; 5] = [0.9, 1.0, 1.1, 1.25, 1.5];
 
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            recent: Vec::new(),
+            last_repo: None,
+            open_tabs: Vec::new(),
+            active_tab: 0,
+            split_diff: false,
+            hide_sidebar: false,
+            clone_dir: None,
+            theme: ThemeChoice::default(),
+            zoom: None,
+            no_update_checks: false,
+            defaults: DEFAULTS,
+        }
+    }
+}
+
 impl Settings {
     pub const KEY: &'static str = "settings";
+
+    /// Brings settings saved by an older version up to date. Before 0.5.2
+    /// the default look was System, so a saved System then was most
+    /// likely never chosen: it becomes Raccoon, the default now.
+    #[must_use]
+    pub fn upgrade(mut self) -> Self {
+        if self.defaults < 1 && self.theme == ThemeChoice::System {
+            self.theme = ThemeChoice::Raccoon;
+        }
+        self.defaults = DEFAULTS;
+        self
+    }
 
     /// Moves `path` to the front of the recent list, adding it if new.
     pub fn remember(&mut self, path: &str) {
@@ -113,6 +151,26 @@ mod tests {
             s.remember(&format!("/r/{i}"));
         }
         assert_eq!(s.recent.len(), MAX_RECENT);
+    }
+
+    #[test]
+    fn older_settings_move_to_the_raccoon_look_once() {
+        // Saved by 0.5.1 (as eframe saves it, in RON), with the old default.
+        let old: Settings = ron::from_str("(theme: System, split_diff: true)").unwrap();
+        assert_eq!(old.defaults, 0);
+        let new = old.upgrade();
+        assert_eq!(new.theme, ThemeChoice::Raccoon);
+        assert!(new.split_diff, "the rest is kept");
+        // A look chosen before is kept.
+        let chose: Settings = ron::from_str("(theme: Light)").unwrap();
+        assert_eq!(chose.upgrade().theme, ThemeChoice::Light);
+        // System chosen after the change is kept too.
+        let now = Settings {
+            theme: ThemeChoice::System,
+            ..Settings::default()
+        };
+        let saved: Settings = ron::from_str(&ron::to_string(&now).unwrap()).unwrap();
+        assert_eq!(saved.upgrade().theme, ThemeChoice::System);
     }
 
     #[test]

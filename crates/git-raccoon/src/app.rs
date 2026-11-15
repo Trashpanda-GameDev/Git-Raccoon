@@ -96,6 +96,7 @@ impl App {
         let settings = cc
             .storage
             .and_then(|s| eframe::get_value::<Settings>(s, Settings::KEY))
+            .map(Settings::upgrade)
             .unwrap_or_default();
         let mut app = Self::with_settings(&cc.egui_ctx, settings);
         if let Ok(exe) = std::env::current_exe() {
