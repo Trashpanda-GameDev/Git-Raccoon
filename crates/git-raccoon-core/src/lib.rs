@@ -17,6 +17,7 @@ pub mod merge;
 pub mod refs;
 pub mod remote;
 pub mod repo;
+pub mod rewrite;
 pub mod search;
 pub mod stage;
 pub mod stash;

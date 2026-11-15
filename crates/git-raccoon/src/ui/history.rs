@@ -94,6 +94,16 @@ pub enum Click {
         id: String,
         label: String,
     },
+    CherryPick {
+        id: String,
+    },
+    Revert {
+        id: String,
+    },
+    Reset {
+        id: String,
+        label: String,
+    },
 }
 
 /// Shows the history; returns what was clicked, if anything.
@@ -179,6 +189,7 @@ pub fn show(
     }
 
     let selected = repo.selected.as_ref().map(|s| s.id.clone());
+    let head = repo.head_branch().map(str::to_string);
     let searching = repo.search.is_active();
     let mut clicked = None;
     let output = area.show_viewport(ui, |ui, viewport| {
@@ -229,18 +240,52 @@ pub fn show(
             if let Some(c) = commit {
                 let (id, label) = (c.id.clone(), commit_label(&c.id, &c.summary));
                 response.context_menu(|ui| {
+                    let on_branch = head.is_some();
+                    let target = head.as_deref().unwrap_or("HEAD");
                     let items = [
-                        (icon::GIT_BRANCH, "Create branch here…", 0),
-                        (icon::TAG, "Create tag here…", 1),
-                        (icon::SIGN_OUT, "Check out this commit…", 2),
+                        (icon::GIT_BRANCH, "Create branch here…".to_string(), 0, true),
+                        (icon::TAG, "Create tag here…".to_string(), 1, true),
+                        (
+                            icon::SIGN_OUT,
+                            "Check out this commit…".to_string(),
+                            2,
+                            true,
+                        ),
+                        (
+                            icon::ARROW_BEND_DOWN_RIGHT,
+                            format!("Cherry-pick onto {target}"),
+                            3,
+                            on_branch,
+                        ),
+                        (
+                            icon::ARROW_COUNTER_CLOCKWISE,
+                            "Revert this commit".to_string(),
+                            4,
+                            on_branch,
+                        ),
+                        (
+                            icon::CLOCK_COUNTER_CLOCKWISE,
+                            format!("Reset {target} to here…"),
+                            5,
+                            on_branch,
+                        ),
                     ];
-                    for (glyph, text, which) in items {
-                        if ui.button(format!("{glyph}  {text}")).clicked() {
+                    for (glyph, text, which, enabled) in items {
+                        if which == 3 {
+                            ui.separator();
+                        }
+                        if ui
+                            .add_enabled(enabled, egui::Button::new(format!("{glyph}  {text}")))
+                            .clicked()
+                        {
                             let (id, label) = (id.clone(), label.clone());
                             clicked = Some(match which {
                                 0 => Click::NewBranch { id, label },
                                 1 => Click::NewTag { id, label },
-                                _ => Click::CheckoutDetached { id, label },
+                                2 => Click::CheckoutDetached { id, label },
+                                3 => Click::CherryPick { id },
+                                4 => Click::Revert { id },
+                                _ => Click::Reset { id, label },
                             });
                             ui.close();
                         }

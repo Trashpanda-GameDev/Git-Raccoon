@@ -325,6 +325,8 @@ pub enum Action {
     /// Add a remote (`None`) or edit one.
     EditRemote(Option<String>),
     RemoveRemote(String),
+    /// Rebase the checked-out branch onto this one.
+    Rebase(String),
     /// Merge `source` into `target` (the checked-out branch if `None`).
     Merge {
         source: String,
@@ -546,6 +548,8 @@ pub fn show(
                             c.action = Some(a);
                         }
                         let merge_label = format!("Merge into {}", head.unwrap_or("HEAD"));
+                        let rebase_label =
+                            format!("Rebase {} onto {}", head.unwrap_or("HEAD"), b.name);
                         response.context_menu(|ui| {
                             let items = vec![
                                 ("Check out", !b.is_head, Action::Checkout(b.name.clone())),
@@ -556,6 +560,11 @@ pub fn show(
                                         source: b.name.clone(),
                                         target: None,
                                     },
+                                ),
+                                (
+                                    rebase_label.as_str(),
+                                    !b.is_head && head.is_some(),
+                                    Action::Rebase(b.name.clone()),
                                 ),
                                 (
                                     "Create branch here…",
@@ -630,6 +639,11 @@ pub fn show(
                                 }
                                 drag_source(&response, &b.full_name);
                                 let merge_label = format!("Merge into {}", head.unwrap_or("HEAD"));
+                                let rebase_label = format!(
+                                    "Rebase {} onto {}",
+                                    head.unwrap_or("HEAD"),
+                                    b.full_name
+                                );
                                 response.context_menu(|ui| {
                                     let items = vec![
                                         (
@@ -639,6 +653,11 @@ pub fn show(
                                                 source: b.full_name.clone(),
                                                 target: None,
                                             },
+                                        ),
+                                        (
+                                            rebase_label.as_str(),
+                                            head.is_some(),
+                                            Action::Rebase(b.full_name.clone()),
                                         ),
                                         (
                                             "Check out",

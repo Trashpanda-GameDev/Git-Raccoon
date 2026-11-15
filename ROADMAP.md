@@ -59,8 +59,8 @@ Collaborate through remotes.
 The operations people open a GUI for.
 
 - [x] Merge and fast-forward, by dragging one branch onto another (in the sidebar for now; dragging the graph's branch labels to come)
-- [ ] Rebase onto a branch
-- [ ] Cherry-pick, revert and reset (soft, mixed, hard)
+- [x] Rebase onto a branch
+- [x] Cherry-pick, revert and reset (soft, mixed, hard)
 - [x] Conflict view: list conflicted files, pick ours/theirs per hunk, edit the result
 - [ ] Interactive rebase: reorder, squash, reword and drop commits by drag and drop
 - [x] Clear in-progress banners for merges, rebases and cherry-picks, with continue and abort

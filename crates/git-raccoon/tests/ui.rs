@@ -1757,3 +1757,98 @@ fn merges_resolves_conflicts_continues_and_aborts() {
     );
     assert_eq!(h.state().error(), None);
 }
+
+fn head_id(app: &App) -> String {
+    let repo = app.repo().unwrap();
+    repo.history.ids()[repo.history.head_row().unwrap()].to_string()
+}
+
+fn status_counts(app: &App) -> (usize, usize) {
+    app.repo()
+        .unwrap()
+        .status
+        .as_ref()
+        .map_or((0, 0), |s| (s.staged.len(), s.unstaged.len()))
+}
+
+#[test]
+fn cherry_picks_reverts_resets_and_rebases() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    let start = head_id(h.state());
+    let undo = |h: &mut Harness<'_, App>, label: &str, back_to: &str| {
+        let (label, back_to) = (label.to_string(), back_to.to_string());
+        wait_for(h, "the undo", move |app| {
+            undo_label(app).is_some_and(|l| l.starts_with(&label))
+        });
+        h.get_by_label("Undo").click();
+        wait_for(h, "undone", move |app| head_id(app) == back_to);
+    };
+
+    // Cherry-pick a commit from another branch.
+    menu_item(&mut h, "Fix toolbar glitch", "Cherry-pick onto main");
+    wait_for(&mut h, "the cherry-pick", |app| {
+        head_summary(app) == "Fix toolbar glitch"
+    });
+    assert!(read(&sample, "src/toolbar.rs").is_some());
+    undo(&mut h, "Undo cherry-pick of", &start);
+    assert!(read(&sample, "src/toolbar.rs").is_none());
+
+    // Revert one.
+    menu_item(
+        &mut h,
+        "Redraw icon and rename loader",
+        "Revert this commit",
+    );
+    wait_for(&mut h, "the revert", |app| {
+        head_summary(app) == "Revert \"Redraw icon and rename loader\""
+    });
+    undo(&mut h, "Undo revert of", &start);
+
+    // Reset: mixed keeps the changes in the files; undoing leaves them alone.
+    menu_item(&mut h, "Add icon", "Reset main to here");
+    h.get_by_label_contains("Reset main to");
+    screenshot(&mut h, "30-reset");
+    h.get_by_label("Mixed").click();
+    wait_for(&mut h, "the reset", |app| head_summary(app) == "Add icon");
+    wait_for(&mut h, "changes kept", |app| status_counts(app).1 > 0);
+    undo(&mut h, "Undo reset", &start);
+    // Hard: the files go back too, and come forward again with undo.
+    menu_item(&mut h, "Add icon", "Reset main to here");
+    h.get_by_label("Hard").click();
+    wait_for(&mut h, "the hard reset", |app| {
+        head_summary(app) == "Add icon"
+    });
+    wait_for(&mut h, "clean", |app| status_counts(app) == (0, 0));
+    undo(&mut h, "Undo reset", &start);
+    wait_for(&mut h, "clean again", |app| status_counts(app) == (0, 0));
+
+    // Rebase a branch made from an older commit onto main.
+    git(&sample, &["switch", "-q", "-c", "topic", "HEAD~2"]);
+    sample.write("topic.txt", "topic\n");
+    git(&sample, &["add", "topic.txt"]);
+    git(&sample, &["commit", "-q", "-m", "Topic work"]);
+    wait_for(&mut h, "topic checked out", |app| {
+        head_branch(app).as_deref() == Some("topic")
+    });
+    let topic_before = head_id(h.state());
+    menu_item(&mut h, "main", "Rebase topic onto main");
+    h.get_by_label("Rebase topic onto main?");
+    h.get_by_label("Rebase").click();
+    wait_for(&mut h, "the rebase", move |app| {
+        head_summary(app) == "Topic work" && head_id(app) != topic_before
+    });
+    let repo = Repository::open(sample.path()).unwrap();
+    let parent = repo
+        .head()
+        .unwrap()
+        .peel_to_commit()
+        .unwrap()
+        .parent_id(0)
+        .unwrap();
+    assert_eq!(parent.to_string(), start, "now on top of main");
+    let topic_before = repo.revparse_single("topic@{1}").unwrap().id().to_string();
+    undo(&mut h, "Undo rebase onto main", &topic_before);
+    assert_eq!(h.state().error(), None);
+}

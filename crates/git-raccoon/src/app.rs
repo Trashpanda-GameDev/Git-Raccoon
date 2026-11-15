@@ -603,6 +603,7 @@ impl App {
                 Some(sidebar::Action::EditRemote(name)) => repo.edit_remote(name),
                 Some(sidebar::Action::RemoveRemote(name)) => repo.confirm_remove_remote(name),
                 Some(sidebar::Action::Merge { source, target }) => repo.ask_merge(source, target),
+                Some(sidebar::Action::Rebase(onto)) => repo.confirm_rebase(onto),
                 None => {}
             }
         }
@@ -782,6 +783,9 @@ impl App {
                     Some(history::Click::CheckoutDetached { id, label }) => {
                         repo.confirm_checkout_detached(id, label);
                     }
+                    Some(history::Click::CherryPick { id }) => repo.run(&ctx, Op::CherryPick(id)),
+                    Some(history::Click::Revert { id }) => repo.run(&ctx, Op::Revert(id)),
+                    Some(history::Click::Reset { id, label }) => repo.ask_reset(id, label),
                     None => {}
                 }
             });

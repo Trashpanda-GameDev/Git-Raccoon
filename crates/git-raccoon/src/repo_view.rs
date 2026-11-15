@@ -12,6 +12,7 @@ use git_raccoon_core::details::{self, CommitDetails, LineKind};
 use git_raccoon_core::merge::{self, MergeMode};
 use git_raccoon_core::refs::{self, Refs};
 use git_raccoon_core::repo::{GraphCommit, History};
+use git_raccoon_core::rewrite::{self, ResetMode};
 use git_raccoon_core::stage::{self, Pick};
 use git_raccoon_core::sync::{self, Progress, PullMode};
 use git_raccoon_core::watch::{Changes, RepoWatcher};
@@ -245,8 +246,21 @@ pub enum Op {
         text: String,
     },
     MarkResolved(String),
-    /// Undo a merge: back from `expected` to `to`, keeping local changes.
-    UndoMerge {
+    /// Undo a mixed reset: back from `expected` to `to`, files untouched.
+    UndoMixedReset {
+        expected: String,
+        to: String,
+    },
+    Rebase(String),
+    CherryPick(String),
+    Revert(String),
+    Reset {
+        id: String,
+        mode: ResetMode,
+    },
+    /// Undo a merge, rebase, cherry-pick, revert or hard reset: back from
+    /// `expected` to `to`, keeping local changes.
+    ResetKeep {
         expected: String,
         to: String,
     },
@@ -350,7 +364,12 @@ impl Op {
                 text,
             } => conflict::write(path, &file, &expected, &text),
             Op::MarkResolved(file) => conflict::mark_resolved(path, &file),
-            Op::UndoMerge { expected, to } => undo::reset_keep(path, &expected, &to),
+            Op::ResetKeep { expected, to } => undo::reset_keep(path, &expected, &to),
+            Op::UndoMixedReset { expected, to } => undo::reset_mixed(path, &expected, &to),
+            Op::Rebase(onto) => rewrite::rebase(path, &onto),
+            Op::CherryPick(id) => rewrite::cherry_pick(path, &id),
+            Op::Revert(id) => rewrite::revert(path, &id),
+            Op::Reset { id, mode } => rewrite::reset(path, &id, mode),
         }
     }
 
@@ -400,7 +419,11 @@ impl Op {
             Op::TakeSide { .. } | Op::WriteConflict { .. } | Op::MarkResolved(_) => {
                 "resolve the conflict"
             }
-            Op::UndoMerge { .. } => "undo",
+            Op::ResetKeep { .. } | Op::UndoMixedReset { .. } => "undo",
+            Op::Rebase(_) => "rebase",
+            Op::CherryPick(_) => "cherry-pick",
+            Op::Revert(_) => "revert",
+            Op::Reset { .. } => "reset",
         }
     }
 
@@ -423,7 +446,7 @@ impl Op {
     /// Whether local changes in its way can be stashed first.
     fn can_stash_first(&self) -> bool {
         match self {
-            Op::Merge { .. } => true,
+            Op::Merge { .. } | Op::CherryPick(_) | Op::Revert(_) => true,
             Op::Then(ops) => ops.first().is_some_and(Op::can_stash_first),
             op => op.is_checkout(),
         }
@@ -476,6 +499,8 @@ struct Before {
     stash_message: Option<String>,
     branch_existed: bool,
     stash_top: Option<String>,
+    /// HEAD's commit, for operations that move it.
+    head: Option<String>,
 }
 
 impl Before {
@@ -502,6 +527,9 @@ impl Before {
             }
             Op::Stash { .. } => b.stash_top = stash::top(path).ok().flatten(),
             Op::StashThen(inner) => return Before::capture(inner, path),
+            Op::Rebase(_) | Op::CherryPick(_) | Op::Revert(_) | Op::Reset { .. } => {
+                b.head = undo::head_id(path).ok().flatten();
+            }
             _ => {}
         }
         b
@@ -610,6 +638,44 @@ fn undo_for(op: &Op, before: Before, path: &str) -> Option<Undoable> {
             u.op = Op::Then(ops);
             return Some(u);
         }
+        Op::Rebase(_) | Op::CherryPick(_) | Op::Revert(_) | Op::Reset { .. } => {
+            // Stopped on conflicts: abort is the way back, not undo.
+            if merge::in_progress(path).ok()?.is_some() {
+                return None;
+            }
+            let (from, now) = (before.head?, undo::head_id(path).ok()??);
+            if from == now {
+                return None; // nothing changed
+            }
+            let label = match op {
+                Op::Rebase(onto) => format!("Undo rebase onto {onto}"),
+                Op::CherryPick(id) => format!("Undo cherry-pick of {}", short(id)),
+                Op::Revert(id) => format!("Undo revert of {}", short(id)),
+                _ => "Undo reset".to_string(),
+            };
+            // A soft or mixed reset left the files alone: undoing it does too.
+            let back = match op {
+                Op::Reset {
+                    mode: ResetMode::Soft,
+                    ..
+                } => Op::UndoCommit {
+                    expected: now,
+                    to: from,
+                },
+                Op::Reset {
+                    mode: ResetMode::Mixed,
+                    ..
+                } => Op::UndoMixedReset {
+                    expected: now,
+                    to: from,
+                },
+                _ => Op::ResetKeep {
+                    expected: now,
+                    to: from,
+                },
+            };
+            (label, vec![back])
+        }
         Op::Merge { .. } | Op::Continue => {
             // Finished (no conflicts left in progress): undo from the reflog.
             if merge::in_progress(path).ok()?.is_some() {
@@ -625,7 +691,7 @@ fn undo_for(op: &Op, before: Before, path: &str) -> Option<Undoable> {
             };
             (
                 label,
-                vec![Op::UndoMerge {
+                vec![Op::ResetKeep {
                     expected: last.to.clone(),
                     to: last.from?,
                 }],
@@ -1191,6 +1257,11 @@ impl RepoView {
                         false,
                         merge(MergeMode::NoFastForward),
                     ),
+                    (
+                        format!("Rebase {head} onto {source}"),
+                        false,
+                        Op::Rebase(source.clone()),
+                    ),
                 ],
             });
         } else {
@@ -1209,6 +1280,51 @@ impl RepoView {
                 )],
             });
         }
+    }
+
+    /// Asks before rebasing the checked-out branch onto `onto`.
+    pub fn confirm_rebase(&mut self, onto: String) {
+        let Some(head) = self.head_branch().map(str::to_string) else {
+            self.refresh_error = Some("Could not rebase: no branch is checked out.".into());
+            return;
+        };
+        let pushed = commit::head_is_pushed(self.path()).unwrap_or(false);
+        let warning = if pushed {
+            format!(
+                " {head}'s commits are already pushed, so afterwards you'll need to force-push, and anyone who has them will need to fix up their copies."
+            )
+        } else {
+            String::new()
+        };
+        self.dialog = Some(Dialog::Confirm {
+            title: format!("Rebase {head} onto {onto}?"),
+            body: format!(
+                "Replays {head}'s own commits on top of {onto}, for a straight history. The replayed commits are new commits.{warning} If a commit conflicts, you'll resolve it, then continue."
+            ),
+            button: "Rebase".into(),
+            danger: pushed,
+            op: Op::Rebase(onto),
+        });
+    }
+
+    /// Asks how to reset the checked-out branch to commit `id`.
+    pub fn ask_reset(&mut self, id: String, label: String) {
+        let head = self.head_branch().unwrap_or("HEAD").to_string();
+        let reset = |mode| Op::Reset {
+            id: id.clone(),
+            mode,
+        };
+        self.dialog = Some(Dialog::Choice {
+            title: format!("Reset {head} to {label}?"),
+            body: format!(
+                "Moves {head} to this commit; the commits after it leave the branch.\n\nSoft: their changes stay staged.\nMixed: their changes stay in your files, unstaged.\nHard: your files match this commit; their changes and any uncommitted changes are discarded."
+            ),
+            choices: vec![
+                ("Soft".into(), false, reset(ResetMode::Soft)),
+                ("Mixed".into(), false, reset(ResetMode::Mixed)),
+                ("Hard".into(), true, reset(ResetMode::Hard)),
+            ],
+        });
     }
 
     pub fn confirm_abort(&mut self) {
@@ -1329,17 +1445,21 @@ impl RepoView {
                 true
             }
             (Error::Dirty(_), op) if op.can_stash_first() => {
-                let (then, button) = if op.is_checkout() {
-                    ("switch", "Stash and switch")
+                let then = if op.is_checkout() {
+                    "switch"
                 } else {
-                    ("merge", "Stash and merge")
+                    match op {
+                        Op::Then(ops) => ops.last().map_or("continue", Op::verb),
+                        op => op.verb(),
+                    }
                 };
+                let button = format!("Stash and {then}");
                 self.dialog = Some(Dialog::Confirm {
                     title: "Your changes are in the way".into(),
                     body: format!(
                         "Some uncommitted changes would be overwritten. Stash them first (untracked files too), then {then}? Apply or pop the stash afterwards to get them back."
                     ),
-                    button: button.into(),
+                    button,
                     danger: false,
                     op: Op::StashThen(Box::new(op.clone())),
                 });

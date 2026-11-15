@@ -82,6 +82,18 @@ pub fn reset_soft(path: &str, expected: &str, to: &str) -> Result<()> {
     cli::run(path, &["reset", "--soft", to], None).map(drop)
 }
 
+/// Moves the current branch back from `expected` to `to` and makes the
+/// index match it, leaving files alone (undoing a mixed reset).
+pub fn reset_mixed(path: &str, expected: &str, to: &str) -> Result<()> {
+    if head_id(path)?.as_deref() != Some(expected) {
+        return Err(Error::Stale(format!(
+            "HEAD is no longer at {}, so the reset wasn't undone",
+            short(expected)
+        )));
+    }
+    cli::run(path, &["reset", "--quiet", "--mixed", to], None).map(drop)
+}
+
 /// Moves the current branch back from `expected` to `to` (undoing a merge),
 /// keeping uncommitted changes; Git refuses if they'd be overwritten.
 pub fn reset_keep(path: &str, expected: &str, to: &str) -> Result<()> {
