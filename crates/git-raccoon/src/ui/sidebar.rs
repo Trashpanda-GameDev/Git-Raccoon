@@ -198,9 +198,31 @@ fn folder_row(
     clicked
 }
 
-fn section_header(ui: &mut egui::Ui, title: &str, count: usize, open: bool) -> bool {
+/// A section heading. Returns (toggled, add clicked); the add button is
+/// shown when `add` names it.
+fn section_header(
+    ui: &mut egui::Ui,
+    title: &str,
+    count: usize,
+    open: bool,
+    add: Option<&str>,
+) -> (bool, bool) {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 28.0), Sense::click());
+    let mut added = false;
+    if let Some(name) = add {
+        let r = Rect::from_center_size(
+            Pos2::new(rect.right() - 40.0, rect.center().y + 2.0),
+            egui::vec2(20.0, 20.0),
+        );
+        let button = ui.put(
+            r,
+            egui::Button::new(RichText::new(icon::PLUS).size(12.0)).frame(false),
+        );
+        ui.ctx()
+            .accesskit_node_builder(button.id, |n| n.set_label(name));
+        added = button.on_hover_text(name).clicked();
+    }
     let painter = ui.painter();
     let caret = if open {
         icon::CARET_DOWN
@@ -228,7 +250,7 @@ fn section_header(ui: &mut egui::Ui, title: &str, count: usize, open: bool) -> b
         egui::FontId::proportional(11.0),
         theme::MUTED,
     );
-    response.clicked()
+    (response.clicked(), added)
 }
 
 struct Ctx<'s> {
@@ -286,6 +308,28 @@ pub enum Action {
     StashApply(String),
     StashPop(String),
     StashDrop(String),
+    /// Check out a local branch.
+    Checkout(String),
+    /// Check out a remote branch ("origin/x") through a local tracking branch.
+    CheckoutRemote(String),
+    /// Open the new-branch dialog at `start` ("HEAD" or a commit id).
+    NewBranch {
+        start: String,
+        label: String,
+    },
+    Rename(String),
+    DeleteBranch(String),
+    DeleteTag(String),
+}
+
+/// Adds the items of a context menu; the chosen one becomes the action.
+fn menu(ui: &mut egui::Ui, action: &mut Option<Action>, items: Vec<(&str, bool, Action)>) {
+    for (label, enabled, act) in items {
+        if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+            *action = Some(act);
+            ui.close();
+        }
+    }
 }
 
 /// Shows the sidebar.
@@ -330,6 +374,11 @@ pub fn show(
         })
         .filter(|(name, _, branches)| f.is_empty() || !branches.is_empty() || matches(name))
         .collect();
+    let head = refs
+        .local
+        .iter()
+        .find(|b| b.is_head)
+        .map(|b| b.name.as_str());
     let tags: Vec<_> = refs.tags.iter().filter(|t| matches(&t.name)).collect();
     let stashes: Vec<_> = refs
         .stashes
@@ -359,8 +408,16 @@ pub fn show(
 
             // Local branches.
             let open = c.is_open("local");
-            if section_header(ui, "Local", local.len(), open) {
+            let (toggled, add) = section_header(ui, "Local", local.len(), open, Some("New branch"));
+            if toggled {
                 c.toggle("local");
+            }
+            if add {
+                let label = head.map_or_else(|| "HEAD".to_string(), |b| format!("{b} (HEAD)"));
+                c.action = Some(Action::NewBranch {
+                    start: "HEAD".into(),
+                    label,
+                });
             }
             if open {
                 if local.is_empty() {
@@ -408,7 +465,7 @@ pub fn show(
                         } else {
                             icon::GIT_BRANCH
                         };
-                        if row(
+                        let response = row(
                             ui,
                             depth,
                             glyph,
@@ -417,11 +474,28 @@ pub fn show(
                             c.selected == Some(b.target.as_str()),
                             b.is_head,
                             &tooltip,
-                        )
-                        .clicked()
-                        {
+                        );
+                        if response.double_clicked() {
+                            c.action = Some(Action::Checkout(b.name.clone()));
+                        } else if response.clicked() {
                             c.action = Some(Action::Jump(b.target.clone()));
                         }
+                        response.context_menu(|ui| {
+                            let items = vec![
+                                ("Check out", !b.is_head, Action::Checkout(b.name.clone())),
+                                (
+                                    "Create branch here…",
+                                    true,
+                                    Action::NewBranch {
+                                        start: b.target.clone(),
+                                        label: b.name.clone(),
+                                    },
+                                ),
+                                ("Rename…", true, Action::Rename(b.name.clone())),
+                                ("Delete…", !b.is_head, Action::DeleteBranch(b.name.clone())),
+                            ];
+                            menu(ui, &mut c.action, items);
+                        });
                     },
                 );
             }
@@ -429,7 +503,7 @@ pub fn show(
             // Remotes.
             let count = remotes.iter().map(|r| r.2.len()).sum();
             let open = c.is_open("remotes");
-            if section_header(ui, "Remote", count, open) {
+            if section_header(ui, "Remote", count, open, None).0 {
                 c.toggle("remotes");
             }
             if open {
@@ -453,7 +527,7 @@ pub fn show(
                             &key,
                             1,
                             &mut |ui, c, b: &RemoteBranch, name, depth| {
-                                if row(
+                                let response = row(
                                     ui,
                                     depth,
                                     icon::GIT_BRANCH,
@@ -462,11 +536,30 @@ pub fn show(
                                     c.selected == Some(b.target.as_str()),
                                     false,
                                     &b.full_name,
-                                )
-                                .clicked()
-                                {
+                                );
+                                if response.double_clicked() {
+                                    c.action = Some(Action::CheckoutRemote(b.full_name.clone()));
+                                } else if response.clicked() {
                                     c.action = Some(Action::Jump(b.target.clone()));
                                 }
+                                response.context_menu(|ui| {
+                                    let items = vec![
+                                        (
+                                            "Check out",
+                                            true,
+                                            Action::CheckoutRemote(b.full_name.clone()),
+                                        ),
+                                        (
+                                            "Create branch here…",
+                                            true,
+                                            Action::NewBranch {
+                                                start: b.target.clone(),
+                                                label: b.full_name.clone(),
+                                            },
+                                        ),
+                                    ];
+                                    menu(ui, &mut c.action, items);
+                                });
                             },
                         );
                     }
@@ -475,7 +568,7 @@ pub fn show(
 
             // Tags.
             let open = c.is_open("tags");
-            if section_header(ui, "Tags", tags.len(), open) {
+            if section_header(ui, "Tags", tags.len(), open, None).0 {
                 c.toggle("tags");
             }
             if open {
@@ -488,7 +581,7 @@ pub fn show(
                     } else {
                         t.name.clone()
                     };
-                    if row(
+                    let response = row(
                         ui,
                         0,
                         icon::TAG,
@@ -497,17 +590,30 @@ pub fn show(
                         c.selected == Some(t.target.as_str()),
                         false,
                         &tip,
-                    )
-                    .clicked()
-                    {
+                    );
+                    if response.clicked() {
                         c.action = Some(Action::Jump(t.target.clone()));
                     }
+                    response.context_menu(|ui| {
+                        let items = vec![
+                            (
+                                "Create branch here…",
+                                true,
+                                Action::NewBranch {
+                                    start: t.target.clone(),
+                                    label: t.name.clone(),
+                                },
+                            ),
+                            ("Delete tag…", true, Action::DeleteTag(t.name.clone())),
+                        ];
+                        menu(ui, &mut c.action, items);
+                    });
                 }
             }
 
             // Stashes.
             let open = c.is_open("stashes");
-            if section_header(ui, "Stashes", stashes.len(), open) {
+            if section_header(ui, "Stashes", stashes.len(), open, None).0 {
                 c.toggle("stashes");
             }
             if open {
@@ -530,17 +636,12 @@ pub fn show(
                         c.action = Some(Action::Jump(s.target.clone()));
                     }
                     response.context_menu(|ui| {
-                        let items = [
-                            ("Apply", Action::StashApply(s.target.clone())),
-                            ("Pop", Action::StashPop(s.target.clone())),
-                            ("Drop…", Action::StashDrop(s.target.clone())),
+                        let items = vec![
+                            ("Apply", true, Action::StashApply(s.target.clone())),
+                            ("Pop", true, Action::StashPop(s.target.clone())),
+                            ("Drop…", true, Action::StashDrop(s.target.clone())),
                         ];
-                        for (label, act) in items {
-                            if ui.button(label).clicked() {
-                                c.action = Some(act);
-                                ui.close();
-                            }
-                        }
+                        menu(ui, &mut c.action, items);
                     });
                 }
             }

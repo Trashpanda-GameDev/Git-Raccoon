@@ -81,6 +81,19 @@ fn row_top(row: usize) -> f32 {
 pub enum Click {
     Row(usize),
     Working,
+    /// From a commit's context menu; `label` describes the commit.
+    NewBranch {
+        id: String,
+        label: String,
+    },
+    NewTag {
+        id: String,
+        label: String,
+    },
+    CheckoutDetached {
+        id: String,
+        label: String,
+    },
 }
 
 /// Shows the history; returns what was clicked, if anything.
@@ -212,6 +225,27 @@ pub fn show(
             }
             if response.clicked() && commit.is_some() {
                 clicked = Some(Click::Row(row));
+            }
+            if let Some(c) = commit {
+                let (id, label) = (c.id.clone(), commit_label(&c.id, &c.summary));
+                response.context_menu(|ui| {
+                    let items = [
+                        (icon::GIT_BRANCH, "Create branch here…", 0),
+                        (icon::TAG, "Create tag here…", 1),
+                        (icon::SIGN_OUT, "Check out this commit…", 2),
+                    ];
+                    for (glyph, text, which) in items {
+                        if ui.button(format!("{glyph}  {text}")).clicked() {
+                            let (id, label) = (id.clone(), label.clone());
+                            clicked = Some(match which {
+                                0 => Click::NewBranch { id, label },
+                                1 => Click::NewTag { id, label },
+                                _ => Click::CheckoutDetached { id, label },
+                            });
+                            ui.close();
+                        }
+                    }
+                });
             }
         }
 
@@ -475,4 +509,10 @@ fn ref_pills(painter: &egui::Painter, cell: Rect, c: &GraphCommit, dim: bool) {
             false,
         );
     }
+}
+
+/// "a1b2c3d Fix the thing", for dialogs about a commit.
+fn commit_label(id: &str, summary: &str) -> String {
+    let summary: String = summary.chars().take(50).collect();
+    format!("{} \u{201c}{summary}\u{201d}", &id[..7.min(id.len())])
 }

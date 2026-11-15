@@ -39,8 +39,8 @@ Everyday local work without leaving the app.
 - [x] Commit, amend, and a commit message editor with a summary length guide (through the user's own `git`, so hooks and signing apply)
 - [x] Discard changes (with confirmation; current versions go to the Recycle Bin / Trash)
 - [x] Stash: save, apply, pop and drop
-- [ ] Branches: create, check out, rename and delete
-- [ ] Tags: create (lightweight and annotated) and delete
+- [x] Branches: create, check out, rename and delete
+- [x] Tags: create (lightweight and annotated) and delete
 - [ ] Undo the last action, using the reflog
 
 ## v0.3: Sync (remotes)
@@ -80,7 +80,8 @@ The operations people open a GUI for.
 - [ ] Installers and in-app updates (for example Velopack, as in the Asset Browser): Windows first, then macOS and Linux
 - [ ] Opt-in crash reporting
 - [ ] User guide and project website
-- [ ] App icon and branding (the current icon is a placeholder)
+- [x] App icon
+- [ ] Branding: website and installer artwork
 
 ## Later (ideas, not commitments)
 

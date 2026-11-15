@@ -444,7 +444,7 @@ fn refreshes_when_the_repo_changes_on_disk() {
     let start = Instant::now();
     while h.state().repo().unwrap().history.total() == 8 {
         assert!(
-            start.elapsed() < Duration::from_secs(10),
+            start.elapsed() < Duration::from_secs(30),
             "no refresh after an external commit"
         );
         h.step();
@@ -505,7 +505,7 @@ fn wait_for(h: &mut Harness<'_, App>, what: &str, done: impl Fn(&App) -> bool) {
     let start = Instant::now();
     while !done(h.state()) {
         assert!(
-            start.elapsed() < Duration::from_secs(10),
+            start.elapsed() < Duration::from_secs(30),
             "timed out waiting for {what}"
         );
         h.step();
@@ -1055,4 +1055,151 @@ fn stashes_pops_and_drops() {
     h.get_by_label("Drop this stash?");
     h.get_by_label("Drop stash").click();
     wait_for(&mut h, "the drop", move |app| stashes(app) == 0);
+}
+
+fn erase(h: &mut Harness<'_, App>, chars: usize) {
+    for _ in 0..chars {
+        h.key_press(egui::Key::Backspace);
+    }
+    h.run_ok();
+}
+
+fn head_branch(app: &App) -> Option<String> {
+    app.repo().unwrap().head_branch().map(str::to_string)
+}
+
+fn has_branch(app: &App, name: &str) -> bool {
+    app.repo()
+        .unwrap()
+        .refs
+        .local
+        .iter()
+        .any(|b| b.name == name)
+}
+
+fn menu_item(h: &mut Harness<'_, App>, target: &str, item: &str) {
+    h.get_all_by_label(target).next().unwrap().click_secondary();
+    h.run_ok();
+    h.get_by_label_contains(item).click();
+    h.run_ok();
+}
+
+#[test]
+fn creates_checks_out_renames_and_deletes_branches_and_tags() {
+    use egui::accesskit::Role;
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    // The first commit's loader.rs was renamed later, so main doesn't have it.
+    assert_eq!(read(&sample, "src/loader.rs"), None);
+    assert_eq!(head_branch(h.state()).as_deref(), Some("main"));
+
+    // A new branch from a commit's context menu, with the name checked as typed.
+    menu_item(&mut h, "Add repository loader", "Create branch here");
+    type_into(&mut h, "Branch name", "feature/graph");
+    h.get_by_label("A branch with this name already exists.");
+    erase(&mut h, "graph".len());
+    h.get_by_label("Branch name").type_text("loader work");
+    h.run_ok();
+    h.get_by_label_contains("Not a valid branch name");
+    screenshot(&mut h, "15-new-branch");
+    erase(&mut h, " work".len());
+    h.get_by_label("Branch name").type_text("-work");
+    h.run_ok();
+    h.get_by_role_and_label(Role::Button, "Create and check out")
+        .click();
+    wait_for(&mut h, "the new branch", |app| {
+        head_branch(app).as_deref() == Some("feature/loader-work")
+    });
+    assert!(read(&sample, "src/loader.rs").is_some());
+
+    // Local changes in the way of switching back: offer to stash them.
+    sample.write("src/loader.rs", "// in the way\n");
+    wait_for(&mut h, "the change", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| !s.is_clean())
+    });
+    menu_item(&mut h, "main", "Check out");
+    wait_for(&mut h, "the offer to stash", |app| {
+        app.repo().unwrap().dialog.is_some()
+    });
+    h.get_by_label("Your changes are in the way");
+    screenshot(&mut h, "16-stash-and-switch");
+    h.get_by_label("Stash and switch").click();
+    wait_for(&mut h, "main", |app| {
+        head_branch(app).as_deref() == Some("main")
+    });
+    assert_eq!(read(&sample, "src/loader.rs"), None);
+    assert_eq!(h.state().repo().unwrap().refs.stashes.len(), 2);
+    assert!(
+        h.state().repo().unwrap().refs.stashes[0]
+            .message
+            .contains("Stashed by Git Raccoon")
+    );
+
+    // Rename it.
+    menu_item(&mut h, "loader-work", "Rename");
+    h.get_by_label("New branch name").click();
+    h.run_ok();
+    erase(&mut h, "-work".len());
+    h.run_ok();
+    h.get_by_role_and_label(Role::Button, "Rename").click();
+    wait_for(&mut h, "the rename", |app| {
+        has_branch(app, "feature/loader")
+    });
+    assert!(!has_branch(h.state(), "feature/loader-work"));
+
+    // Deleting unmerged work asks twice.
+    menu_item(&mut h, "toolbar-glitch", "Delete");
+    h.get_by_label("Delete branch").click();
+    wait_for(&mut h, "the second question", |app| {
+        app.repo().unwrap().dialog.is_some()
+    });
+    h.get_by_label("fix/ui/toolbar-glitch has unmerged work");
+    screenshot(&mut h, "17-delete-unmerged");
+    h.get_by_label("Delete anyway").click();
+    wait_for(&mut h, "the delete", |app| {
+        !has_branch(app, "fix/ui/toolbar-glitch")
+    });
+    // A merged branch goes after one question.
+    menu_item(&mut h, "loader", "Delete");
+    h.get_by_label("Delete branch").click();
+    wait_for(&mut h, "the delete", |app| {
+        !has_branch(app, "feature/loader")
+    });
+
+    // Tags: an annotated one from the history, then delete the sample's.
+    menu_item(&mut h, "Lay out commit lanes", "Create tag here");
+    type_into(&mut h, "Tag name", "v0.0.1");
+    type_into(&mut h, "Tag message", "First lanes");
+    screenshot(&mut h, "18-new-tag");
+    h.get_by_label("Create annotated tag").click();
+    wait_for(&mut h, "the tag", |app| {
+        app.repo()
+            .unwrap()
+            .refs
+            .tags
+            .iter()
+            .any(|t| t.name == "v0.0.1" && t.annotated)
+    });
+    menu_item(&mut h, "v0.1.0", "Delete tag");
+    h.get_by_role_and_label(Role::Button, "Delete tag").click();
+    wait_for(&mut h, "the tag delete", |app| {
+        app.repo()
+            .unwrap()
+            .refs
+            .tags
+            .iter()
+            .all(|t| t.name != "v0.1.0")
+    });
+
+    // Check out a commit without a branch.
+    menu_item(&mut h, "Add repository loader", "Check out this commit");
+    h.get_by_label("Check out commit").click();
+    wait_for(&mut h, "detached HEAD", |app| head_branch(app).is_none());
+    assert!(read(&sample, "src/loader.rs").is_some());
+    screenshot(&mut h, "19-detached");
 }

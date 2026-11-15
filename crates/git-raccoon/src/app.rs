@@ -6,7 +6,9 @@ use crate::repo_view::{self, Dialog, Loaded, Op, RepoView, Source};
 use crate::settings::{self, Settings};
 use crate::task::Task;
 use crate::theme;
-use crate::ui::{details, diff, history, search_bar, sidebar, toolbar, welcome, widgets, working};
+use crate::ui::{
+    details, dialog, diff, history, search_bar, sidebar, toolbar, welcome, widgets, working,
+};
 use git_raccoon_core::working::Side;
 
 pub struct App {
@@ -305,6 +307,14 @@ impl eframe::App for App {
                 Some(sidebar::Action::StashApply(id)) => repo.run(&ctx, Op::StashApply(id)),
                 Some(sidebar::Action::StashPop(id)) => repo.run(&ctx, Op::StashPop(id)),
                 Some(sidebar::Action::StashDrop(id)) => repo.confirm_drop(id),
+                Some(sidebar::Action::Checkout(name)) => repo.checkout(&ctx, name),
+                Some(sidebar::Action::CheckoutRemote(name)) => {
+                    repo.run(&ctx, Op::CheckoutRemote(name));
+                }
+                Some(sidebar::Action::NewBranch { start, label }) => repo.new_branch(start, label),
+                Some(sidebar::Action::Rename(name)) => repo.rename_branch(name),
+                Some(sidebar::Action::DeleteBranch(name)) => repo.confirm_delete_branch(name),
+                Some(sidebar::Action::DeleteTag(name)) => repo.confirm_delete_tag(name),
                 None => {}
             }
         }
@@ -455,10 +465,15 @@ impl eframe::App for App {
                         repo.scroll_to = None;
                     }
                     Some(history::Click::Working) => repo.select_working(),
+                    Some(history::Click::NewBranch { id, label }) => repo.new_branch(id, label),
+                    Some(history::Click::NewTag { id, label }) => repo.new_tag(id, label),
+                    Some(history::Click::CheckoutDetached { id, label }) => {
+                        repo.confirm_checkout_detached(id, label);
+                    }
                     None => {}
                 }
             });
-        if let Some(op) = dialog(&ctx, &mut repo.dialog) {
+        if let Some(op) = dialog::show(&ctx, &mut repo.dialog, &repo.refs) {
             repo.run(&ctx, op);
         }
     }
@@ -469,67 +484,5 @@ impl eframe::App for App {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, Settings::KEY, &self.settings);
-    }
-}
-
-/// Shows the open dialog, if any. Returns the operation to run when the
-/// user confirms; closes the dialog on confirm, cancel or Esc.
-fn dialog(ctx: &egui::Context, open: &mut Option<Dialog>) -> Option<Op> {
-    let current = open.as_mut()?;
-    let mut answer: Option<bool> = None;
-    let modal = egui::Modal::new(egui::Id::new("dialog")).show(ctx, |ui| {
-        ui.set_width(420.0);
-        match current {
-            Dialog::Confirm { title, body, button, .. } => {
-                ui.label(RichText::new(title.as_str()).strong().size(15.0));
-                ui.add_space(6.0);
-                ui.label(RichText::new(body.as_str()).color(theme::MUTED));
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    let go = egui::Button::new(RichText::new(button.as_str()).color(egui::Color32::WHITE).strong()).fill(theme::DANGER.gamma_multiply(0.8));
-                    if ui.add(go).clicked() {
-                        answer = Some(true);
-                    }
-                    if ui.button("Cancel").clicked() {
-                        answer = Some(false);
-                    }
-                });
-            }
-            Dialog::Stash { message, untracked } => {
-                ui.label(RichText::new("Stash changes").strong().size(15.0));
-                ui.add_space(6.0);
-                ui.label(RichText::new("Puts all uncommitted changes aside, leaving a clean working tree. Apply or pop the stash later to get them back.").color(theme::MUTED));
-                ui.add_space(8.0);
-                let field = ui.add(egui::TextEdit::singleline(message).hint_text("Message (optional)").desired_width(f32::INFINITY));
-                ui.ctx().accesskit_node_builder(field.id, |n| n.set_label("Stash message"));
-                if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    answer = Some(true);
-                }
-                ui.checkbox(untracked, "Include untracked files");
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    let go = egui::Button::new(RichText::new("Stash").color(theme::ON_ACCENT).strong()).fill(theme::ACCENT);
-                    if ui.add(go).clicked() {
-                        answer = Some(true);
-                    }
-                    if ui.button("Cancel").clicked() {
-                        answer = Some(false);
-                    }
-                });
-            }
-        }
-    });
-    if modal.should_close() && answer.is_none() {
-        answer = Some(false);
-    }
-    match answer? {
-        false => {
-            *open = None;
-            None
-        }
-        true => match open.take()? {
-            Dialog::Confirm { op, .. } => Some(op),
-            Dialog::Stash { message, untracked } => Some(Op::Stash { message, untracked }),
-        },
     }
 }

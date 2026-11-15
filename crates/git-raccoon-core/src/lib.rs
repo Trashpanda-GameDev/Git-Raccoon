@@ -3,6 +3,7 @@
 //!
 //! Nothing here depends on the user interface.
 
+pub mod branch;
 mod cli;
 pub mod commit;
 pub mod details;

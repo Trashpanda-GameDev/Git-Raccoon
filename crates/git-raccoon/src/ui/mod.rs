@@ -1,6 +1,7 @@
 //! The views that make up the window.
 
 pub mod details;
+pub mod dialog;
 pub mod diff;
 pub mod history;
 pub mod search_bar;

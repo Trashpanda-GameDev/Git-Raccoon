@@ -14,7 +14,7 @@ use git_raccoon_core::repo::{GraphCommit, History};
 use git_raccoon_core::stage::{self, Pick};
 use git_raccoon_core::watch::{Changes, RepoWatcher};
 use git_raccoon_core::working::{self, Side, WorkingStatus};
-use git_raccoon_core::{discard, stash};
+use git_raccoon_core::{Error, branch, discard, stash};
 
 use crate::highlight::RenderedDiff;
 use crate::images::ImagePair;
@@ -143,10 +143,36 @@ pub enum Op {
     StashApply(String),
     StashPop(String),
     StashDrop(String),
+    CreateBranch {
+        name: String,
+        start: String,
+        checkout: bool,
+    },
+    Checkout(String),
+    /// Check out a remote branch ("origin/x") through a tracking branch.
+    CheckoutRemote(String),
+    CheckoutDetached(String),
+    RenameBranch {
+        old: String,
+        new: String,
+    },
+    DeleteBranch {
+        name: String,
+        force: bool,
+    },
+    CreateTag {
+        name: String,
+        target: String,
+        message: String,
+    },
+    DeleteTag(String),
+    /// Stash everything (untracked files too), then run the operation:
+    /// for a checkout that local changes were in the way of.
+    StashThen(Box<Op>),
 }
 
 impl Op {
-    fn run(self, path: &str) -> Result<(), String> {
+    fn run(self, path: &str) -> Result<(), Error> {
         match self {
             Op::StageFile(f) => stage::stage_file(path, &f),
             Op::UnstageFile(f) => stage::unstage_file(path, &f),
@@ -172,8 +198,28 @@ impl Op {
             Op::StashApply(id) => stash::apply(path, &id),
             Op::StashPop(id) => stash::pop(path, &id),
             Op::StashDrop(id) => stash::drop_stash(path, &id),
+            Op::CreateBranch {
+                name,
+                start,
+                checkout,
+            } => branch::create(path, &name, &start, checkout),
+            Op::Checkout(name) => branch::checkout(path, &name),
+            Op::CheckoutRemote(name) => branch::checkout_remote(path, &name),
+            Op::CheckoutDetached(id) => branch::checkout_detached(path, &id),
+            Op::RenameBranch { old, new } => branch::rename(path, &old, &new),
+            Op::DeleteBranch { name, force } => branch::delete(path, &name, force),
+            Op::CreateTag {
+                name,
+                target,
+                message,
+            } => branch::create_tag(path, &name, &target, &message),
+            Op::DeleteTag(name) => branch::delete_tag(path, &name),
+            Op::StashThen(op) => {
+                let what = op.verb();
+                stash::save(path, &format!("Stashed by Git Raccoon to {what}"), true)?;
+                op.run(path)
+            }
         }
-        .map_err(|e| e.to_string())
     }
 
     fn verb(&self) -> &'static str {
@@ -194,25 +240,48 @@ impl Op {
             Op::StashApply(_) => "apply the stash",
             Op::StashPop(_) => "pop the stash",
             Op::StashDrop(_) => "drop the stash",
+            Op::CreateBranch { checkout: true, .. } => "create and check out the branch",
+            Op::CreateBranch { .. } => "create the branch",
+            Op::Checkout(_) | Op::CheckoutRemote(_) => "check out the branch",
+            Op::CheckoutDetached(_) => "check out the commit",
+            Op::RenameBranch { .. } => "rename the branch",
+            Op::DeleteBranch { .. } => "delete the branch",
+            Op::CreateTag { .. } => "create the tag",
+            Op::DeleteTag(_) => "delete the tag",
+            Op::StashThen(op) => op.verb(),
         }
     }
 
-    /// Stash operations change refs, so the history and sidebar reload too.
+    /// Whether it changes refs, so the history and sidebar reload too.
     fn changes_refs(&self) -> bool {
+        !matches!(
+            self,
+            Op::StageFile(_)
+                | Op::UnstageFile(_)
+                | Op::StageAll
+                | Op::UnstageAll
+                | Op::Lines { .. }
+                | Op::Discard(..)
+        )
+    }
+
+    /// Whether it checks something out (and so can be blocked by local changes).
+    fn is_checkout(&self) -> bool {
         matches!(
             self,
-            Op::Stash { .. } | Op::StashApply(_) | Op::StashPop(_) | Op::StashDrop(_)
+            Op::CreateBranch { checkout: true, .. }
+                | Op::Checkout(_)
+                | Op::CheckoutRemote(_)
+                | Op::CheckoutDetached(_)
         )
     }
 }
 
 /// An operation running in the background.
 struct Running {
-    /// What it does, for error messages ("stage", "pop the stash").
-    verb: &'static str,
-    /// It changes refs, so the history reloads afterwards.
-    refs: bool,
-    task: Task<Result<(), String>>,
+    /// What was asked, to offer a way on if Git refuses.
+    op: Op,
+    task: Task<Result<(), Error>>,
 }
 
 /// What this system calls its trash.
@@ -226,15 +295,38 @@ pub fn trash_name() -> &'static str {
 
 /// A question to answer before something happens.
 pub enum Dialog {
-    /// "Are you sure?" before a risky operation.
+    /// "Are you sure?" before an operation. `danger` colours the button red.
     Confirm {
         title: String,
         body: String,
         button: String,
+        danger: bool,
         op: Op,
     },
     /// Stash the working changes, with an optional message.
-    Stash { message: String, untracked: bool },
+    Stash {
+        message: String,
+        untracked: bool,
+    },
+    /// Name a new branch starting at `start` (a commit id or "HEAD").
+    NewBranch {
+        start: String,
+        /// How to describe the start ("main", "a1b2c3d Fix the thing").
+        start_label: String,
+        name: String,
+        checkout: bool,
+    },
+    RenameBranch {
+        old: String,
+        name: String,
+    },
+    /// Name a new tag at `target`; a message makes it annotated.
+    NewTag {
+        target: String,
+        target_label: String,
+        name: String,
+        message: String,
+    },
 }
 
 /// How often to re-check the working tree when it can't be watched.
@@ -448,6 +540,7 @@ impl RepoView {
                 trash_name()
             ),
             button: "Discard".into(),
+            danger: true,
             op: Op::Discard(files, self.trash_override.clone()),
         });
     }
@@ -465,6 +558,7 @@ impl RepoView {
                 &id[..7.min(id.len())]
             ),
             button: "Drop stash".into(),
+            danger: true,
             op: Op::StashDrop(id),
         });
     }
@@ -474,13 +568,122 @@ impl RepoView {
         if self.op.is_some() {
             return;
         }
-        let (verb, refs) = (op.verb(), op.changes_refs());
         let path = self.path().to_string();
+        let task_op = op.clone();
         self.op = Some(Running {
-            verb,
-            refs,
-            task: Task::spawn(ctx, move || op.run(&path)),
+            op,
+            task: Task::spawn(ctx, move || task_op.run(&path)),
         });
+    }
+
+    /// The checked-out branch, if any.
+    pub fn head_branch(&self) -> Option<&str> {
+        self.refs
+            .local
+            .iter()
+            .find(|b| b.is_head)
+            .map(|b| b.name.as_str())
+    }
+
+    /// Checks out a local branch (nothing to do if it is already checked out).
+    pub fn checkout(&mut self, ctx: &egui::Context, name: String) {
+        if self.head_branch() != Some(name.as_str()) {
+            self.run(ctx, Op::Checkout(name));
+        }
+    }
+
+    /// Opens the new-branch dialog for a start point.
+    pub fn new_branch(&mut self, start: String, start_label: String) {
+        self.dialog = Some(Dialog::NewBranch {
+            start,
+            start_label,
+            name: String::new(),
+            checkout: true,
+        });
+    }
+
+    pub fn new_tag(&mut self, target: String, target_label: String) {
+        self.dialog = Some(Dialog::NewTag {
+            target,
+            target_label,
+            name: String::new(),
+            message: String::new(),
+        });
+    }
+
+    pub fn rename_branch(&mut self, old: String) {
+        self.dialog = Some(Dialog::RenameBranch {
+            name: old.clone(),
+            old,
+        });
+    }
+
+    /// Asks before deleting a branch. Git itself refuses if its work isn't
+    /// merged anywhere; that refusal leads to a second, stronger question.
+    pub fn confirm_delete_branch(&mut self, name: String) {
+        self.dialog = Some(Dialog::Confirm {
+            title: format!("Delete branch {name}?"),
+            body: "Only the branch name is removed; its commits stay. Git won't delete it if it has commits that aren't on any other branch.".into(),
+            button: "Delete branch".into(),
+            danger: true,
+            op: Op::DeleteBranch { name, force: false },
+        });
+    }
+
+    pub fn confirm_delete_tag(&mut self, name: String) {
+        self.dialog = Some(Dialog::Confirm {
+            title: format!("Delete tag {name}?"),
+            body: "Only the tag is removed; the commit stays. If the tag was pushed, it stays on the remote until deleted there too.".into(),
+            button: "Delete tag".into(),
+            danger: true,
+            op: Op::DeleteTag(name),
+        });
+    }
+
+    /// Asks before checking out a commit without a branch.
+    pub fn confirm_checkout_detached(&mut self, id: String, label: String) {
+        self.dialog = Some(Dialog::Confirm {
+            title: format!("Check out {label}?"),
+            body: "You'll be on this commit without a branch (\u{201c}detached HEAD\u{201d}). You can look around and build, but create a branch before committing, or new commits are easy to lose.".into(),
+            button: "Check out commit".into(),
+            danger: false,
+            op: Op::CheckoutDetached(id),
+        });
+    }
+
+    /// When Git refused an operation for a reason the user can act on,
+    /// offers the way on. Returns whether it did.
+    fn offer_way_on(&mut self, op: &Op, error: &Error) -> bool {
+        match (error, op) {
+            (Error::Dirty(_), op) if op.is_checkout() => {
+                self.dialog = Some(Dialog::Confirm {
+                    title: "Your changes are in the way".into(),
+                    body: "Some uncommitted changes would be overwritten. Stash them first (untracked files too), then switch? Apply or pop the stash afterwards to get them back.".into(),
+                    button: "Stash and switch".into(),
+                    danger: false,
+                    op: Op::StashThen(Box::new(op.clone())),
+                });
+                true
+            }
+            (Error::NotMerged(_), Op::DeleteBranch { name, force: false }) => {
+                let tip = branch::tip(self.path(), name).unwrap_or_default();
+                self.dialog = Some(Dialog::Confirm {
+                    title: format!("{name} has unmerged work"),
+                    body: format!(
+                        "Its commits aren't on any other branch. Deleting it anyway hides them from the graph; they can be recovered from the tip commit's id ({}) until Git cleans up.",
+                        &tip[..7.min(tip.len())]
+                    ),
+                    button: "Delete anyway".into(),
+                    danger: true,
+                    op: Op::DeleteBranch {
+                        name: name.clone(),
+                        force: true,
+                    },
+                });
+                true
+            }
+            _ => false,
+        }
     }
 
     /// The open diff, if it has loaded.
@@ -612,14 +815,16 @@ impl RepoView {
         if let Some(running) = &self.op
             && let Some(result) = running.task.poll()
         {
-            let (verb, refs) = (running.verb, running.refs);
+            let op = running.op.clone();
             self.op = None;
             self.picked.clear();
             self.pick_anchor = None;
-            if let Err(e) = result {
-                self.refresh_error = Some(format!("Could not {verb}:\n{e}"));
+            if let Err(e) = result
+                && !self.offer_way_on(&op, &e)
+            {
+                self.refresh_error = Some(format!("Could not {}:\n{e}", op.verb()));
             }
-            if refs {
+            if op.changes_refs() {
                 self.refresh(ctx);
             } else {
                 self.refresh_status(ctx);

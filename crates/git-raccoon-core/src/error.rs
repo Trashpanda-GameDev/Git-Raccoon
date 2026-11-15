@@ -13,6 +13,12 @@ pub enum Error {
     Stale(String),
     #[error("not possible: {0}")]
     Unsupported(String),
+    /// Uncommitted changes would be overwritten (Git's message).
+    #[error("{0}")]
+    Dirty(String),
+    /// The branch has commits not merged anywhere else (Git's message).
+    #[error("{0}")]
+    NotMerged(String),
     /// A `git` command failed; the text is what it printed.
     #[error("{0}")]
     Command(String),
