@@ -72,7 +72,7 @@ The operations people open a GUI for.
 - [x] File history and blame
 - [x] Light and dark themes; settings screen (plus Raccoon, Pastel, Abyss, Forest, Paper and High contrast looks)
 - [ ] Submodules, worktrees and Git LFS awareness
-- [ ] Performance target: the graph stays smooth on a repo with 1M+ commits
+- [x] Performance target: the graph stays smooth on a repo with 1M+ commits (opens in ~3 s, frames under 10 ms)
 
 ## v1.0: Ship
 

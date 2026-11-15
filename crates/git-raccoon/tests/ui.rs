@@ -501,6 +501,14 @@ fn big_repo_stays_responsive() {
         worst = worst.max(frame(&mut h));
     }
     eprintln!("worst frame {worst:?}");
+    if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
+        for line in status
+            .lines()
+            .filter(|l| l.starts_with("VmHWM") || l.starts_with("VmRSS"))
+        {
+            eprintln!("{line}");
+        }
+    }
     assert!(worst < Duration::from_millis(250), "a frame took {worst:?}");
 }
 

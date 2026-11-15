@@ -17,7 +17,10 @@ fn git(path: &str) -> Command {
     cmd.arg("-C")
         .arg(path)
         .env("GIT_EDITOR", "true")
-        .env("GIT_TERMINAL_PROMPT", "0");
+        .env("GIT_TERMINAL_PROMPT", "0")
+        // Buffer output even into a pipe: by default Git flushes after every
+        // record there, which makes a million-commit walk twice as slow.
+        .env("GIT_FLUSH", "0");
     if let Some(ask) = crate::askpass::current() {
         // Questions (passwords, passphrases, new host keys) go to the app.
         // A user's own askpass programs win.
@@ -124,6 +127,76 @@ pub fn run_env(
         &String::from_utf8_lossy(&output.stdout),
     );
     finish(args, output.status.success(), output.status, text)
+}
+
+/// Runs `git <args>` in `path`, feeding `stdin`, and passes each line of
+/// its output to `each_line` as it arrives (for output too big to hold as
+/// one string). A failure becomes [`Error::Command`] with git's complaint.
+pub fn run_lines(
+    path: &str,
+    args: &[&str],
+    stdin: &str,
+    each_line: &mut dyn FnMut(&str) -> Result<()>,
+) -> Result<()> {
+    use std::io::BufRead as _;
+    let mut child = spawn(
+        git(path)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+    )?;
+    // Feed stdin from another thread, so a full stdout pipe can't block it.
+    let input = stdin.to_string();
+    let mut pipe = child.stdin.take();
+    let feeder = std::thread::spawn(move || {
+        if let Some(p) = &mut pipe {
+            let _ = p.write_all(input.as_bytes());
+        }
+    });
+    let errors = child.stderr.take().map(pump);
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| Error::Command("could not read git's output".into()))?;
+    let mut reader = std::io::BufReader::with_capacity(1 << 20, stdout);
+    let mut line = String::new();
+    let mut failed = None;
+    loop {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {
+                if let Err(e) = each_line(line.trim_end()) {
+                    failed = Some(e);
+                    let _ = child.kill();
+                    break;
+                }
+            }
+            Err(e) => {
+                failed = Some(Error::Command(format!("could not read git's output: {e}")));
+                break;
+            }
+        }
+    }
+    let _ = feeder.join();
+    let status = child
+        .wait()
+        .map_err(|e| Error::Command(format!("git did not finish: {e}")))?;
+    if let Some(e) = failed {
+        return Err(e);
+    }
+    if status.success() {
+        return Ok(());
+    }
+    let mut text = Vec::new();
+    if let Some(rx) = errors {
+        while let Ok(chunk) = rx.recv_timeout(Duration::from_millis(200)) {
+            text.extend(chunk);
+        }
+    }
+    let text = String::from_utf8_lossy(&text).trim().to_string();
+    finish(args, false, status, text).map(drop)
 }
 
 /// Reads a pipe on its own thread, sending what arrives.

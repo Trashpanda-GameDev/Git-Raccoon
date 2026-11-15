@@ -1,6 +1,7 @@
 //! A repository's history and ref labels, laid out for the commit graph.
 
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 
 use git2::{Oid, Repository, Sort};
 
@@ -64,9 +65,69 @@ pub struct History {
     /// The commit HEAD points at, if any.
     head: Option<Oid>,
     ids: Vec<Oid>,
-    index: HashMap<Oid, usize>,
+    index: HashMap<Oid, usize, BuildHasherDefault<OidHasher>>,
     layout: graph::Layout,
     labels: HashMap<Oid, Vec<RefLabel>>,
+}
+
+/// Hashes commit ids, which are already random: their first bytes will do.
+#[derive(Default)]
+pub struct OidHasher(u64);
+
+impl Hasher for OidHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for (i, b) in bytes.iter().take(8).enumerate() {
+            self.0 ^= u64::from(*b) << (i * 8);
+        }
+    }
+
+    // The length an array is hashed with says nothing: every id is 20 bytes.
+    fn write_usize(&mut self, _: usize) {}
+}
+
+/// Histories this big get Git's commit-graph cache, if they lack one.
+const COMMIT_GRAPH_AT: usize = 50_000;
+
+/// Every commit reachable from `tips`, newest first (parents after
+/// children), with its parents, from `git rev-list`.
+fn walk_with_git(path: &str, tips: &[Oid]) -> Result<Vec<(Oid, Vec<Oid>)>> {
+    let mut pairs = Vec::new();
+    if tips.is_empty() {
+        return Ok(pairs);
+    }
+    let input: String = tips.iter().map(|t| format!("{t}\n")).collect();
+    crate::cli::run_lines(
+        path,
+        &["rev-list", "--date-order", "--parents", "--stdin"],
+        &input,
+        &mut |line| {
+            let mut ids = line.split(' ').map(Oid::from_str);
+            if let Some(id) = ids.next() {
+                let parents = ids.collect::<std::result::Result<Vec<_>, _>>()?;
+                pairs.push((id?, parents));
+            }
+            Ok(())
+        },
+    )?;
+    Ok(pairs)
+}
+
+/// Writes Git's commit-graph cache in the background if the repository
+/// has none, so the next walk is faster. (Git writes the same file itself
+/// during `git gc` and `git maintenance`.)
+fn offer_commit_graph(git_dir: &std::path::Path, path: &str) {
+    let info = git_dir.join("objects").join("info");
+    if info.join("commit-graph").exists() || info.join("commit-graphs").exists() {
+        return;
+    }
+    let path = path.to_string();
+    std::thread::spawn(move || {
+        let _ = crate::cli::run(&path, &["commit-graph", "write", "--reachable"], None);
+    });
 }
 
 impl History {
@@ -88,6 +149,7 @@ impl History {
         walk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
 
         let mut labels: HashMap<Oid, Vec<RefLabel>> = HashMap::new();
+        let mut tips: Vec<Oid> = Vec::new();
         for reference in repo.references()? {
             let reference = reference?;
             if reference.symbolic_target().is_some() {
@@ -106,6 +168,7 @@ impl History {
                 continue; // tags on trees or blobs
             };
             walk.push(commit.id())?;
+            tips.push(commit.id());
             labels.entry(commit.id()).or_default().push(RefLabel {
                 name: reference.shorthand().unwrap_or_default().to_string(),
                 kind,
@@ -118,6 +181,7 @@ impl History {
             && let Some(id) = head.target()
         {
             walk.push(id)?;
+            tips.push(id);
             if !head.is_branch() {
                 labels.entry(id).or_default().push(RefLabel {
                     name: "HEAD".into(),
@@ -135,17 +199,29 @@ impl History {
             });
         }
 
-        let mut pairs: Vec<(Oid, Vec<Oid>)> = Vec::new();
-        for id in walk {
-            let id = id?;
-            let commit = repo.find_commit(id)?;
-            pairs.push((id, commit.parent_ids().collect()));
+        // Git's own walk is several times faster on big histories (and uses
+        // its commit-graph cache, if there is one). Without git, libgit2's.
+        let workdir = repo.workdir().unwrap_or_else(|| repo.path());
+        let pairs = match walk_with_git(&workdir.to_string_lossy(), &tips) {
+            Ok(pairs) => pairs,
+            Err(_) => {
+                let mut pairs: Vec<(Oid, Vec<Oid>)> = Vec::new();
+                for id in walk {
+                    let id = id?;
+                    let commit = repo.find_commit(id)?;
+                    pairs.push((id, commit.parent_ids().collect()));
+                }
+                pairs
+            }
+        };
+        if pairs.len() >= COMMIT_GRAPH_AT {
+            offer_commit_graph(repo.path(), &workdir.to_string_lossy());
         }
         let layout = graph::layout(&pairs);
         let ids: Vec<Oid> = pairs.into_iter().map(|(id, _)| id).collect();
-        let index = ids.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+        let mut index = HashMap::with_capacity_and_hasher(ids.len(), BuildHasherDefault::default());
+        index.extend(ids.iter().enumerate().map(|(i, id)| (*id, i)));
 
-        let workdir = repo.workdir().unwrap_or_else(|| repo.path());
         Ok(History {
             snapshot,
             git_dir: repo.path().to_path_buf(),
@@ -236,6 +312,94 @@ impl History {
 mod tests {
     use super::*;
     use crate::testutil::TempRepo;
+
+    /// libgit2's walk: the fallback when git can't be run.
+    fn libgit2_walk(path: &str) -> Vec<(Oid, Vec<Oid>)> {
+        let repo = Repository::open(path).unwrap();
+        let mut walk = repo.revwalk().unwrap();
+        walk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME).unwrap();
+        walk.push_glob("refs/*").unwrap();
+        walk.map(|id| {
+            let id = id.unwrap();
+            (id, repo.find_commit(id).unwrap().parent_ids().collect())
+        })
+        .collect()
+    }
+
+    fn tips(path: &str) -> Vec<Oid> {
+        let repo = Repository::open(path).unwrap();
+        repo.references()
+            .unwrap()
+            .filter_map(|r| r.ok()?.peel_to_commit().ok().map(|c| c.id()))
+            .collect()
+    }
+
+    /// Branches and merges, each commit a minute after the last (or all at
+    /// once, with `same_time`).
+    fn branchy(same_time: bool) -> TempRepo {
+        let t = TempRepo::new();
+        let run = |n: u64, args: &[&str]| {
+            let date = format!(
+                "{} +0000",
+                1_600_000_000 + if same_time { 0 } else { n * 60 }
+            );
+            crate::cli::run_env(
+                t.path(),
+                args,
+                None,
+                &[
+                    ("GIT_AUTHOR_DATE", &date),
+                    ("GIT_COMMITTER_DATE", &date),
+                    ("GIT_AUTHOR_NAME", "R"),
+                    ("GIT_AUTHOR_EMAIL", "r@example.com"),
+                    ("GIT_COMMITTER_NAME", "R"),
+                    ("GIT_COMMITTER_EMAIL", "r@example.com"),
+                ],
+            )
+            .unwrap();
+        };
+        let mut n = 0;
+        let commit = |n: &mut u64, msg: &str| {
+            *n += 1;
+            run(*n, &["commit", "-q", "--allow-empty", "-m", msg]);
+        };
+        commit(&mut n, "base");
+        for round in 0..4 {
+            let branch = format!("f{round}");
+            crate::cli::run(t.path(), &["switch", "-q", "-c", &branch], None).unwrap();
+            commit(&mut n, "feature a");
+            commit(&mut n, "feature b");
+            crate::cli::run(t.path(), &["switch", "-q", "-"], None).unwrap();
+            commit(&mut n, "main");
+            n += 1;
+            run(n, &["merge", "-q", "--no-ff", "--no-edit", &branch]);
+        }
+        t
+    }
+
+    #[test]
+    fn git_and_libgit2_walk_alike() {
+        // Distinct times: exactly the same order.
+        let t = branchy(false);
+        let ours = walk_with_git(t.path(), &tips(t.path())).unwrap();
+        assert_eq!(ours.len(), 1 + 4 * 4);
+        assert_eq!(ours, libgit2_walk(t.path()));
+
+        // All at once (as after a rebase): the same commits, children first.
+        let t = branchy(true);
+        let ours = walk_with_git(t.path(), &tips(t.path())).unwrap();
+        let mut a: Vec<Oid> = ours.iter().map(|p| p.0).collect();
+        let mut b: Vec<Oid> = libgit2_walk(t.path()).iter().map(|p| p.0).collect();
+        let row: HashMap<Oid, usize> = a.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+        for (id, parents) in &ours {
+            for p in parents {
+                assert!(row[p] > row[id], "a parent comes after its child");
+            }
+        }
+        a.sort();
+        b.sort();
+        assert_eq!(a, b);
+    }
 
     #[test]
     fn walks_all_branches_and_labels_refs() {

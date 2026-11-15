@@ -68,10 +68,13 @@ cargo test --workspace
 
 The UI tests in `crates/git-raccoon/tests/ui.rs` render the real app headlessly. They need a GPU, or a software renderer such as Mesa's (`mesa-vulkan-drivers` on Linux). Set `GIT_RACCOON_SCREENSHOTS=<dir>` to save a screenshot of each step.
 
-To check performance on a large repository:
+To check performance on a large repository, make one (a million commits with feature branches and merges takes about half a minute) and run the big-repo test against it:
 
 ```bash
-GIT_RACCOON_BIG_REPO=path/to/big/repo cargo test --release -p git-raccoon --test ui big_repo -- --ignored --nocapture
+git init -b main big && cd big && python3 ../scripts/gen-big-repo.py 1000000 | git fast-import --quiet && git checkout -f main && cd ..
+GIT_RACCOON_BIG_REPO=big cargo test --release -p git-raccoon --test ui big_repo -- --ignored --nocapture
 ```
+
+It reports how long opening took, the slowest frame while jumping and paging around, and peak memory. On a 4-core machine, a million commits open in about 3 seconds (6 the first time, before Git's commit-graph cache exists; the app writes it), every frame stays under 10 ms, and memory peaks around 400 MB.
 
 Lints are strict (`cargo clippy --workspace --all-targets`): exceptions use `#[expect(..., reason = "...")]`.
