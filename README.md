@@ -37,7 +37,7 @@ cargo run --release -- path/to/repo
 
 ## Releases and updates
 
-Windows installers are published to the public [Git-Raccoon-Releases](https://github.com/Trashpanda-GameDev/Git-Raccoon-Releases) repository (the code here stays private). An installed Git Raccoon checks there now and then, downloads a newer version in the background, and offers to restart into it from the toolbar (Settings can turn the checks off). Installers are built with [Velopack](https://velopack.io); copies run with `cargo run` don't update themselves.
+Installers for Windows, macOS (Apple Silicon) and Linux (an AppImage) are published to the public [Git-Raccoon-Releases](https://github.com/Trashpanda-GameDev/Git-Raccoon-Releases) repository (the code here stays private). An installed Git Raccoon checks there now and then, downloads a newer version in the background, and offers to restart into it from the toolbar (Settings can turn the checks off). Installers are built with [Velopack](https://velopack.io); copies run with `cargo run` don't update themselves.
 
 ### One-time setup
 
@@ -55,7 +55,9 @@ Windows installers are published to the public [Git-Raccoon-Releases](https://gi
    git push origin v0.5.1
    ```
 
-The Release workflow builds the installer and publishes it. To try an installer first, run the workflow by hand (Actions > Release > Run workflow): it builds one and keeps it as a downloadable artifact without publishing. The installer isn't code-signed yet, so Windows SmartScreen warns about it ("More info", then "Run anyway") until it builds a reputation.
+The Release workflow builds the three installers and publishes them as one release. To try them first, run the workflow by hand (Actions > Release > Run workflow): it builds them and keeps them as downloadable artifacts without publishing.
+
+They aren't code-signed yet. On Windows, SmartScreen warns ("More info", then "Run anyway") until the installer builds a reputation. On macOS, right-click the app and choose Open the first time (or allow it in System Settings > Privacy & Security).
 
 ## Keyboard shortcuts
 
