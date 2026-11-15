@@ -18,7 +18,9 @@ use git_raccoon_core::stage::{self, Pick};
 use git_raccoon_core::sync::{self, Progress, PullMode};
 use git_raccoon_core::watch::{Changes, RepoWatcher};
 use git_raccoon_core::working::{self, Side, WorkingStatus};
-use git_raccoon_core::{Error, branch, conflict, discard, file_history, remote, stash, undo};
+use git_raccoon_core::{
+    Error, branch, conflict, discard, file_history, modules, remote, stash, undo,
+};
 
 use crate::highlight::RenderedDiff;
 use crate::images::ImagePair;
@@ -36,16 +38,32 @@ pub struct Loaded {
     pub refs: Refs,
     /// HEAD's commit when it was read.
     pub head: Option<String>,
+    pub extras: Extras,
+}
+
+/// Submodules, worktrees and whether Git LFS is used.
+#[derive(Default)]
+pub struct Extras {
+    pub submodules: Vec<modules::Submodule>,
+    pub worktrees: Vec<modules::Worktree>,
+    /// `Some(installed)` if the repository uses Git LFS.
+    pub lfs: Option<bool>,
 }
 
 pub fn load(path: &str) -> Result<Loaded, String> {
     let history = History::load(path, 0).map_err(|e| e.to_string())?;
     let refs = refs::load_refs(path).map_err(|e| e.to_string())?;
     let head = undo::head_id(path).ok().flatten();
+    let extras = Extras {
+        submodules: modules::submodules(path).unwrap_or_default(),
+        worktrees: modules::worktrees(path).unwrap_or_default(),
+        lfs: modules::uses_lfs(path).then(modules::lfs_installed),
+    };
     Ok(Loaded {
         history,
         refs,
         head,
+        extras,
     })
 }
 
@@ -227,6 +245,17 @@ pub enum Op {
         url: String,
     },
     RemoveRemote(String),
+    /// Clone (if needed) and check out a submodule's recorded commit.
+    UpdateSubmodule(String),
+    AddWorktree {
+        folder: String,
+        branch: String,
+        new: bool,
+    },
+    RemoveWorktree {
+        folder: String,
+        force: bool,
+    },
     /// Merge a branch (local, or remote like "origin/main") into HEAD.
     Merge {
         branch: String,
@@ -360,6 +389,13 @@ impl Op {
             Op::RenameRemote { old, new } => remote::rename(path, &old, &new),
             Op::SetRemoteUrl { name, url } => remote::set_url(path, &name, &url),
             Op::RemoveRemote(name) => remote::remove(path, &name),
+            Op::UpdateSubmodule(sub) => modules::update_submodule(path, &sub, report, &ctl.cancel),
+            Op::AddWorktree {
+                folder,
+                branch,
+                new,
+            } => modules::add_worktree(path, &folder, &branch, new, "HEAD"),
+            Op::RemoveWorktree { folder, force } => modules::remove_worktree(path, &folder, force),
             Op::Merge { branch, mode } => merge::merge(path, &branch, mode).map(drop),
             Op::Continue => merge::continue_op(path),
             Op::Abort => merge::abort(path),
@@ -420,6 +456,9 @@ impl Op {
             Op::AddRemote { .. } => "add the remote",
             Op::RenameRemote { .. } | Op::SetRemoteUrl { .. } => "change the remote",
             Op::RemoveRemote(_) => "remove the remote",
+            Op::UpdateSubmodule(_) => "update the submodule",
+            Op::AddWorktree { .. } => "add the worktree",
+            Op::RemoveWorktree { .. } => "remove the worktree",
             Op::Merge { .. } => "merge",
             Op::Continue => "continue",
             Op::Abort => "abort",
@@ -932,6 +971,12 @@ pub enum Dialog {
         name: String,
         url: String,
     },
+    /// Add a worktree in `folder` with `branch` (new from HEAD, or existing).
+    Worktree {
+        folder: String,
+        branch: String,
+        new: bool,
+    },
     /// A question with several answers (and Cancel); `bool` marks a risky one.
     Choice {
         title: String,
@@ -980,6 +1025,9 @@ pub struct RepoView {
     pub conflict: Option<ConflictFile>,
     /// A file's history or blame, if open.
     pub file_view: Option<FileView>,
+    pub extras: Extras,
+    /// A repository (a submodule or worktree) to open in a tab.
+    pub open_request: Option<String>,
     /// An interactive rebase being planned (shown instead of the history),
     /// with the commits' original order.
     pub planner: Option<(Planner, Vec<String>)>,
@@ -1038,6 +1086,8 @@ impl RepoView {
             rows: RowCache::new(history.clone()),
             history,
             refs: loaded.refs,
+            extras: loaded.extras,
+            open_request: None,
             selected: None,
             working_selected: false,
             status: None,
@@ -1237,7 +1287,7 @@ impl RepoView {
         let running = self.op.as_ref()?;
         if !matches!(
             running.op,
-            Op::Fetch | Op::FetchRemote(_) | Op::Pull(_) | Op::Push { .. }
+            Op::Fetch | Op::FetchRemote(_) | Op::Pull(_) | Op::Push { .. } | Op::UpdateSubmodule(_)
         ) {
             return None;
         }
@@ -1600,6 +1650,46 @@ impl RepoView {
         });
     }
 
+    /// The full path of a submodule (given relative to this repository).
+    pub fn submodule_dir(&self, sub: &str) -> String {
+        std::path::Path::new(self.path())
+            .join(sub)
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    /// Opens the dialog to add a worktree, next to this repository.
+    pub fn new_worktree(&mut self) {
+        let root = std::path::Path::new(self.path().trim_end_matches(['/', '\\']));
+        let name = root
+            .file_name()
+            .map_or_else(|| "repo".into(), |n| n.to_string_lossy().into_owned());
+        let parent = root.parent().unwrap_or(root);
+        self.dialog = Some(Dialog::Worktree {
+            folder: parent
+                .join(format!("{name}-worktree"))
+                .to_string_lossy()
+                .into_owned(),
+            branch: String::new(),
+            new: true,
+        });
+    }
+
+    pub fn confirm_remove_worktree(&mut self, folder: String) {
+        self.dialog = Some(Dialog::Confirm {
+            title: "Remove this worktree?".into(),
+            body: format!(
+                "Deletes the folder {folder}. Its branch and commits stay in the repository."
+            ),
+            button: "Remove worktree".into(),
+            danger: true,
+            op: Op::RemoveWorktree {
+                folder,
+                force: false,
+            },
+        });
+    }
+
     /// Opens the dialog to add a remote, or edit `name`.
     pub fn edit_remote(&mut self, name: Option<String>) {
         let url = name
@@ -1670,6 +1760,27 @@ impl RepoView {
             .map_or_else(|| "the remote branch".to_string(), |u| u.name.clone());
         match (error, op) {
             (Error::Cancelled, _) => true,
+            (
+                Error::Dirty(_),
+                Op::RemoveWorktree {
+                    folder,
+                    force: false,
+                },
+            ) => {
+                self.dialog = Some(Dialog::Confirm {
+                    title: "This worktree has uncommitted changes".into(),
+                    body: format!(
+                        "{folder} has changes that aren't committed anywhere. Removing it anyway deletes them; its branch and commits stay."
+                    ),
+                    button: "Remove anyway".into(),
+                    danger: true,
+                    op: Op::RemoveWorktree {
+                        folder: folder.clone(),
+                        force: true,
+                    },
+                });
+                true
+            }
             (Error::Rejected(_), Op::Push { force: false }) => {
                 self.dialog = Some(Dialog::Choice {
                     title: "The remote has commits you don't have".into(),
@@ -2043,6 +2154,7 @@ impl RepoView {
     fn replace(&mut self, loaded: Loaded) {
         self.history = Arc::new(loaded.history);
         self.refs = loaded.refs;
+        self.extras = loaded.extras;
         // HEAD moved elsewhere (outside the app, say): the undo no longer applies.
         if self
             .undo

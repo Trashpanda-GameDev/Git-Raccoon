@@ -21,6 +21,43 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
                 heading(ui, title, Some(body));
                 (String::new(), false, true)
             }
+            Dialog::Worktree {
+                folder,
+                branch,
+                new,
+            } => {
+                heading(
+                    ui,
+                    "Add worktree",
+                    Some("A second working folder for this repository, with another branch checked out, so you can work on two branches at once."),
+                );
+                let f = ui.add(
+                    egui::TextEdit::singleline(folder)
+                        .hint_text("Folder")
+                        .desired_width(f32::INFINITY),
+                );
+                ui.ctx()
+                    .accesskit_node_builder(f.id, |n| n.set_label("Worktree folder"));
+                ui.add_space(4.0);
+                ui.checkbox(new, "Create a new branch (from the current commit)");
+                let problem = if *new {
+                    branch_problem(branch, refs, None)
+                } else if branch.trim().is_empty() {
+                    Some("")
+                } else if !refs.local.iter().any(|b| b.name == branch.trim()) {
+                    Some("There's no local branch with this name.")
+                } else if refs.local.iter().any(|b| b.name == branch.trim() && b.is_head) {
+                    Some("This branch is checked out here; pick another, or a new one.")
+                } else {
+                    None
+                };
+                let hint = if *new { "New branch name" } else { "Existing branch" };
+                if field(ui, branch, hint, "Worktree branch", problem) && problem.is_none() {
+                    answer = Some(Some(0));
+                }
+                let ready = problem.is_none() && !folder.trim().is_empty();
+                ("Create worktree".into(), false, ready)
+            }
             Dialog::Remote {
                 original,
                 name,
@@ -182,6 +219,15 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
         }
         Some(chosen) => match open.take()? {
             Dialog::Choice { choices, .. } => choices.into_iter().nth(chosen).map(|c| c.2),
+            Dialog::Worktree {
+                folder,
+                branch,
+                new,
+            } => Some(Op::AddWorktree {
+                folder: folder.trim().to_string(),
+                branch: branch.trim().to_string(),
+                new,
+            }),
             Dialog::Remote {
                 original,
                 name,

@@ -196,6 +196,24 @@ fn body(
     has_images: bool,
     staging: Option<&Staging<'_>>,
 ) -> Option<Action> {
+    // Large files kept in Git LFS: the repository only has small pointers.
+    if let Some((before, after)) = git_raccoon_core::modules::pointer_change(&d.diff) {
+        let size = |p: &Option<git_raccoon_core::modules::Pointer>| {
+            p.as_ref().map_or_else(
+                || "none".to_string(),
+                |p| crate::format::bytes(usize::try_from(p.size).unwrap_or(usize::MAX)),
+            )
+        };
+        notice(
+            ui,
+            &format!(
+                "Stored with Git LFS. Size before: {}, after: {}. The repository keeps a small pointer; the file itself is on the LFS server.",
+                size(&before),
+                size(&after)
+            ),
+        );
+        return None;
+    }
     if d.diff.binary {
         if !has_images {
             notice(ui, "Binary file not shown.");

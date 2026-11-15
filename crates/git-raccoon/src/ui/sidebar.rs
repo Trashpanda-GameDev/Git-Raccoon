@@ -335,6 +335,12 @@ pub enum Action {
     RemoveRemote(String),
     /// Rebase the checked-out branch onto this one.
     Rebase(String),
+    /// Open this repository (a submodule or worktree) in a tab.
+    OpenPath(String),
+    /// Update the submodule at this path (relative to the repository).
+    UpdateSubmodule(String),
+    AddWorktree,
+    RemoveWorktree(String),
     /// Merge `source` into `target` (the checked-out branch if `None`).
     Merge {
         source: String,
@@ -407,6 +413,8 @@ fn menu(ui: &mut egui::Ui, action: &mut Option<Action>, items: Vec<(&str, bool, 
 pub fn show(
     ui: &mut egui::Ui,
     refs: &Refs,
+    extras: &crate::repo_view::Extras,
+    root: &str,
     filter: &mut String,
     collapsed: &mut HashSet<String>,
     selected: Option<&str>,
@@ -766,6 +774,135 @@ pub fn show(
                         ];
                         menu(ui, &mut c.action, items);
                     });
+                }
+            }
+            // Worktrees.
+            let open = c.is_open("worktrees");
+            let (toggled, add) = section_header(
+                ui,
+                "Worktrees",
+                extras.worktrees.len(),
+                open,
+                Some("Add worktree"),
+            );
+            if toggled {
+                c.toggle("worktrees");
+            }
+            if add {
+                c.action = Some(Action::AddWorktree);
+            }
+            if open {
+                for w in &extras.worktrees {
+                    let folder = std::path::Path::new(&w.path)
+                        .file_name()
+                        .map_or_else(|| w.path.clone(), |n| n.to_string_lossy().into_owned());
+                    let branch = w.branch.clone().unwrap_or_else(|| "detached".into());
+                    let mut badges = vec![Badge {
+                        text: branch,
+                        colour: theme::muted(),
+                    }];
+                    if w.missing {
+                        badges.push(Badge {
+                            text: "missing".into(),
+                            colour: theme::danger(),
+                        });
+                    }
+                    let tip = format!(
+                        "{}{}",
+                        w.path,
+                        if w.current { "\nThis worktree" } else { "" }
+                    );
+                    let glyph = if w.current {
+                        icon::CHECK
+                    } else {
+                        icon::FOLDER_SIMPLE
+                    };
+                    let response = row(ui, 0, glyph, &folder, &badges, false, w.current, &tip);
+                    if response.double_clicked() && !w.current {
+                        c.action = Some(Action::OpenPath(w.path.clone()));
+                    }
+                    response.context_menu(|ui| {
+                        let items = vec![
+                            (
+                                "Open in a tab",
+                                !w.current && !w.missing,
+                                Action::OpenPath(w.path.clone()),
+                            ),
+                            (
+                                "Remove…",
+                                !w.main && !w.current,
+                                Action::RemoveWorktree(w.path.clone()),
+                            ),
+                        ];
+                        menu(ui, &mut c.action, items);
+                    });
+                }
+            }
+
+            // Submodules, if there are any.
+            if !extras.submodules.is_empty() {
+                let open = c.is_open("submodules");
+                if section_header(ui, "Submodules", extras.submodules.len(), open, None).0 {
+                    c.toggle("submodules");
+                }
+                if open {
+                    use git_raccoon_core::modules::SubmoduleState;
+                    for s in &extras.submodules {
+                        let (badge, colour, about) = match s.state {
+                            SubmoduleState::UpToDate => ("", theme::muted(), "Up to date"),
+                            SubmoduleState::Uninitialized => (
+                                "not cloned",
+                                theme::modified(),
+                                "Not cloned yet: update it to get its files",
+                            ),
+                            SubmoduleState::OtherCommit => (
+                                "other commit",
+                                theme::modified(),
+                                "A different commit is checked out than the one recorded here",
+                            ),
+                            SubmoduleState::Changed => {
+                                ("changed", theme::modified(), "It has uncommitted changes")
+                            }
+                        };
+                        let badges: Vec<Badge> = if badge.is_empty() {
+                            Vec::new()
+                        } else {
+                            vec![Badge {
+                                text: badge.into(),
+                                colour,
+                            }]
+                        };
+                        let tip = format!(
+                            "{}\n{}{}",
+                            s.path,
+                            about,
+                            s.url
+                                .as_deref()
+                                .map(|u| format!("\n{u}"))
+                                .unwrap_or_default()
+                        );
+                        let full = std::path::Path::new(root)
+                            .join(&s.path)
+                            .to_string_lossy()
+                            .into_owned();
+                        let cloned = s.state != SubmoduleState::Uninitialized;
+                        let response =
+                            row(ui, 0, icon::PACKAGE, &s.path, &badges, false, false, &tip);
+                        if response.double_clicked() && cloned {
+                            c.action = Some(Action::OpenPath(full.clone()));
+                        }
+                        response.context_menu(|ui| {
+                            let items = vec![
+                                ("Open in a tab", cloned, Action::OpenPath(full.clone())),
+                                (
+                                    if cloned { "Update" } else { "Clone and update" },
+                                    true,
+                                    Action::UpdateSubmodule(s.path.clone()),
+                                ),
+                            ];
+                            menu(ui, &mut c.action, items);
+                        });
+                    }
                 }
             }
             ui.add_space(12.0);

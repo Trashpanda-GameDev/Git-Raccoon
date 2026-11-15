@@ -46,6 +46,8 @@ pub struct OpenRepo<'a> {
     pub syncing: Option<Syncing>,
     /// Another operation is running.
     pub busy: bool,
+    /// `Some(installed)` if the repository uses Git LFS.
+    pub lfs: Option<bool>,
 }
 
 pub fn show(
@@ -144,6 +146,21 @@ pub fn show(
                     action = Some(Action::Refresh);
                 }
             });
+            if let Some(installed) = repo.lfs {
+                let (colour, tip) = if installed {
+                    (theme::muted(), "This repository stores large files with Git LFS.")
+                } else {
+                    (
+                        theme::modified(),
+                        "This repository stores large files with Git LFS, but git-lfs isn't installed: those files are only small pointer files here. Install it from git-lfs.com, then run `git lfs pull`.",
+                    )
+                };
+                let glyph = if installed { "" } else { "⚠ " };
+                let pill = ui.label(RichText::new(format!("{glyph}LFS")).size(11.0).color(colour));
+                let name = if installed { "Uses Git LFS" } else { "Uses Git LFS, which isn't installed" };
+                ui.ctx().accesskit_node_builder(pill.id, |n| n.set_label(name));
+                pill.on_hover_text(tip);
+            }
             ui.add_space(6.0);
             if let Some(a) = sync_buttons(ui, &repo) {
                 action = Some(a);
@@ -211,7 +228,8 @@ fn sync_buttons(ui: &mut egui::Ui, repo: &OpenRepo<'_>) -> Option<Action> {
         let doing = match sync.verb {
             "fetch" => "Fetching",
             "pull" => "Pulling",
-            _ => "Pushing",
+            "push" => "Pushing",
+            _ => "Updating",
         };
         let detail = match (&sync.phase, sync.percent) {
             (Some(phase), Some(p)) => format!("{doing}… {phase} {p}%"),

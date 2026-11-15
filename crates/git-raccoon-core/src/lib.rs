@@ -16,6 +16,7 @@ pub mod file_history;
 pub mod graph;
 pub mod interactive;
 pub mod merge;
+pub mod modules;
 pub mod refs;
 pub mod remote;
 pub mod repo;

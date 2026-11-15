@@ -71,7 +71,7 @@ The operations people open a GUI for.
 - [x] Command palette and keyboard shortcuts for every action (every action is in the palette; the frequent ones have shortcuts)
 - [x] File history and blame
 - [x] Light and dark themes; settings screen (plus Raccoon, Pastel, Abyss, Forest, Paper and High contrast looks)
-- [ ] Submodules, worktrees and Git LFS awareness
+- [x] Submodules, worktrees and Git LFS awareness
 - [x] Performance target: the graph stays smooth on a repo with 1M+ commits (opens in ~3 s, frames under 10 ms)
 
 ## v1.0: Ship

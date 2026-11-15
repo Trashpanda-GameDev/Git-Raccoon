@@ -989,6 +989,7 @@ impl App {
                         percent: p.and_then(|p| p.percent),
                     }),
                     busy: r.is_staging() || r.is_committing(),
+                    lfs: r.extras.lfs,
                 });
                 toolbar::show(
                     ui,
@@ -1156,9 +1157,12 @@ impl App {
                 .frame(Frame::new().fill(theme::bg_raised()))
                 .show(ui, |ui| {
                     let selected = repo.selected.as_ref().map(|s| s.id.clone());
+                    let root = repo.path().to_string();
                     sidebar::show(
                         ui,
                         &repo.refs,
+                        &repo.extras,
+                        &root,
                         &mut repo.sidebar_filter,
                         &mut repo.collapsed,
                         selected.as_deref(),
@@ -1182,6 +1186,12 @@ impl App {
                 Some(sidebar::Action::RemoveRemote(name)) => repo.confirm_remove_remote(name),
                 Some(sidebar::Action::Merge { source, target }) => repo.ask_merge(source, target),
                 Some(sidebar::Action::Rebase(onto)) => repo.confirm_rebase(onto),
+                Some(sidebar::Action::OpenPath(p)) => repo.open_request = Some(p),
+                Some(sidebar::Action::UpdateSubmodule(p)) => {
+                    repo.run(&ctx, Op::UpdateSubmodule(p));
+                }
+                Some(sidebar::Action::AddWorktree) => repo.new_worktree(),
+                Some(sidebar::Action::RemoveWorktree(p)) => repo.confirm_remove_worktree(p),
                 None => {}
             }
         }
@@ -1439,6 +1449,10 @@ impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.apply_look(ctx);
         self.poll_opening(ctx);
+        // A submodule or worktree to open in a tab.
+        if let Some(path) = self.repo.as_mut().and_then(|r| r.open_request.take()) {
+            self.open(ctx, path);
+        }
         // Background tabs keep going: their operations finish, files are watched.
         for tab in &mut self.tabs {
             if let Some((Some(repo), _)) = &mut tab.parked {

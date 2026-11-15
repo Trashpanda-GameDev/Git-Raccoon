@@ -2331,3 +2331,101 @@ fn keeps_repositories_in_tabs() {
     assert_eq!(tab_names(&h), (vec!["New tab".to_string()], 0));
     assert!(h.state().repo().is_none());
 }
+
+const POINTER: &str = "version https://git-lfs.github.com/spec/v1\noid sha256:4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393\nsize 2400000\n";
+
+fn extras_state(app: &App) -> (usize, Option<git_raccoon_core::modules::SubmoduleState>) {
+    let e = &app.repo().unwrap().extras;
+    (e.worktrees.len(), e.submodules.first().map(|s| s.state))
+}
+
+#[test]
+fn shows_submodules_worktrees_and_lfs() {
+    use git_raccoon_core::modules::SubmoduleState;
+    let lib = Sample::build();
+    let sample = Sample::build();
+    git(
+        &sample,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            lib.path(),
+            "vendor/lib",
+        ],
+    );
+    sample.write("art/cover.psd", POINTER);
+    sample.write(
+        ".gitattributes",
+        "*.psd filter=lfs diff=lfs merge=lfs -text\n",
+    );
+    git(
+        &sample,
+        &[
+            "-c",
+            "filter.lfs.clean=cat",
+            "-c",
+            "filter.lfs.required=false",
+            "add",
+            ".",
+        ],
+    );
+    git(
+        &sample,
+        &["commit", "-q", "-m", "Add the library and the cover art"],
+    );
+    // The submodule on another commit than recorded.
+    git(&sample, &["-C", "vendor/lib", "checkout", "-q", "HEAD~1"]);
+
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    assert_eq!(
+        extras_state(h.state()),
+        (1, Some(SubmoduleState::OtherCommit))
+    );
+    h.get_by_label_contains("LFS"); // the toolbar badge
+    screenshot(&mut h, "41-submodules-worktrees");
+
+    // Update the submodule.
+    menu_item(&mut h, "vendor/lib", "Update");
+    wait_for(&mut h, "the update", |app| {
+        extras_state(app).1 == Some(SubmoduleState::UpToDate)
+    });
+
+    // The LFS file's diff says what it is.
+    h.get_by_label("Add the library and the cover art").click();
+    settle(&mut h);
+    h.get_by_label_contains("art/cover.psd").click();
+    settle(&mut h);
+    h.get_by_label_contains("Stored with Git LFS");
+    h.get_by_label_contains("2.3 MB");
+    press(&mut h, egui::Modifiers::NONE, Key::Escape);
+
+    // A worktree: add, then remove.
+    let folder = std::env::temp_dir().join(format!("git-raccoon-wt-ui-{}", rand_suffix()));
+    h.get_by_label("Add worktree").click();
+    h.run_ok();
+    h.get_by_label("Worktree folder").click();
+    h.run_ok();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+    h.get_by_label("Worktree folder")
+        .type_text(&folder.to_string_lossy());
+    type_into(&mut h, "Worktree branch", "side-work");
+    h.get_by_label("Create worktree").click();
+    wait_for(&mut h, "the worktree", |app| extras_state(app).0 == 2);
+    assert!(folder.join("README.md").exists());
+    let name = folder.file_name().unwrap().to_string_lossy().to_string();
+    menu_item(&mut h, &name, "Remove");
+    h.get_by_label("Remove worktree").click();
+    wait_for(&mut h, "the removal", |app| extras_state(app).0 == 1);
+    assert!(!folder.exists());
+
+    // The submodule opens in its own tab.
+    menu_item(&mut h, "vendor/lib", "Open in a tab");
+    wait_for(&mut h, "the submodule's tab", |app| {
+        app.repo().is_some_and(|r| r.path().contains("vendor"))
+    });
+    assert_eq!(h.state().tab_names().0.len(), 2);
+}
