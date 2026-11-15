@@ -37,7 +37,7 @@ cargo run --release -- path/to/repo
 
 ## Releases and updates
 
-Installers for Windows, macOS (Apple Silicon) and Linux (an AppImage) are published on this repository's [Releases](https://github.com/Trashpanda-GameDev/Git-Raccoon/releases) page. An installed Git Raccoon checks there now and then, downloads a newer version in the background, and offers to restart into it from the toolbar (Settings can turn the checks off). Installers are built with [Velopack](https://velopack.io); copies run with `cargo run` don't update themselves.
+Installers for Windows, macOS (Apple Silicon) and Linux (an AppImage) are published on this repository's [Releases](https://github.com/Trashpanda-GameDev/Git-Raccoon/releases) page. An installed Git Raccoon checks there now and then, downloads a newer version in the background, and offers to restart into it from the toolbar (Settings can turn the checks off). On Windows there are two: `GitRaccoon-win-Installer.exe` asks where to install, and `GitRaccoon-win-Setup.exe` installs in one click to the user's AppData folder. Installers are built with [Velopack](https://velopack.io) (the Windows one that asks where to install is an [Inno Setup](https://jrsoftware.org/isinfo.php) front end for Velopack's, in `installer/`); copies run with `cargo run` don't update themselves.
 
 ### Making a release
 
