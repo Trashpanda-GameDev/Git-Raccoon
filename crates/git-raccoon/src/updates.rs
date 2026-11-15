@@ -1,5 +1,5 @@
-//! Updates, through Velopack: an installed app checks the public releases
-//! repository now and then, downloads a newer version in the background,
+//! Updates, through Velopack: an installed app checks the project's GitHub
+//! releases now and then, downloads a newer version in the background,
 //! and offers to restart into it. Builds that weren't installed (`cargo
 //! run`, say) don't check.
 
@@ -11,8 +11,8 @@ use velopack::{UpdateCheck, UpdateInfo, UpdateManager};
 
 use crate::task::Task;
 
-/// Where releases are published (a public repository holding only them).
-pub const RELEASES: &str = "https://github.com/Trashpanda-GameDev/Git-Raccoon-Releases";
+/// Where releases are published: this project's GitHub releases.
+pub const RELEASES: &str = "https://github.com/Trashpanda-GameDev/Git-Raccoon";
 
 /// How often to look again while the app stays open.
 const EVERY: Duration = Duration::from_secs(6 * 60 * 60);

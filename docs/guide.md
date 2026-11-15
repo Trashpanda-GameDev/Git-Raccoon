@@ -20,7 +20,7 @@ Git Raccoon is a desktop app for working with Git repositories: you see your pro
 
 ## Installing
 
-Download the installer for your system from the [releases page](https://github.com/Trashpanda-GameDev/Git-Raccoon-Releases/releases):
+Download the installer for your system from the [releases page](https://github.com/Trashpanda-GameDev/Git-Raccoon/releases):
 
 - **Windows:** `GitRaccoon-win-Setup.exe`. It installs for you only (no administrator needed) and adds Desktop and Start-menu shortcuts. Windows may warn that it's from an unknown publisher: choose *More info*, then *Run anyway*.
 - **macOS (Apple Silicon):** the `.pkg` installer. The first time, right-click Git Raccoon in Applications and choose *Open* (or allow it in *System Settings > Privacy & Security*).
@@ -159,4 +159,4 @@ After most actions, the toolbar shows exactly what **Undo** would do ("Undo comm
 - **Fetching or pushing asks for a password every time.** Set up a credential helper (Git Credential Manager comes with Git for Windows), or use SSH with your key in an SSH agent.
 - **"This host isn't known yet."** Git Raccoon asks you to confirm a new SSH host the first time; check its fingerprint against the one the host publishes.
 - **Large files show as small text files.** The repository uses Git LFS: install [git-lfs](https://git-lfs.com) and run `git lfs pull`.
-- **Something went wrong.** The error banner shows Git's own message. If it looks like a bug, a report on the [releases page's issues](https://github.com/Trashpanda-GameDev/Git-Raccoon-Releases/issues) helps.
+- **Something went wrong.** The error banner shows Git's own message. If it looks like a bug, a report on the project's [issues page](https://github.com/Trashpanda-GameDev/Git-Raccoon/issues) helps.

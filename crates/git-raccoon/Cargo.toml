@@ -3,6 +3,8 @@ name = "git-raccoon"
 description = "A fast, friendly desktop Git client"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
 publish = false
 
 [dependencies]

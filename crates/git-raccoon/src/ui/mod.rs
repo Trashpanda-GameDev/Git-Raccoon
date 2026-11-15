@@ -9,6 +9,7 @@ pub mod dialog;
 pub mod diff;
 pub mod file_view;
 pub mod history;
+pub mod licenses;
 pub mod palette;
 pub mod rebase;
 pub mod search_bar;

@@ -39,6 +39,11 @@ jobs:
           git config --global init.defaultBranch main
       - run: mkdir -p "${{ runner.temp }}/screenshots"
       - run: cargo fmt --all --check
+      - name: Third-party notices are up to date
+        run: |
+          python3 scripts/third-party-notices.py
+          git diff --exit-code -- crates/git-raccoon/assets/THIRD-PARTY-NOTICES.txt \
+            || { echo "::error::Run python3 scripts/third-party-notices.py and commit the result."; exit 1; }
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
         env:

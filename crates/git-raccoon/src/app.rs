@@ -51,6 +51,8 @@ pub struct App {
     updater: crate::updates::Updater,
     /// Restart into the downloaded update once settings are saved.
     restart_to_update: bool,
+    /// The licenses window, while open.
+    licenses: Option<crate::ui::licenses::Tab>,
     /// Reports of earlier crashes, offered one at a time.
     crash_reports: Vec<crate::crash::Report>,
 }
@@ -131,6 +133,7 @@ impl App {
             updater: crate::updates::Updater::new(),
             restart_to_update: false,
             crash_reports: Vec::new(),
+            licenses: None,
         }
     }
 
@@ -898,6 +901,7 @@ impl App {
             || self.palette.is_some()
             || self.clone_form.is_some()
             || self.settings_open
+            || self.licenses.is_some()
             || dialog_open
         {
             return;
@@ -1533,10 +1537,19 @@ impl eframe::App for App {
             match crate::ui::settings::show(&ctx, &mut self.settings) {
                 Some(crate::ui::settings::Action::Close) => self.settings_open = false,
                 Some(crate::ui::settings::Action::ClearRecent) => self.settings.recent.clear(),
+                Some(crate::ui::settings::Action::Licenses) => {
+                    self.settings_open = false;
+                    self.licenses = Some(crate::ui::licenses::Tab::GitRaccoon);
+                }
                 None => {}
             }
         }
         self.palette(&ctx);
+        if let Some(tab) = &mut self.licenses
+            && !crate::ui::licenses::show(&ctx, tab)
+        {
+            self.licenses = None;
+        }
         self.crash_dialog(&ctx);
         self.questions(&ctx);
     }

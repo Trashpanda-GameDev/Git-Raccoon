@@ -2486,3 +2486,24 @@ fn offers_crash_reports_without_sending_them() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn shows_the_licenses() {
+    let mut h = harness(Settings::default());
+    h.run_ok();
+    press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    h.get_by_label("Licenses…").click();
+    h.run_ok();
+    h.get_by_label_contains("is open source, licensed under either of the MIT license");
+    h.get_by_label("Libraries").click();
+    h.run_ok();
+    h.get_by_label("THIRD-PARTY NOTICES");
+    h.get_by_label_contains("libgit2 (Git in C)");
+    screenshot(&mut h, "43-licenses");
+    h.get_by_label("Syntax themes").click();
+    h.run_ok();
+    h.get_by_label_contains("two-face");
+    h.get_by_label("Close licenses").click();
+    h.run_ok();
+    assert!(h.query_by_label("Syntax themes").is_none(), "closed");
+}

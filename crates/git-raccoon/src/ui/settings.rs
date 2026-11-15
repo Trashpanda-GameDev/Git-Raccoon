@@ -10,6 +10,7 @@ use crate::ui::widgets;
 pub enum Action {
     Close,
     ClearRecent,
+    Licenses,
 }
 
 pub fn show(ctx: &egui::Context, settings: &mut Settings) -> Option<Action> {
@@ -105,6 +106,11 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings) -> Option<Action> {
             let mut check = !settings.no_update_checks;
             ui.checkbox(&mut check, "Check for updates automatically");
             settings.no_update_checks = !check;
+        });
+        row(ui, "About", &mut |ui| {
+            if ui.button("Licenses…").clicked() {
+                action = Some(Action::Licenses);
+            }
         });
         row(ui, "Recent repositories", &mut |ui| {
             let n = settings.recent.len();

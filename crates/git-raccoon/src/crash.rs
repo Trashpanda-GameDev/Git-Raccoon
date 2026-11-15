@@ -11,8 +11,8 @@ pub fn folder() -> Option<PathBuf> {
     eframe::storage_dir("git-raccoon").map(|d| d.join("crashes"))
 }
 
-/// Where reports can be posted: the public releases repository's issues.
-const ISSUES: &str = "https://github.com/Trashpanda-GameDev/Git-Raccoon-Releases/issues/new";
+/// Where reports can be posted: the project's GitHub issues.
+const ISSUES: &str = "https://github.com/Trashpanda-GameDev/Git-Raccoon/issues/new";
 
 /// Writes a report whenever anything panics, then carries on as before.
 pub fn install() {

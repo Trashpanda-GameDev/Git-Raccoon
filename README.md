@@ -37,13 +37,7 @@ cargo run --release -- path/to/repo
 
 ## Releases and updates
 
-Installers for Windows, macOS (Apple Silicon) and Linux (an AppImage) are published to the public [Git-Raccoon-Releases](https://github.com/Trashpanda-GameDev/Git-Raccoon-Releases) repository (the code here stays private). An installed Git Raccoon checks there now and then, downloads a newer version in the background, and offers to restart into it from the toolbar (Settings can turn the checks off). Installers are built with [Velopack](https://velopack.io); copies run with `cargo run` don't update themselves.
-
-### One-time setup
-
-1. Create the public repository `Trashpanda-GameDev/Git-Raccoon-Releases` (it can be empty).
-2. Create a fine-grained personal access token (GitHub > Settings > Developer settings) with access to only that repository and **Contents: Read and write** permission.
-3. In this repository, add it as an Actions secret named `RELEASES_TOKEN` (Settings > Secrets and variables > Actions).
+Installers for Windows, macOS (Apple Silicon) and Linux (an AppImage) are published on this repository's [Releases](https://github.com/Trashpanda-GameDev/Git-Raccoon/releases) page. An installed Git Raccoon checks there now and then, downloads a newer version in the background, and offers to restart into it from the toolbar (Settings can turn the checks off). Installers are built with [Velopack](https://velopack.io); copies run with `cargo run` don't update themselves.
 
 ### Making a release
 
@@ -55,9 +49,22 @@ Installers for Windows, macOS (Apple Silicon) and Linux (an AppImage) are publis
    git push origin v0.5.1
    ```
 
-The Release workflow builds the three installers and publishes them as one release. To try them first, run the workflow by hand (Actions > Release > Run workflow): it builds them and keeps them as downloadable artifacts without publishing.
+The Release workflow builds the three installers and publishes them as one release (with GitHub's built-in token: nothing to set up). To try them first, run the workflow by hand (Actions > Release > Run workflow): it builds them and keeps them as downloadable artifacts without publishing.
 
 They aren't code-signed yet. On Windows, SmartScreen warns ("More info", then "Run anyway") until the installer builds a reputation. On macOS, right-click the app and choose Open the first time (or allow it in System Settings > Privacy & Security).
+
+## License
+
+Git Raccoon is open source, licensed under either of
+
+- the Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE)), or
+- the MIT license ([LICENSE-MIT](LICENSE-MIT)),
+
+at your option. It's built on other open-source software, whose licenses are collected in [THIRD-PARTY-NOTICES.txt](crates/git-raccoon/assets/THIRD-PARTY-NOTICES.txt) (shipped with the app, and shown in Settings > Licenses). After changing dependencies, regenerate it with `python3 scripts/third-party-notices.py`.
+
+### Contributing
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in Git Raccoon by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
 
 ## Keyboard shortcuts
 
