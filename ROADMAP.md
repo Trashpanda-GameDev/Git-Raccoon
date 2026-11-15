@@ -76,7 +76,7 @@ The operations people open a GUI for.
 
 ## v1.0: Ship
 
-- [ ] CI on GitHub Actions: build and test on Linux, macOS and Windows
+- [x] CI on GitHub Actions: build and test on Linux, macOS and Windows
 - [ ] Installers and in-app updates (for example Velopack, as in the Asset Browser): Windows first, then macOS and Linux
 - [ ] Opt-in crash reporting
 - [ ] User guide and project website
