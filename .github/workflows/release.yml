@@ -57,6 +57,7 @@ jobs:
           vpk pack
           --packId GitRaccoon
           --packVersion ${{ steps.version.outputs.version }}
+          --runtime win-x64
           --packDir publish
           --mainExe git-raccoon.exe
           --packTitle "Git Raccoon"
