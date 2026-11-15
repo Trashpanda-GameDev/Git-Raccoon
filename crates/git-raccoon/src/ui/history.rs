@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Stroke, epaint::CubicBezierShape};
 use egui_phosphor::regular as icon;
-use git_raccoon_core::repo::{GraphCommit, RefKind};
+use git_raccoon_core::repo::{GraphCommit, RefKind, RefLabel};
 
 use crate::format;
 use crate::repo_view::RepoView;
@@ -108,6 +108,23 @@ pub enum Click {
         id: String,
         label: String,
     },
+    /// A branch label double-clicked: check it out.
+    Checkout(String),
+    /// A remote branch label double-clicked ("origin/main").
+    CheckoutRemote(String),
+}
+
+/// What double-clicking a label on `c` does.
+fn label_click(c: &GraphCommit, r: &RefLabel) -> Option<Click> {
+    match r.kind {
+        RefKind::Local if !r.is_head => Some(Click::Checkout(r.name.clone())),
+        RefKind::Remote => Some(Click::CheckoutRemote(r.name.clone())),
+        RefKind::Tag => Some(Click::CheckoutDetached {
+            id: c.id.clone(),
+            label: format!("tag {}", r.name),
+        }),
+        RefKind::Local | RefKind::Head => None,
+    }
 }
 
 /// Shows the history; returns what was clicked, if anything.
@@ -198,6 +215,17 @@ pub fn show(
     let head = repo.head_branch().map(str::to_string);
     let searching = repo.search.is_active();
     let mut clicked = None;
+    let mut double_click = None;
+    let pointer = ui.ctx().pointer_hover_pos();
+    let overlay_id = ui.id().with("all labels");
+    // The row whose labels are spread out, its label cell, and the area
+    // they cover: kept while the pointer is over them, so they can be reached.
+    let mut overlay: Option<(usize, Rect, Rect)> = ui.ctx().data(|d| d.get_temp(overlay_id));
+    if overlay.is_some_and(|(_, cell, area)| {
+        !pointer.is_some_and(|p| area.expand(2.0).contains(p) || cell.contains(p))
+    }) {
+        overlay = None;
+    }
     let output = area.show_viewport(ui, |ui, viewport| {
         ui.set_min_height(row_top(total));
         let origin = ui.max_rect().min;
@@ -242,6 +270,9 @@ pub fn show(
             }
             if response.clicked() && commit.is_some() {
                 clicked = Some(Click::Row(row));
+            }
+            if response.double_clicked() {
+                double_click = response.interact_pointer_pos().map(|p| (row, p));
             }
             if let Some(c) = commit {
                 let (id, label) = (c.id.clone(), commit_label(&c.id, &c.summary));
@@ -383,7 +414,25 @@ pub fn show(
             } else {
                 (theme::text(), theme::muted())
             };
-            ref_pills(painter, cell(0.0, cols.refs), c, dim);
+            let refs_cell = cell(0.0, cols.refs);
+            let pills = ref_pills(painter, refs_cell, c, dim);
+            // Double-clicking a label checks it out.
+            if let Some((_, p)) = double_click.filter(|(r, _)| *r == row)
+                && let Some(i) = pills.iter().position(|rect| rect.contains(p))
+                && let Some(action) = c.refs.get(i).and_then(|r| label_click(c, r))
+            {
+                clicked = Some(action);
+            }
+            // More than one label: hovering spreads them all out.
+            if c.refs.len() > 1
+                && overlay.is_none()
+                && pointer.is_some_and(|p| {
+                    Rect::from_x_y_ranges(refs_cell.x_range(), top..=top + ROW_HEIGHT).contains(p)
+                })
+                && ui.clip_rect().contains(refs_cell.center())
+            {
+                overlay = Some((row, refs_cell, Rect::NOTHING));
+            }
             let mut x = cols.refs + cols.graph;
             widgets::text_in(
                 painter,
@@ -421,6 +470,24 @@ pub fn show(
                 );
             }
         }
+
+        if let Some((row, cell, _)) = overlay {
+            if let Some(c) = repo.rows.get(row) {
+                let (area, action) = all_labels(ui.ctx(), overlay_id, cell, row, c);
+                overlay = Some((row, cell, area));
+                if action.is_some() {
+                    clicked = action;
+                }
+            } else {
+                overlay = None;
+            }
+        }
+    });
+    ui.ctx().data_mut(|d| match overlay {
+        Some(o) => {
+            d.insert_temp(overlay_id, o);
+        }
+        None => d.remove::<(usize, Rect, Rect)>(overlay_id),
     });
     scroll.offset = output.state.offset.y;
     scroll.height = output.inner_rect.height();
@@ -528,24 +595,32 @@ fn working_row(ui: &mut egui::Ui, repo: &mut RepoView, cols: &Columns, width: f3
     response.clicked()
 }
 
-fn ref_pills(painter: &egui::Painter, cell: Rect, c: &GraphCommit, dim: bool) {
-    let Some(first) = c.refs.first() else { return };
-    let mut colour = theme::lane_color(c.column);
-    if dim {
-        colour = colour.gamma_multiply(0.45);
-    }
-    let glyph = match (first.kind, first.is_head) {
+/// A label's text: its name, after an icon for its kind.
+fn ref_text(r: &RefLabel) -> String {
+    let glyph = match (r.kind, r.is_head) {
         (RefKind::Local, true) => icon::CHECK,
         (RefKind::Local, false) => "",
         (RefKind::Remote, _) => icon::CLOUD,
         (RefKind::Tag, _) => icon::TAG,
         (RefKind::Head, _) => icon::DIAMOND,
     };
-    let label = if glyph.is_empty() {
-        first.name.clone()
+    if glyph.is_empty() {
+        r.name.clone()
     } else {
-        format!("{glyph} {}", first.name)
+        format!("{glyph} {}", r.name)
+    }
+}
+
+/// Draws the first label, and "+N" for the others. Returns where the
+/// first label is (as the rect of `c.refs[0]`).
+fn ref_pills(painter: &egui::Painter, cell: Rect, c: &GraphCommit, dim: bool) -> Vec<Rect> {
+    let Some(first) = c.refs.first() else {
+        return Vec::new();
     };
+    let mut colour = theme::lane_color(c.column);
+    if dim {
+        colour = colour.gamma_multiply(0.45);
+    }
     let more = c.refs.len() - 1;
     let reserve = if more > 0 { 34.0 } else { 0.0 };
     let left = Pos2::new(cell.left(), cell.center().y);
@@ -553,7 +628,7 @@ fn ref_pills(painter: &egui::Painter, cell: Rect, c: &GraphCommit, dim: bool) {
         painter,
         left,
         cell.width() - reserve,
-        &label,
+        &ref_text(first),
         colour,
         first.is_head,
     );
@@ -567,6 +642,89 @@ fn ref_pills(painter: &egui::Painter, cell: Rect, c: &GraphCommit, dim: bool) {
             false,
         );
     }
+    vec![rect]
+}
+
+/// Every label of a commit, one above the other, over the rows below:
+/// shown while the pointer is over them. A double-click checks one out; a
+/// click selects the commit. Returns the area they cover, and what was
+/// clicked.
+fn all_labels(
+    ctx: &egui::Context,
+    id: egui::Id,
+    cell: Rect,
+    row: usize,
+    c: &GraphCommit,
+) -> (Rect, Option<Click>) {
+    const GAP: f32 = 4.0;
+    const PAD: f32 = 4.0;
+    let colour = theme::lane_color(c.column);
+    let mut action = None;
+    let top = cell.center().y - 10.0 - PAD;
+    let area = egui::Area::new(id)
+        .order(egui::Order::Foreground)
+        .fixed_pos(Pos2::new(cell.left() - PAD, top))
+        .show(ctx, |ui| {
+            egui::Frame::new()
+                .fill(theme::bg())
+                .stroke(Stroke::new(1.0, theme::border()))
+                .corner_radius(6)
+                .inner_margin(PAD)
+                .shadow(egui::Shadow {
+                    offset: [0, 4],
+                    blur: 12,
+                    spread: 0,
+                    color: Color32::from_black_alpha(90),
+                })
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = GAP;
+                    for r in &c.refs {
+                        let text = ref_text(r);
+                        // Measure, then claim the space and draw into it.
+                        let width = ui
+                            .painter()
+                            .layout_no_wrap(
+                                text.clone(),
+                                egui::FontId::proportional(12.0),
+                                theme::text(),
+                            )
+                            .size()
+                            .x
+                            + 14.0;
+                        let width = width.min(360.0);
+                        let (rect, response) =
+                            ui.allocate_exact_size(egui::vec2(width, 20.0), Sense::click());
+                        let what = label_click(c, r);
+                        let name = r.name.clone();
+                        response.widget_info(|| {
+                            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &name)
+                        });
+                        if response.hovered() {
+                            ui.painter()
+                                .rect_filled(rect.expand(2.0), 5, theme::bg_hover());
+                        }
+                        widgets::pill(
+                            ui.painter(),
+                            Pos2::new(rect.left(), rect.center().y),
+                            360.0,
+                            &text,
+                            colour,
+                            r.is_head,
+                        );
+                        let response = if what.is_some() {
+                            response.on_hover_text("Double-click to check out")
+                        } else {
+                            response
+                        };
+                        if response.double_clicked() {
+                            action = what;
+                        } else if response.clicked() {
+                            action = Some(Click::Row(row));
+                        }
+                    }
+                });
+        });
+    (area.response.rect, action)
 }
 
 /// "a1b2c3d Fix the thing", for dialogs about a commit.

@@ -41,7 +41,7 @@ Your open repositories come back the next time you start Git Raccoon.
 
 ## The window
 
-- **The graph** (middle) shows every commit, newest at the top, with lines for branches and merges, and labels for branches, remote branches and tags. Click a commit to see its details; use the arrow keys and Page Up/Down to move.
+- **The graph** (middle) shows every commit, newest at the top, with lines for branches and merges, and labels for branches, remote branches and tags. When a commit has several labels ("main +2"), point at them to see them all. Double-click a label to check that branch out. Click a commit to see its details; use the arrow keys and Page Up/Down to move.
 - **The sidebar** (left) lists local branches (with how far ahead or behind their upstream they are), remotes and their branches, tags, stashes, worktrees and submodules. Click one to jump to its commit. The filter box at the top narrows the lists.
 - **The details pane** (right) shows the selected commit: its message, author, date, parents and changed files. Click a file to see its diff.
 - **Diffs** show unified or side by side, with syntax highlighting, the changed words marked, and images previewed.

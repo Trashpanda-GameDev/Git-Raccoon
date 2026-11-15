@@ -1485,6 +1485,10 @@ impl App {
                     Some(history::Click::InteractiveRebase { id, label }) => {
                         repo.plan_rebase(id, label);
                     }
+                    Some(history::Click::Checkout(name)) => repo.checkout(&ctx, name),
+                    Some(history::Click::CheckoutRemote(name)) => {
+                        repo.run(&ctx, Op::CheckoutRemote(name));
+                    }
                     None => {}
                 }
             });

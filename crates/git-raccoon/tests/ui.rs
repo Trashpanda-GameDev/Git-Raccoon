@@ -1104,6 +1104,74 @@ fn menu_item(h: &mut Harness<'_, App>, target: &str, item: &str) {
     h.run_ok();
 }
 
+/// Double-clicks at a point with the pointer.
+fn double_click_at(h: &mut Harness<'_, App>, pos: egui::Pos2) {
+    h.hover_at(pos);
+    h.run_ok();
+    // The test harness feeds each press and release in a frame of its own,
+    // a quarter of a second apart: longer than a double-click allows.
+    h.ctx
+        .options_mut(|o| o.input_options.max_double_click_delay = 2.0);
+    for pressed in [true, false, true, false] {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.run_ok();
+    h.ctx
+        .options_mut(|o| o.input_options.max_double_click_delay = 0.3);
+}
+
+#[test]
+fn spreads_out_a_commits_labels_and_checks_them_out() {
+    let sample = Sample::build();
+    // A second branch where main is: three labels on one commit.
+    git(&sample, &["branch", "release"]);
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+
+    // Hovering over the labels shows each of them.
+    let row = h.get_by_label("Redraw icon and rename loader").rect();
+    let labels = egui::pos2(row.left() + 30.0, row.center().y);
+    // (The sidebar lists "release" too; "origin/main" is only on the graph.)
+    assert!(h.query_by_label("origin/main").is_none(), "only on hover");
+    h.hover_at(labels);
+    h.run_ok();
+    h.get_by_label("origin/main");
+    screenshot(&mut h, "44-all-labels");
+    // Still there when the pointer moves down onto them.
+    // The graph's "release": the one further right than the sidebar's.
+    let release = h
+        .get_all_by_label("release")
+        .map(|n| n.rect().center())
+        .max_by(|a, b| a.x.total_cmp(&b.x))
+        .unwrap();
+    h.hover_at(release);
+    h.run_ok();
+    h.get_by_label("origin/main");
+
+    // Double-clicking one checks it out.
+    double_click_at(&mut h, release);
+    wait_for(&mut h, "the checkout", |app| {
+        head_branch(app).as_deref() == Some("release")
+    });
+
+    // Moving away puts them away.
+    h.hover_at(egui::pos2(row.right() - 10.0, row.bottom() + 200.0));
+    h.run_ok();
+    assert!(h.query_by_label("origin/main").is_none());
+
+    // A commit's only label can be double-clicked where it is.
+    let row = h.get_by_label("Fix toolbar glitch").rect();
+    double_click_at(&mut h, egui::pos2(row.left() + 30.0, row.center().y));
+    wait_for(&mut h, "the checkout", |app| {
+        head_branch(app).as_deref() == Some("fix/ui/toolbar-glitch")
+    });
+}
+
 #[test]
 fn creates_checks_out_renames_and_deletes_branches_and_tags() {
     use egui::accesskit::Role;
