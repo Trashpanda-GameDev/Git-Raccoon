@@ -223,23 +223,25 @@ pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
                 action = Some(Action::Close);
             }
             let has_changes = status.is_some_and(|s| !s.is_clean());
-            let stash =
-                egui::Button::new(RichText::new(format!("{}  Stash", icon::STACK)).size(12.0));
-            let stash = ui.add_enabled(has_changes && !staging && !committing, stash);
-            ui.ctx()
-                .accesskit_node_builder(stash.id, |n| n.set_label("Stash changes"));
-            if stash
-                .on_hover_text("Put uncommitted changes aside in a stash: all of them, or just the staged ones")
-                .clicked()
-            {
-                action = Some(Action::Stash);
-            }
             let conflicts = status.is_some_and(|s| !s.conflicted.is_empty());
-            if widgets::named_icon_button(
+            let changed = status.map_or(0, |s| {
+                let mut paths: Vec<&str> = s
+                    .staged
+                    .iter()
+                    .chain(&s.unstaged)
+                    .map(|f| f.path.as_str())
+                    .collect();
+                paths.sort_unstable();
+                paths.dedup();
+                paths.len()
+            });
+            if widgets::count_button(
                 ui,
                 icon::TRASH,
+                changed,
                 "Discard all changes",
                 has_changes && !conflicts && !staging && !committing,
+                true,
             )
             .clicked()
             {
@@ -274,7 +276,8 @@ pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
                 .inner_margin(egui::Margin::symmetric(0, 10)),
         )
         .show(ui, |ui| {
-            if let Some(a) = commit_box(ui, draft, staged, committing) {
+            let can_stash = !status.is_clean() && !staging && !committing;
+            if let Some(a) = commit_box(ui, draft, staged, committing, can_stash) {
                 action = Some(a);
             }
         });
@@ -422,6 +425,16 @@ fn file_list(
     let mut action = None;
     let mut fold = false;
     let files = status.files(side);
+    // The files picked in this list (that are still in it).
+    let picked: Vec<String> = if selection.side == Some(side) {
+        files
+            .iter()
+            .filter(|f| selection.paths.contains(&f.path))
+            .map(|f| f.path.clone())
+            .collect()
+    } else {
+        Vec::new()
+    };
     let (title, all_label, all_glyph, all_action) = match side {
         Side::Unstaged => (
             "Unstaged files",
@@ -462,23 +475,55 @@ fn file_list(
             fold = true;
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let button =
-                egui::Button::new(RichText::new(format!("{all_glyph}  {all_label}")).size(12.0));
-            if ui.add_enabled(!busy && !files.is_empty(), button).clicked() {
-                action = Some(all_action);
-            }
-            if side == Side::Unstaged
-                && widgets::named_icon_button(
+            // With files picked here, the buttons act on those.
+            if picked.is_empty() {
+                let button = egui::Button::new(
+                    RichText::new(format!("{all_glyph}  {all_label}")).size(12.0),
+                );
+                if ui.add_enabled(!busy && !files.is_empty(), button).clicked() {
+                    action = Some(all_action);
+                }
+                if side == Side::Unstaged
+                    && widgets::named_icon_button(
+                        ui,
+                        icon::ARROW_COUNTER_CLOCKWISE,
+                        "Discard all unstaged changes",
+                        !busy && !files.is_empty(),
+                    )
+                    .clicked()
+                {
+                    action = Some(Action::Discard(
+                        files.iter().map(|f| f.path.clone()).collect(),
+                    ));
+                }
+            } else {
+                let n = picked.len();
+                let files_word = if n == 1 { "file" } else { "files" };
+                let (glyph, verb) = match side {
+                    Side::Unstaged => (icon::PLUS_CIRCLE, "Stage"),
+                    Side::Staged => (icon::MINUS_CIRCLE, "Unstage"),
+                };
+                let label = format!("{verb} {n} {files_word}");
+                let button =
+                    egui::Button::new(RichText::new(format!("{glyph}  {label}")).size(12.0));
+                if ui.add_enabled(!busy, button).clicked() {
+                    action = Some(Action::Bulk(match side {
+                        Side::Unstaged => Bulk::Stage(picked.clone()),
+                        Side::Staged => Bulk::Unstage(picked.clone()),
+                    }));
+                }
+                if widgets::count_button(
                     ui,
-                    icon::ARROW_COUNTER_CLOCKWISE,
-                    "Discard all unstaged changes",
-                    !busy && !files.is_empty(),
+                    icon::TRASH,
+                    n,
+                    &format!("Discard changes to the {n} picked {files_word}"),
+                    !busy,
+                    true,
                 )
                 .clicked()
-            {
-                action = Some(Action::Discard(
-                    files.iter().map(|f| f.path.clone()).collect(),
-                ));
+                {
+                    action = Some(Action::Bulk(Bulk::Discard(side, picked.clone())));
+                }
             }
         });
     });
@@ -602,6 +647,7 @@ fn commit_box(
     draft: &mut CommitDraft,
     staged: usize,
     committing: bool,
+    can_stash: bool,
 ) -> Option<Action> {
     let mut action = None;
     ui.horizontal(|ui| {
@@ -692,15 +738,36 @@ fn commit_box(
         theme::accent()
     } else {
         theme::bg_hover()
-    })
-    .min_size(egui::vec2(width, 30.0));
-    let clicked = ui.add_enabled(can_commit, button).on_disabled_hover_text(
-        if draft.summary.trim().is_empty() {
-            "Write a summary first."
-        } else {
-            "Stage some changes first."
-        },
-    );
+    });
+    // Stash sits beside Commit: the other way to put changes away.
+    const STASH_WIDTH: f32 = 84.0;
+    let gap = ui.spacing().item_spacing.x;
+    let button = button.min_size(egui::vec2(width - STASH_WIDTH - gap, 30.0));
+    let (clicked, stash) = ui
+        .horizontal(|ui| {
+            let clicked = ui.add_enabled(can_commit, button).on_disabled_hover_text(
+                if draft.summary.trim().is_empty() {
+                    "Write a summary first."
+                } else {
+                    "Stage some changes first."
+                },
+            );
+            let stash = ui.add_enabled(
+                can_stash,
+                egui::Button::new(RichText::new(format!("{}  Stash", icon::STACK)).size(12.0))
+                    .min_size(egui::vec2(STASH_WIDTH, 30.0)),
+            );
+            ui.ctx()
+                .accesskit_node_builder(stash.id, |n| n.set_label("Stash changes"));
+            let stash = stash.on_hover_text(
+                "Put uncommitted changes aside in a stash: all of them, or just the staged ones",
+            );
+            (clicked, stash)
+        })
+        .inner;
+    if stash.clicked() {
+        action = Some(Action::Stash);
+    }
     // Ctrl/Cmd+Enter in either field commits.
     let shortcut = (summary.has_focus() || body.has_focus())
         && ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter));

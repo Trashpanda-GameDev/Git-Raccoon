@@ -1122,6 +1122,11 @@ fn picks_several_files_and_acts_on_them_together() {
     h.get_by_label("notes/02.txt").click_secondary();
     h.run_ok();
     screenshot(&mut h, "47-file-menu");
+    // The menu offers it, and so does the list's button, now about the two.
+    assert_eq!(h.get_all_by_label_contains("Stage 2 files").count(), 2);
+    h.key_press(Key::Escape);
+    h.run_ok();
+    h.get_by_label("Discard changes to the 2 picked files");
     h.get_by_label_contains("Stage 2 files").click();
     wait_for(&mut h, "two staged", |app| status(app).staged.len() == 2);
     assert_eq!(

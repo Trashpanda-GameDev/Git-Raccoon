@@ -129,6 +129,42 @@ pub fn avatar(ui: &mut Ui, name: &str, email: &str) {
     );
 }
 
+/// A small framed button with an icon and a count, like "🗑 7", in the
+/// danger colour when `danger`. `name` is its tooltip and accessible name.
+pub fn count_button(
+    ui: &mut Ui,
+    glyph: &str,
+    count: usize,
+    name: &str,
+    enabled: bool,
+    danger: bool,
+) -> Response {
+    let colour = if !enabled {
+        theme::muted()
+    } else if danger {
+        theme::danger()
+    } else {
+        theme::text()
+    };
+    let button = egui::Button::new(
+        RichText::new(format!("{glyph} {count}"))
+            .size(12.0)
+            .color(colour),
+    )
+    .fill(if danger && enabled {
+        theme::danger_bg()
+    } else {
+        theme::bg_raised()
+    })
+    .stroke(Stroke::new(1.0, colour.gamma_multiply(0.6)))
+    .corner_radius(CornerRadius::same(4));
+    let response = ui.add_enabled(enabled, button);
+    let label = name.to_string();
+    ui.ctx()
+        .accesskit_node_builder(response.id, |n| n.set_label(label));
+    response.on_hover_text(name).on_disabled_hover_text(name)
+}
+
 /// A small rounded label with an outline, e.g. a branch name.
 pub fn pill(
     painter: &Painter,
