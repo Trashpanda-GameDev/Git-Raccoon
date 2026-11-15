@@ -40,16 +40,22 @@ pub fn text_in(painter: &Painter, rect: Rect, text: &str, font: FontId, color: C
 }
 
 /// A borderless button showing a Phosphor icon, with a tooltip.
+/// A frameless icon button. Its tooltip is also its name for screen
+/// readers (the icon alone says nothing).
 pub fn icon_button(ui: &mut Ui, glyph: &str, tooltip: &str) -> Response {
-    ui.add(egui::Button::new(RichText::new(glyph).size(16.0).color(theme::MUTED)).frame(false))
-        .on_hover_text(tooltip)
+    let response = ui
+        .add(egui::Button::new(RichText::new(glyph).size(16.0).color(theme::muted())).frame(false));
+    let name = tooltip.to_string();
+    ui.ctx()
+        .accesskit_node_builder(response.id, |n| n.set_label(name));
+    response.on_hover_text(tooltip)
 }
 
 /// A filled accent button.
 pub fn primary_button(ui: &mut Ui, label: &str) -> Response {
     ui.add(
-        egui::Button::new(RichText::new(label).color(theme::ON_ACCENT).strong())
-            .fill(theme::ACCENT)
+        egui::Button::new(RichText::new(label).color(theme::on_accent()).strong())
+            .fill(theme::accent())
             .min_size(egui::vec2(0.0, 32.0)),
     )
 }
@@ -61,13 +67,18 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: T, options: &[(T, &str
         ui.spacing_mut().item_spacing.x = 0.0;
         for (option, label) in options {
             let on = *option == value;
-            let text =
-                RichText::new(*label)
-                    .size(12.0)
-                    .color(if on { theme::TEXT } else { theme::MUTED });
+            let text = RichText::new(*label).size(12.0).color(if on {
+                theme::text()
+            } else {
+                theme::muted()
+            });
             let button = egui::Button::new(text)
-                .fill(if on { theme::BG_SELECTED } else { theme::BG })
-                .stroke(Stroke::new(1.0, theme::BORDER))
+                .fill(if on {
+                    theme::bg_selected()
+                } else {
+                    theme::bg()
+                })
+                .stroke(Stroke::new(1.0, theme::border()))
                 .corner_radius(CornerRadius::ZERO);
             if ui.add(button).clicked() {
                 chosen = *option;
@@ -79,14 +90,14 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: T, options: &[(T, &str
 
 pub fn status_colour(status: FileStatus) -> (char, Color32) {
     match status {
-        FileStatus::Added => ('A', theme::ADD),
-        FileStatus::Modified => ('M', theme::MODIFIED),
-        FileStatus::Deleted => ('D', theme::DEL),
-        FileStatus::Renamed => ('R', theme::RENAMED),
-        FileStatus::Copied => ('C', theme::RENAMED),
-        FileStatus::Typechange => ('T', theme::TYPECHANGE),
-        FileStatus::Untracked => ('?', theme::ADD),
-        FileStatus::Conflicted => ('!', theme::DANGER),
+        FileStatus::Added => ('A', theme::add()),
+        FileStatus::Modified => ('M', theme::modified()),
+        FileStatus::Deleted => ('D', theme::del()),
+        FileStatus::Renamed => ('R', theme::renamed()),
+        FileStatus::Copied => ('C', theme::renamed()),
+        FileStatus::Typechange => ('T', theme::typechange()),
+        FileStatus::Untracked => ('?', theme::add()),
+        FileStatus::Conflicted => ('!', theme::danger()),
     }
 }
 
@@ -132,7 +143,11 @@ pub fn pill(
         painter,
         text,
         font,
-        if filled { Color32::WHITE } else { theme::TEXT },
+        if filled {
+            Color32::WHITE
+        } else {
+            theme::text()
+        },
         max_width - 14.0,
     );
     let size = egui::vec2(galley.size().x + 14.0, 20.0);
@@ -140,14 +155,14 @@ pub fn pill(
     painter.rect(
         rect,
         CornerRadius::same(4),
-        if filled { outline } else { theme::BG_RAISED },
+        if filled { outline } else { theme::bg_raised() },
         Stroke::new(1.0, outline),
         StrokeKind::Inside,
     );
     painter.galley(
         Pos2::new(rect.left() + 7.0, rect.center().y - galley.size().y / 2.0),
         galley,
-        theme::TEXT,
+        theme::text(),
     );
     rect
 }
@@ -157,7 +172,7 @@ pub fn section_label(text: &str) -> RichText {
     RichText::new(text.to_uppercase())
         .size(11.0)
         .strong()
-        .color(theme::MUTED)
+        .color(theme::muted())
 }
 
 pub const ICON_CLOSE: &str = icon::X;
@@ -167,7 +182,7 @@ pub const ICON_CLOSE: &str = icon::X;
 pub fn named_icon_button(ui: &mut Ui, glyph: &str, name: &str, enabled: bool) -> Response {
     let response = ui.add_enabled(
         enabled,
-        egui::Button::new(RichText::new(glyph).size(15.0).color(theme::MUTED)).frame(false),
+        egui::Button::new(RichText::new(glyph).size(15.0).color(theme::muted())).frame(false),
     );
     ui.ctx()
         .accesskit_node_builder(response.id, |node| node.set_label(name));

@@ -102,19 +102,27 @@ fn row(
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, text));
     let painter = ui.painter();
     if active {
-        painter.rect_filled(rect, 0, theme::BG_SELECTED);
+        painter.rect_filled(rect, 0, theme::bg_selected());
     } else if response.hovered() {
-        painter.rect_filled(rect, 0, theme::BG_HOVER);
+        painter.rect_filled(rect, 0, theme::bg_hover());
     }
     #[expect(clippy::cast_precision_loss, reason = "tree depth is small")]
     let x = rect.left() + 12.0 + depth as f32 * INDENT;
-    let colour = if current { theme::ACCENT } else { theme::TEXT };
+    let colour = if current {
+        theme::accent()
+    } else {
+        theme::text()
+    };
     painter.text(
         Pos2::new(x + 7.0, rect.center().y),
         Align2::CENTER_CENTER,
         glyph,
         theme::body(13.0),
-        if current { theme::ACCENT } else { theme::MUTED },
+        if current {
+            theme::accent()
+        } else {
+            theme::muted()
+        },
     );
 
     // Badges from the right edge.
@@ -125,7 +133,7 @@ fn row(
             Pos2::new(right - galley.size().x - 10.0, rect.center().y - 8.0),
             Pos2::new(right, rect.center().y + 8.0),
         );
-        painter.rect_filled(r, 8, theme::BG);
+        painter.rect_filled(r, 8, theme::bg());
         painter.galley(
             Pos2::new(r.left() + 5.0, rect.center().y - galley.size().y / 2.0),
             galley,
@@ -163,7 +171,7 @@ fn folder_row(
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::CollapsingHeader, true, name));
     let painter = ui.painter();
     if response.hovered() {
-        painter.rect_filled(rect, 0, theme::BG_HOVER);
+        painter.rect_filled(rect, 0, theme::bg_hover());
     }
     #[expect(clippy::cast_precision_loss, reason = "tree depth is small")]
     let x = rect.left() + 4.0 + depth as f32 * INDENT;
@@ -177,21 +185,21 @@ fn folder_row(
         Align2::CENTER_CENTER,
         caret,
         theme::body(10.0),
-        theme::MUTED,
+        theme::muted(),
     );
     painter.text(
         Pos2::new(x + 20.0, rect.center().y),
         Align2::CENTER_CENTER,
         glyph,
         theme::body(13.0),
-        theme::MUTED,
+        theme::muted(),
     );
     widgets::text_in(
         painter,
         Rect::from_min_max(Pos2::new(x + 32.0, rect.top()), rect.max),
         name,
         theme::body(13.0),
-        theme::TEXT,
+        theme::text(),
     );
     if tooltip.is_empty() {
         response
@@ -236,21 +244,21 @@ fn section_header(
         Align2::CENTER_CENTER,
         caret,
         theme::body(10.0),
-        theme::MUTED,
+        theme::muted(),
     );
     painter.text(
         Pos2::new(rect.left() + 20.0, rect.center().y + 2.0),
         Align2::LEFT_CENTER,
         title.to_uppercase(),
         egui::FontId::proportional(11.0),
-        theme::MUTED,
+        theme::muted(),
     );
     painter.text(
         Pos2::new(rect.right() - 12.0, rect.center().y + 2.0),
         Align2::RIGHT_CENTER,
         count.to_string(),
         egui::FontId::proportional(11.0),
-        theme::MUTED,
+        theme::muted(),
     );
     (response.clicked(), added)
 }
@@ -351,7 +359,7 @@ fn drop_target(ui: &egui::Ui, response: &egui::Response, name: &str) -> Option<A
         ui.painter().rect_stroke(
             response.rect.shrink(1.0),
             4,
-            Stroke::new(1.5, theme::ACCENT),
+            Stroke::new(1.5, theme::accent()),
             egui::StrokeKind::Inside,
         );
     }
@@ -377,12 +385,12 @@ fn drag_label(ctx: &egui::Context) {
     let galley = painter.layout_no_wrap(
         format!("{}  Merge {}…", icon::GIT_MERGE, dragged.0),
         theme::body(12.0),
-        theme::ON_ACCENT,
+        theme::on_accent(),
     );
     let rect = Rect::from_min_size(pos + egui::vec2(14.0, 10.0), galley.size())
         .expand2(egui::vec2(8.0, 4.0));
-    painter.rect_filled(rect, 6, theme::ACCENT);
-    painter.galley(rect.min + egui::vec2(8.0, 4.0), galley, theme::ON_ACCENT);
+    painter.rect_filled(rect, 6, theme::accent());
+    painter.galley(rect.min + egui::vec2(8.0, 4.0), galley, theme::on_accent());
 }
 
 /// Adds the items of a context menu; the chosen one becomes the action.
@@ -416,7 +424,7 @@ pub fn show(
     ui.painter().hline(
         ui.max_rect().x_range(),
         ui.cursor().top(),
-        Stroke::new(1.0, theme::BORDER),
+        Stroke::new(1.0, theme::border()),
     );
 
     let f = filter.trim().to_lowercase();
@@ -463,7 +471,7 @@ pub fn show(
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
                     ui.add_space(28.0);
-                    ui.label(RichText::new(text).size(12.0).color(theme::MUTED));
+                    ui.label(RichText::new(text).size(12.0).color(theme::muted()));
                 });
                 ui.add_space(6.0);
             };
@@ -499,7 +507,7 @@ pub fn show(
                             Some(up) if up.gone => {
                                 badges.push(Badge {
                                     text: "gone".into(),
-                                    colour: theme::MUTED,
+                                    colour: theme::muted(),
                                 });
                                 format!("{}\nUpstream {} is gone", b.name, up.name)
                             }
@@ -507,13 +515,13 @@ pub fn show(
                                 if up.ahead > 0 {
                                     badges.push(Badge {
                                         text: format!("{} {}", icon::ARROW_UP, up.ahead),
-                                        colour: theme::ADD,
+                                        colour: theme::add(),
                                     });
                                 }
                                 if up.behind > 0 {
                                     badges.push(Badge {
                                         text: format!("{} {}", icon::ARROW_DOWN, up.behind),
-                                        colour: theme::MODIFIED,
+                                        colour: theme::modified(),
                                     });
                                 }
                                 format!(

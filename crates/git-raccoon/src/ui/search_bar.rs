@@ -21,7 +21,7 @@ pub fn show(ui: &mut egui::Ui, repo: &mut RepoView) {
     ui.horizontal_centered(|ui| {
         ui.label(
             RichText::new(icon::MAGNIFYING_GLASS)
-                .color(theme::MUTED)
+                .color(theme::muted())
                 .size(15.0),
         );
         let hint = match search.field {
@@ -89,7 +89,7 @@ pub fn show(ui: &mut egui::Ui, repo: &mut RepoView) {
             if search.running && search.total > 0 {
                 status += &format!(" · {}%", search.searched * 100 / search.total);
             }
-            ui.label(RichText::new(status).size(12.0).color(theme::MUTED));
+            ui.label(RichText::new(status).size(12.0).color(theme::muted()));
         }
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

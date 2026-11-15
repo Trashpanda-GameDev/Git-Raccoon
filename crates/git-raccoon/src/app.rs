@@ -3,7 +3,7 @@
 use eframe::egui::{self, Frame, Margin, Panel, RichText};
 
 use crate::repo_view::{self, Dialog, Loaded, Op, RepoView, Source};
-use crate::settings::{self, Settings};
+use crate::settings::{self, Settings, ThemeChoice};
 use crate::task::Task;
 use crate::theme;
 use std::path::PathBuf;
@@ -38,6 +38,10 @@ pub struct App {
     cloning: Option<Cloning>,
     /// The command palette, while open.
     palette: Option<palette::State>,
+    /// The settings window is open.
+    settings_open: bool,
+    /// The look last applied: light theme, and zoom.
+    applied: Option<(bool, f32)>,
 }
 
 /// A clone running in the background.
@@ -56,7 +60,7 @@ fn logo(ctx: &egui::Context) -> egui::TextureHandle {
                 i.as_raw(),
             )
         })
-        .unwrap_or_else(|_| egui::ColorImage::filled([1, 1], theme::ACCENT));
+        .unwrap_or_else(|_| egui::ColorImage::filled([1, 1], theme::accent()));
     ctx.load_texture("logo", image, egui::TextureOptions::LINEAR)
 }
 
@@ -92,6 +96,8 @@ impl App {
             clone_form: None,
             cloning: None,
             palette: None,
+            settings_open: false,
+            applied: None,
         }
     }
 
@@ -221,6 +227,30 @@ impl App {
         self.prompt.as_ref().map(|p| p.request.prompt.as_str())
     }
 
+    /// Applies the chosen theme (following the system's, if asked) and size,
+    /// when they change.
+    fn apply_look(&mut self, ctx: &egui::Context) {
+        let light = match self.settings.theme {
+            ThemeChoice::Light => true,
+            ThemeChoice::Dark => false,
+            ThemeChoice::System => ctx.system_theme() == Some(egui::Theme::Light),
+        };
+        let zoom = self.settings.zoom.unwrap_or(1.0);
+        if self.applied == Some((light, zoom)) {
+            return;
+        }
+        let theme_changed = self.applied.is_none_or(|(l, _)| l != light);
+        self.applied = Some((light, zoom));
+        if theme_changed {
+            theme::set_light(ctx, light);
+            // Diffs carry their colours: draw them again.
+            if let Some(repo) = &mut self.repo {
+                repo.diff.clear();
+            }
+        }
+        ctx.set_zoom_factor(zoom);
+    }
+
     /// Shows Git's questions one at a time.
     fn questions(&mut self, ctx: &egui::Context) {
         if self.prompt.is_none()
@@ -345,7 +375,11 @@ impl App {
         let Some(repo) = &self.repo else {
             return matches!(
                 command,
-                Command::Palette | Command::OpenRepo | Command::CloneRepo | Command::NewRepo
+                Command::Palette
+                    | Command::Settings
+                    | Command::OpenRepo
+                    | Command::CloneRepo
+                    | Command::NewRepo
             );
         };
         let busy = repo.op_running();
@@ -354,6 +388,7 @@ impl App {
         let in_progress = status.is_some_and(|s| s.in_progress.is_some());
         match command {
             Command::Palette
+            | Command::Settings
             | Command::OpenRepo
             | Command::CloneRepo
             | Command::NewRepo
@@ -402,6 +437,7 @@ impl App {
                 enabled,
             });
         };
+        add(Command::Settings, "Settings…".into());
         add(Command::OpenRepo, "Open repository…".into());
         add(Command::CloneRepo, "Clone repository…".into());
         add(Command::NewRepo, "New repository…".into());
@@ -502,6 +538,7 @@ impl App {
         }
         match command {
             Command::Palette => self.palette = Some(palette::State::default()),
+            Command::Settings => self.settings_open = true,
             Command::OpenRepo => self.browse(ctx),
             Command::CloneRepo => self.show_clone(),
             Command::NewRepo => self.pick_new_repository(ctx),
@@ -604,6 +641,7 @@ impl App {
         if self.prompt.is_some()
             || self.palette.is_some()
             || self.clone_form.is_some()
+            || self.settings_open
             || dialog_open
         {
             return;
@@ -682,7 +720,7 @@ impl App {
         let bar = Panel::top("toolbar")
             .frame(
                 Frame::new()
-                    .fill(theme::BG_RAISED)
+                    .fill(theme::bg_raised())
                     .inner_margin(Margin::symmetric(10, 6)),
             )
             .show(ui, |ui| {
@@ -723,6 +761,7 @@ impl App {
             Some(toolbar::Action::Forget(p)) => self.settings.forget(&p),
             Some(toolbar::Action::Close) => self.close(&ctx),
             Some(toolbar::Action::Palette) => self.run_command(&ctx, Command::Palette),
+            Some(toolbar::Action::Settings) => self.run_command(&ctx, Command::Settings),
             Some(toolbar::Action::Fetch) => self.run(&ctx, Op::Fetch),
             Some(toolbar::Action::Pull) => {
                 self.run(
@@ -754,12 +793,12 @@ impl App {
             Panel::top("error")
                 .frame(
                     Frame::new()
-                        .fill(theme::DANGER_BG)
+                        .fill(theme::danger_bg())
                         .inner_margin(Margin::symmetric(12, 8)),
                 )
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(message).color(theme::DANGER));
+                        ui.label(RichText::new(message).color(theme::danger()));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if widgets::icon_button(ui, widgets::ICON_CLOSE, "Dismiss").clicked() {
                                 self.error = None;
@@ -780,14 +819,15 @@ impl App {
             Panel::top("in-progress")
                 .frame(
                     Frame::new()
-                        .fill(theme::BG_RAISED)
-                        .stroke(egui::Stroke::new(1.0, theme::MODIFIED))
+                        .fill(theme::bg_raised())
+                        .stroke(egui::Stroke::new(1.0, theme::modified()))
                         .inner_margin(Margin::symmetric(12, 8)),
                 )
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(
-                            RichText::new(egui_phosphor::regular::GIT_MERGE).color(theme::MODIFIED),
+                            RichText::new(egui_phosphor::regular::GIT_MERGE)
+                                .color(theme::modified()),
                         );
                         let mut text = format!("A {noun} is in progress");
                         if let Some(d) = &detail {
@@ -799,7 +839,7 @@ impl App {
                             1 => "1 file has conflicts to resolve.".to_string(),
                             n => format!("{n} files have conflicts to resolve."),
                         };
-                        ui.label(RichText::new(what_next).color(theme::MUTED));
+                        ui.label(RichText::new(what_next).color(theme::muted()));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let busy = repo.op_running();
                             if ui
@@ -811,10 +851,11 @@ impl App {
                             let ready = !busy && conflicts == 0;
                             let label = RichText::new(format!("Continue {noun}"));
                             let go = if ready {
-                                egui::Button::new(label.color(theme::ON_ACCENT).strong())
-                                    .fill(theme::ACCENT)
+                                egui::Button::new(label.color(theme::on_accent()).strong())
+                                    .fill(theme::accent())
                             } else {
-                                egui::Button::new(label.color(theme::MUTED)).fill(theme::BG_HOVER)
+                                egui::Button::new(label.color(theme::muted()))
+                                    .fill(theme::bg_hover())
                             };
                             if ui
                                 .add_enabled(!busy && conflicts == 0, go)
@@ -835,7 +876,11 @@ impl App {
 
         let Some(repo) = &mut self.repo else {
             egui::CentralPanel::default_margins()
-                .frame(Frame::new().fill(theme::BG).inner_margin(Margin::same(16)))
+                .frame(
+                    Frame::new()
+                        .fill(theme::bg())
+                        .inner_margin(Margin::same(16)),
+                )
                 .show(ui, |ui| {
                     if self.opening.is_some() {
                         return;
@@ -858,7 +903,7 @@ impl App {
                 .resizable(true)
                 .default_size(240.0)
                 .size_range(180.0..=420.0)
-                .frame(Frame::new().fill(theme::BG_RAISED))
+                .frame(Frame::new().fill(theme::bg_raised()))
                 .show(ui, |ui| {
                     let selected = repo.selected.as_ref().map(|s| s.id.clone());
                     sidebar::show(
@@ -892,7 +937,7 @@ impl App {
         }
 
         // Details pane: a commit, or the working changes.
-        let pane = Frame::new().fill(theme::BG_RAISED).inner_margin(Margin {
+        let pane = Frame::new().fill(theme::bg_raised()).inner_margin(Margin {
             left: 12,
             right: 8,
             top: 0,
@@ -977,7 +1022,7 @@ impl App {
 
         // History (or a diff over it).
         egui::CentralPanel::no_frame()
-            .frame(Frame::new().fill(theme::BG))
+            .frame(Frame::new().fill(theme::bg()))
             .show(ui, |ui| {
                 let busy = repo.op_running();
                 if let Some(view) = &repo.file_view {
@@ -1112,7 +1157,7 @@ impl App {
                 ui.painter().hline(
                     ui.max_rect().x_range(),
                     ui.cursor().top(),
-                    egui::Stroke::new(1.0, theme::BORDER),
+                    egui::Stroke::new(1.0, theme::border()),
                 );
                 match history::show(ui, repo, &mut self.scroll, now) {
                     Some(history::Click::Row(row)) => {
@@ -1142,6 +1187,7 @@ impl App {
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.apply_look(ctx);
         self.poll_opening(ctx);
         self.poll_clone(ctx);
         if let Some(repo) = &mut self.repo {
@@ -1158,12 +1204,19 @@ impl eframe::App for App {
         self.panels(ui);
         // Above everything: the clone dialog, then Git's questions.
         self.clone_dialog(&ctx);
+        if self.settings_open {
+            match crate::ui::settings::show(&ctx, &mut self.settings) {
+                Some(crate::ui::settings::Action::Close) => self.settings_open = false,
+                Some(crate::ui::settings::Action::ClearRecent) => self.settings.recent.clear(),
+                None => {}
+            }
+        }
         self.palette(&ctx);
         self.questions(&ctx);
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        theme::BG.to_normalized_gamma_f32()
+        theme::bg().to_normalized_gamma_f32()
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {

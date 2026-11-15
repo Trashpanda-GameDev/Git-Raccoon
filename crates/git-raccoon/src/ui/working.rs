@@ -86,12 +86,12 @@ pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
     ui.painter().hline(
         ui.max_rect().x_range(),
         ui.cursor().top(),
-        Stroke::new(1.0, theme::BORDER),
+        Stroke::new(1.0, theme::border()),
     );
 
     let Some(status) = status else {
         ui.add_space(8.0);
-        ui.label(RichText::new("Loading…").color(theme::MUTED));
+        ui.label(RichText::new("Loading…").color(theme::muted()));
         return action;
     };
 
@@ -100,7 +100,7 @@ pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
     egui::Panel::bottom("commit-box")
         .frame(
             egui::Frame::new()
-                .fill(theme::BG_RAISED)
+                .fill(theme::bg_raised())
                 .inner_margin(egui::Margin::symmetric(0, 10)),
         )
         .show(ui, |ui| {
@@ -114,16 +114,16 @@ pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
         .show(ui, |ui| {
             ui.add_space(8.0);
             if status.is_clean() {
-                ui.label(RichText::new("No uncommitted changes.").color(theme::MUTED));
+                ui.label(RichText::new("No uncommitted changes.").color(theme::muted()));
                 return;
             }
             if !status.conflicted.is_empty() {
                 ui.horizontal(|ui| {
-                    ui.label(widgets::section_label("Conflicted files").color(theme::DANGER));
+                    ui.label(widgets::section_label("Conflicted files").color(theme::danger()));
                     ui.label(
                         RichText::new(status.conflicted.len().to_string())
                             .size(11.0)
-                            .color(theme::MUTED),
+                            .color(theme::muted()),
                     );
                 });
                 ui.spacing_mut().item_spacing.y = 0.0;
@@ -177,7 +177,7 @@ fn file_list(
         ui.label(
             RichText::new(files.len().to_string())
                 .size(11.0)
-                .color(theme::MUTED),
+                .color(theme::muted()),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let button =
@@ -202,7 +202,7 @@ fn file_list(
     });
     ui.spacing_mut().item_spacing.y = 0.0;
     if files.is_empty() {
-        ui.label(RichText::new("None").size(12.0).color(theme::MUTED));
+        ui.label(RichText::new("None").size(12.0).color(theme::muted()));
     }
     for f in files {
         let is_active = active.is_some_and(|(s, p)| s == side && p == f.path);
@@ -264,11 +264,11 @@ fn commit_box(
         // How long the summary is, against the usual 50/72 guides.
         let n = draft.summary.chars().count();
         let colour = if n > SUMMARY_HARD {
-            theme::DANGER
+            theme::danger()
         } else if n > SUMMARY_SOFT {
-            theme::MODIFIED
+            theme::modified()
         } else {
-            theme::MUTED
+            theme::muted()
         };
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(RichText::new(n.to_string()).size(11.0).color(colour))
@@ -315,7 +315,7 @@ fn commit_box(
                 icon::WARNING
             ))
             .size(12.0)
-            .color(theme::MODIFIED),
+            .color(theme::modified()),
         );
     }
 
@@ -333,16 +333,16 @@ fn commit_box(
     let button = egui::Button::new(
         RichText::new(&label)
             .color(if can_commit {
-                theme::ON_ACCENT
+                theme::on_accent()
             } else {
-                theme::MUTED
+                theme::muted()
             })
             .strong(),
     )
     .fill(if can_commit {
-        theme::ACCENT
+        theme::accent()
     } else {
-        theme::BG_HOVER
+        theme::bg_hover()
     })
     .min_size(egui::vec2(width, 30.0));
     let clicked = ui.add_enabled(can_commit, button).on_disabled_hover_text(

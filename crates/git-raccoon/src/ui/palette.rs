@@ -56,7 +56,7 @@ pub fn show(ctx: &egui::Context, state: &mut State, entries: &[Entry]) -> Option
     let modal = egui::Modal::new(id).area(area).show(ctx, |ui| {
         ui.set_width(560.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new(icon::MAGNIFYING_GLASS).color(theme::MUTED));
+            ui.label(RichText::new(icon::MAGNIFYING_GLASS).color(theme::muted()));
             let field = ui.add(
                 egui::TextEdit::singleline(&mut state.query)
                     .hint_text("Type a command or a branch name…")
@@ -72,7 +72,7 @@ pub fn show(ctx: &egui::Context, state: &mut State, entries: &[Entry]) -> Option
         });
         ui.separator();
         if matches.is_empty() {
-            ui.label(RichText::new("No matching commands").color(theme::MUTED));
+            ui.label(RichText::new("No matching commands").color(theme::muted()));
             return;
         }
         egui::ScrollArea::vertical()
@@ -89,12 +89,16 @@ pub fn show(ctx: &egui::Context, state: &mut State, entries: &[Entry]) -> Option
                         egui::WidgetInfo::labeled(egui::WidgetType::Button, e.enabled, &e.title)
                     });
                     if chosen {
-                        ui.painter().rect_filled(rect, 4, theme::BG_SELECTED);
+                        ui.painter().rect_filled(rect, 4, theme::bg_selected());
                         response.scroll_to_me(None);
                     } else if response.hovered() {
-                        ui.painter().rect_filled(rect, 4, theme::BG_HOVER);
+                        ui.painter().rect_filled(rect, 4, theme::bg_hover());
                     }
-                    let text_colour = if e.enabled { theme::TEXT } else { theme::MUTED };
+                    let text_colour = if e.enabled {
+                        theme::text()
+                    } else {
+                        theme::muted()
+                    };
                     crate::ui::widgets::text_in(
                         ui.painter(),
                         rect.shrink2(egui::vec2(10.0, 0.0)),
@@ -108,7 +112,7 @@ pub fn show(ctx: &egui::Context, state: &mut State, entries: &[Entry]) -> Option
                             egui::Align2::RIGHT_CENTER,
                             ui.ctx().format_shortcut(&s),
                             theme::body(12.0),
-                            theme::MUTED,
+                            theme::muted(),
                         );
                     }
                     if response.clicked() && e.enabled {

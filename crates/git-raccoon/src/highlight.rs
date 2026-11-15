@@ -23,13 +23,16 @@ fn syntaxes() -> &'static SyntaxSet {
     SET.get_or_init(two_face::syntax::extra_newlines)
 }
 
+/// The syntax colours for the current light or dark theme.
 fn syntax_theme() -> &'static Theme {
-    static THEME: OnceLock<Theme> = OnceLock::new();
-    THEME.get_or_init(|| {
-        two_face::theme::extra()
-            .get(EmbeddedThemeName::TwoDark)
-            .clone()
-    })
+    static DARK: OnceLock<Theme> = OnceLock::new();
+    static LIGHT: OnceLock<Theme> = OnceLock::new();
+    let (slot, name) = if theme::is_light() {
+        (&LIGHT, EmbeddedThemeName::OneHalfLight)
+    } else {
+        (&DARK, EmbeddedThemeName::TwoDark)
+    };
+    slot.get_or_init(|| two_face::theme::extra().get(name).clone())
 }
 
 /// The grammar for a file path, by extension or file name; `None` for plain text.
@@ -173,11 +176,11 @@ fn spans(
     text: &str,
 ) -> Vec<(Range<usize>, Color32, bool)> {
     let Some(h) = highlighter else {
-        return vec![(0..text.len(), theme::TEXT, false)];
+        return vec![(0..text.len(), theme::text(), false)];
     };
     let line = format!("{text}\n");
     let Ok(regions) = h.highlight_line(&line, syntaxes()) else {
-        return vec![(0..text.len(), theme::TEXT, false)];
+        return vec![(0..text.len(), theme::text(), false)];
     };
     let mut out = Vec::new();
     let mut at = 0;
@@ -199,8 +202,8 @@ fn render_hunk(hunk: &Hunk, syntax: Option<&SyntaxReference>) -> Vec<LayoutJob> 
     // Changed words of each paired line: (ranges, background).
     let mut marks: HashMap<usize, (Vec<Range<usize>>, Color32)> = HashMap::new();
     for (d, a, w) in words::pair_lines(hunk) {
-        marks.insert(d, (w.old, theme::WORD_DEL));
-        marks.insert(a, (w.new, theme::WORD_ADD));
+        marks.insert(d, (w.old, theme::word_del()));
+        marks.insert(a, (w.new, theme::word_add()));
     }
     // Each side is highlighted as continuous text, so constructs that span
     // lines (block comments, multi-line strings) stay correct.
@@ -219,7 +222,7 @@ fn render_hunk(hunk: &Hunk, syntax: Option<&SyntaxReference>) -> Vec<LayoutJob> 
                 }
                 LineKind::Delete => spans(old_side.as_mut(), text),
                 LineKind::Add => spans(new_side.as_mut(), text),
-                LineKind::NoEol => vec![(0..text.len(), theme::MUTED, true)],
+                LineKind::NoEol => vec![(0..text.len(), theme::muted(), true)],
             };
             build_job(text, &colours, marks.get(&i))
         })
@@ -251,7 +254,7 @@ fn build_job(
         let (color, italics) = colours
             .iter()
             .find(|(r, _, _)| r.start <= a && a < r.end)
-            .map_or((theme::TEXT, false), |(_, c, i)| (*c, *i));
+            .map_or((theme::text(), false), |(_, c, i)| (*c, *i));
         let background = marks
             .filter(|(ranges, _)| ranges.iter().any(|r| r.start <= a && a < r.end))
             .map_or(Color32::TRANSPARENT, |(_, bg)| *bg);
@@ -366,7 +369,7 @@ mod tests {
         let marked: String = jobs[3]
             .sections
             .iter()
-            .filter(|s| s.format.background == theme::WORD_ADD)
+            .filter(|s| s.format.background == theme::word_add())
             .map(|s| &jobs[3].text[s.byte_range.start.0..s.byte_range.end.0])
             .collect();
         assert_eq!(marked, ".map_err(wrap)");

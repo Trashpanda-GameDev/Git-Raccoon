@@ -40,6 +40,7 @@ cargo run --release -- path/to/repo
 | Action | Shortcut |
 | --- | --- |
 | Command palette | Ctrl+K, Ctrl+Shift+P |
+| Settings (theme, interface size, diff layout) | Ctrl+, |
 | Open repository | Ctrl+O |
 | Close repository | Ctrl+W |
 | Refresh | F5 |

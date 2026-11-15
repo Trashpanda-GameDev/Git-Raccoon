@@ -39,12 +39,12 @@ pub fn show(
         text.append(
             format::short_sha(id),
             0.0,
-            egui::TextFormat::simple(theme::mono(12.0), theme::TEXT),
+            egui::TextFormat::simple(theme::mono(12.0), theme::text()),
         );
         text.append(
             icon::COPY,
             8.0,
-            egui::TextFormat::simple(theme::body(12.0), theme::MUTED),
+            egui::TextFormat::simple(theme::body(12.0), theme::muted()),
         );
         let copy = ui
             .add(egui::Button::new(text))
@@ -64,7 +64,7 @@ pub fn show(
     ui.painter().hline(
         ui.max_rect().x_range(),
         ui.cursor().top(),
-        Stroke::new(1.0, theme::BORDER),
+        Stroke::new(1.0, theme::border()),
     );
     ui.add_space(8.0);
     if let Some(busy) = stash {
@@ -98,11 +98,11 @@ pub fn show(
     let d = match details {
         Some(Ok(d)) => d,
         Some(Err(e)) => {
-            ui.colored_label(theme::DANGER, e);
+            ui.colored_label(theme::danger(), e);
             return action;
         }
         None => {
-            ui.label(RichText::new("Loading…").color(theme::MUTED));
+            ui.label(RichText::new("Loading…").color(theme::muted()));
             return action;
         }
     };
@@ -112,13 +112,13 @@ pub fn show(
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 10.0;
             if d.summary.is_empty() {
-                ui.label(RichText::new("(no message)").color(theme::MUTED));
+                ui.label(RichText::new("(no message)").color(theme::muted()));
             } else {
                 ui.add(egui::Label::new(RichText::new(&d.summary).size(15.0).strong()).wrap());
             }
             for para in format::unwrap_paragraphs(&d.body) {
                 ui.add(
-                    egui::Label::new(RichText::new(para).color(theme::TEXT.gamma_multiply(0.85)))
+                    egui::Label::new(RichText::new(para).color(theme::text().gamma_multiply(0.85)))
                         .wrap(),
                 );
             }
@@ -136,7 +136,7 @@ pub fn show(
                         } else {
                             "Parent"
                         })
-                        .color(theme::MUTED),
+                        .color(theme::muted()),
                     );
                     for p in &d.parents {
                         let b = ui.add(egui::Button::new(
@@ -147,7 +147,7 @@ pub fn show(
                         }
                     }
                     if d.parents.len() > 1 {
-                        ui.label(RichText::new("· changes vs first parent").color(theme::MUTED));
+                        ui.label(RichText::new("· changes vs first parent").color(theme::muted()));
                     }
                 });
             }
@@ -159,8 +159,8 @@ pub fn show(
                     "{n} {} changed",
                     if n == 1 { "file" } else { "files" }
                 ));
-                ui.label(RichText::new(format!("+{}", d.additions)).color(theme::ADD));
-                ui.label(RichText::new(format!("−{}", d.deletions)).color(theme::DEL));
+                ui.label(RichText::new(format!("+{}", d.additions)).color(theme::add()));
+                ui.label(RichText::new(format!("−{}", d.deletions)).color(theme::del()));
                 change_bar(ui, d.additions, d.deletions);
             });
 
@@ -181,7 +181,7 @@ fn person(ui: &mut egui::Ui, p: &Person, verb: &str, now: i64) {
             ui.spacing_mut().item_spacing.y = 2.0;
             ui.horizontal(|ui| {
                 ui.label(RichText::new(&p.name).strong());
-                ui.label(RichText::new(verb).color(theme::MUTED));
+                ui.label(RichText::new(verb).color(theme::muted()));
             });
             ui.label(
                 RichText::new(format!(
@@ -189,7 +189,7 @@ fn person(ui: &mut egui::Ui, p: &Person, verb: &str, now: i64) {
                     format::date_time(p.time),
                     format::age(p.time, now)
                 ))
-                .color(theme::MUTED),
+                .color(theme::muted()),
             )
             .on_hover_text(&p.email);
         });
@@ -208,7 +208,7 @@ fn change_bar(ui: &mut egui::Ui, additions: usize, deletions: usize) {
         let x = rect.left() + i as f32 * 9.0;
         let r = Rect::from_min_size(Pos2::new(x, rect.center().y - 3.5), egui::vec2(7.0, 7.0));
         ui.painter()
-            .rect_filled(r, 1, if i < adds { theme::ADD } else { theme::DEL });
+            .rect_filled(r, 1, if i < adds { theme::add() } else { theme::del() });
     }
 }
 
@@ -218,9 +218,9 @@ pub fn file_row(ui: &mut egui::Ui, f: &ChangedFile, active: bool) -> egui::Respo
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &f.path));
     let painter = ui.painter();
     if active {
-        painter.rect_filled(rect, 0, theme::BG_SELECTED);
+        painter.rect_filled(rect, 0, theme::bg_selected());
     } else if response.hovered() {
-        painter.rect_filled(rect, 0, theme::BG_HOVER);
+        painter.rect_filled(rect, 0, theme::bg_hover());
     }
     let badge = Rect::from_min_size(
         Pos2::new(rect.left() + 2.0, rect.center().y - 9.0),
@@ -241,13 +241,13 @@ pub fn file_row(ui: &mut egui::Ui, f: &ChangedFile, active: bool) -> egui::Respo
         right -= 6.0;
     };
     if f.binary {
-        count("binary".into(), theme::MUTED);
+        count("binary".into(), theme::muted());
     } else {
         if f.deletions > 0 {
-            count(format!("−{}", f.deletions), theme::DEL);
+            count(format!("−{}", f.deletions), theme::del());
         }
         if f.additions > 0 {
-            count(format!("+{}", f.additions), theme::ADD);
+            count(format!("+{}", f.additions), theme::add());
         }
     }
 
@@ -258,7 +258,7 @@ pub fn file_row(ui: &mut egui::Ui, f: &ChangedFile, active: bool) -> egui::Respo
         None => dir.to_string(),
     };
     let left = badge.right() + 8.0;
-    let name_galley = painter.layout_no_wrap(name.to_string(), theme::body(13.0), theme::TEXT);
+    let name_galley = painter.layout_no_wrap(name.to_string(), theme::body(13.0), theme::text());
     let room = (right - left - name_galley.size().x - 4.0).max(0.0);
     let prefix_rect = widgets::text_in(
         painter,
@@ -268,7 +268,7 @@ pub fn file_row(ui: &mut egui::Ui, f: &ChangedFile, active: bool) -> egui::Respo
         ),
         &prefix,
         theme::body(13.0),
-        theme::MUTED,
+        theme::muted(),
     );
     let x = if prefix.is_empty() {
         left
@@ -278,7 +278,7 @@ pub fn file_row(ui: &mut egui::Ui, f: &ChangedFile, active: bool) -> egui::Respo
     painter.galley(
         Pos2::new(x, rect.center().y - name_galley.size().y / 2.0),
         name_galley,
-        theme::TEXT,
+        theme::text(),
     );
     response.on_hover_text(&f.path)
 }

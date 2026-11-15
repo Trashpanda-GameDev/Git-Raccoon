@@ -2137,3 +2137,49 @@ fn shows_a_files_history_and_blame() {
         Some("Reject bare repositories when loading")
     );
 }
+
+#[test]
+fn switches_theme_and_size_in_settings() {
+    use git_raccoon::settings::ThemeChoice;
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    assert!(
+        h.ctx.theme() == egui::Theme::Dark,
+        "dark unless the system says light"
+    );
+
+    // A diff open, to see it in both themes.
+    h.get_by_label("Reject bare repositories when loading")
+        .click();
+    settle(&mut h);
+    h.get_by_label("src/loader.rs").click();
+    settle(&mut h);
+
+    press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    h.get_by_label("Light").click();
+    h.run_ok();
+    assert_eq!(h.state().settings().theme, ThemeChoice::Light);
+    assert!(h.ctx.theme() == egui::Theme::Light);
+    h.get_by_label("Done").click();
+    settle(&mut h);
+    screenshot(&mut h, "35-light-diff");
+    press(&mut h, egui::Modifiers::NONE, Key::Escape);
+    settle(&mut h);
+    screenshot(&mut h, "36-light-graph");
+
+    // Bigger, then back to normal and dark.
+    h.get_by_label("Settings").click();
+    h.run_ok();
+    h.get_by_label("125%").click();
+    h.run_ok();
+    assert!((h.ctx.zoom_factor() - 1.25).abs() < 0.001);
+    assert_eq!(h.state().settings().zoom, Some(1.25));
+    screenshot(&mut h, "37-settings");
+    h.get_by_label("100%").click();
+    h.run_ok();
+    h.get_by_label("Dark").click();
+    h.run_ok();
+    assert_eq!(h.state().settings().zoom, None);
+    assert!(h.ctx.theme() == egui::Theme::Dark);
+}

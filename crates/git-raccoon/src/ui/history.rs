@@ -135,7 +135,7 @@ pub fn show(
                 r,
                 &text.to_uppercase(),
                 theme::body(11.0),
-                theme::MUTED,
+                theme::muted(),
             );
         }
     };
@@ -154,7 +154,7 @@ pub fn show(
     painter.hline(
         header.x_range(),
         header.bottom(),
-        Stroke::new(1.0, theme::BORDER),
+        Stroke::new(1.0, theme::border()),
     );
 
     if working_row(ui, repo, &cols, width) {
@@ -164,7 +164,9 @@ pub fn show(
     if total == 0 {
         ui.add_space(40.0);
         ui.vertical_centered(|ui| {
-            ui.label(egui::RichText::new("This repository has no commits yet.").color(theme::MUTED))
+            ui.label(
+                egui::RichText::new("This repository has no commits yet.").color(theme::muted()),
+            )
         });
         return None;
     }
@@ -228,7 +230,7 @@ pub fn show(
             }
             let is_selected = commit.is_some_and(|c| selected.as_deref() == Some(c.id.as_str()));
             if is_selected {
-                ui.painter().rect_filled(rect, 0, theme::BG_SELECTED);
+                ui.painter().rect_filled(rect, 0, theme::bg_selected());
                 let lane = commit.map_or(0, |c| c.column);
                 ui.painter().rect_filled(
                     Rect::from_min_size(rect.min, egui::vec2(3.0, ROW_HEIGHT)),
@@ -236,7 +238,7 @@ pub fn show(
                     theme::lane_color(lane),
                 );
             } else if response.hovered() {
-                ui.painter().rect_filled(rect, 0, theme::BG_HOVER);
+                ui.painter().rect_filled(rect, 0, theme::bg_hover());
             }
             if response.clicked() && commit.is_some() {
                 clicked = Some(Click::Row(row));
@@ -349,7 +351,7 @@ pub fn show(
             if c.parents.len() > 1 {
                 graph.circle_filled(p, DOT_RADIUS - 2.0, colour);
             } else {
-                graph.circle_filled(p, DOT_RADIUS, theme::BG);
+                graph.circle_filled(p, DOT_RADIUS, theme::bg());
                 graph.circle_stroke(p, DOT_RADIUS - 1.5, Stroke::new(3.0, colour));
             }
         }
@@ -369,17 +371,17 @@ pub fn show(
                     Pos2::new(origin.x + cols.refs + cols.graph + 8.0, top + 9.0),
                     egui::vec2(240.0, 10.0),
                 );
-                painter.rect_filled(bar, 4, theme::BG_HOVER);
+                painter.rect_filled(bar, 4, theme::bg_hover());
                 continue;
             };
             let dim = searching && !repo.search.matches.contains(&row);
             let (text, muted) = if dim {
                 (
-                    theme::MUTED.gamma_multiply(0.6),
-                    theme::MUTED.gamma_multiply(0.5),
+                    theme::muted().gamma_multiply(0.6),
+                    theme::muted().gamma_multiply(0.5),
                 )
             } else {
-                (theme::TEXT, theme::MUTED)
+                (theme::text(), theme::muted())
             };
             ref_pills(painter, cell(0.0, cols.refs), c, dim);
             let mut x = cols.refs + cols.graph;
@@ -444,14 +446,14 @@ fn working_row(ui: &mut egui::Ui, repo: &mut RepoView, cols: &Columns, width: f3
     });
     let painter = ui.painter();
     if repo.working_selected {
-        painter.rect_filled(rect, 0, theme::BG_SELECTED);
+        painter.rect_filled(rect, 0, theme::bg_selected());
         painter.rect_filled(
             Rect::from_min_size(rect.min, egui::vec2(3.0, ROW_HEIGHT)),
             0,
-            theme::MUTED,
+            theme::muted(),
         );
     } else if response.hovered() {
-        painter.rect_filled(rect, 0, theme::BG_HOVER);
+        painter.rect_filled(rect, 0, theme::bg_hover());
     }
 
     let cell = |x: f32, w: f32| {
@@ -465,13 +467,13 @@ fn working_row(ui: &mut egui::Ui, repo: &mut RepoView, cols: &Columns, width: f3
         Pos2::new(rect.left() + 8.0, rect.center().y),
         cols.refs - 16.0,
         "// WIP",
-        theme::MUTED,
+        theme::muted(),
         false,
     );
 
     // A hollow, dashed node with a dashed line down towards HEAD.
     let centre = Pos2::new(lane_x(rect.left() + cols.refs, lane), rect.center().y);
-    let dashed = Stroke::new(2.0, theme::MUTED);
+    let dashed = Stroke::new(2.0, theme::muted());
     painter.extend(egui::Shape::dashed_line(
         &[
             Pos2::new(centre.x, centre.y + DOT_RADIUS),
@@ -481,7 +483,7 @@ fn working_row(ui: &mut egui::Ui, repo: &mut RepoView, cols: &Columns, width: f3
         3.0,
         3.0,
     ));
-    painter.circle_filled(centre, DOT_RADIUS, theme::BG);
+    painter.circle_filled(centre, DOT_RADIUS, theme::bg());
     let points: Vec<Pos2> = (0..=24)
         .map(|i| {
             #[expect(clippy::cast_precision_loss, reason = "i <= 24")]
@@ -501,7 +503,7 @@ fn working_row(ui: &mut egui::Ui, repo: &mut RepoView, cols: &Columns, width: f3
         message,
         "Working changes",
         theme::body(theme::FONT_SIZE),
-        theme::TEXT,
+        theme::text(),
     );
     let mut parts = Vec::new();
     if unstaged > 0 {
@@ -516,12 +518,12 @@ fn working_row(ui: &mut egui::Ui, repo: &mut RepoView, cols: &Columns, width: f3
         counts,
         &parts.join(" · "),
         theme::body(12.0),
-        theme::MUTED,
+        theme::muted(),
     );
     painter.hline(
         rect.x_range(),
         rect.bottom(),
-        Stroke::new(1.0, theme::BORDER),
+        Stroke::new(1.0, theme::border()),
     );
     response.clicked()
 }

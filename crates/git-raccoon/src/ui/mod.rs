@@ -11,6 +11,7 @@ pub mod history;
 pub mod palette;
 pub mod rebase;
 pub mod search_bar;
+pub mod settings;
 pub mod sidebar;
 pub mod toolbar;
 pub mod welcome;

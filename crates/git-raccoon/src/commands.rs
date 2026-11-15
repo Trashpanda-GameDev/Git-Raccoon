@@ -7,6 +7,7 @@ use eframe::egui::{Key, KeyboardShortcut, Modifiers};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Palette,
+    Settings,
     OpenRepo,
     CloneRepo,
     NewRepo,
@@ -58,6 +59,10 @@ pub const SHORTCUTS: &[(Command, Option<KeyboardShortcut>)] = &[
     (
         Command::Palette,
         Some(KeyboardShortcut::new(CTRL_SHIFT, Key::P)),
+    ),
+    (
+        Command::Settings,
+        Some(KeyboardShortcut::new(CTRL, Key::Comma)),
     ),
     (Command::OpenRepo, Some(KeyboardShortcut::new(CTRL, Key::O))),
     (Command::CloneRepo, None),

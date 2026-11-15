@@ -154,13 +154,13 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
         ui.horizontal(|ui| {
             for (i, (button, danger, ready)) in buttons.into_iter().enumerate() {
                 let (fill, text) = if !ready {
-                    (theme::BG_HOVER, theme::MUTED)
+                    (theme::bg_hover(), theme::muted())
                 } else if danger {
-                    (theme::DANGER.gamma_multiply(0.8), egui::Color32::WHITE)
+                    (theme::danger().gamma_multiply(0.8), egui::Color32::WHITE)
                 } else if i == 0 {
-                    (theme::ACCENT, theme::ON_ACCENT)
+                    (theme::accent(), theme::on_accent())
                 } else {
-                    (theme::BG_HOVER, theme::TEXT)
+                    (theme::bg_hover(), theme::text())
                 };
                 let go = egui::Button::new(RichText::new(button).color(text).strong()).fill(fill);
                 if ui.add_enabled(ready, go).clicked() {
@@ -250,7 +250,7 @@ fn heading(ui: &mut egui::Ui, title: &str, body: Option<&str>) {
     ui.label(RichText::new(title).strong().size(15.0));
     if let Some(body) = body {
         ui.add_space(6.0);
-        ui.label(RichText::new(body).color(theme::MUTED));
+        ui.label(RichText::new(body).color(theme::muted()));
     }
     ui.add_space(8.0);
 }
@@ -275,7 +275,7 @@ fn field(
         response.request_focus();
     }
     if let Some(problem) = problem.filter(|p| !p.is_empty()) {
-        ui.label(RichText::new(problem).size(12.0).color(theme::DANGER));
+        ui.label(RichText::new(problem).size(12.0).color(theme::danger()));
     }
     response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
 }

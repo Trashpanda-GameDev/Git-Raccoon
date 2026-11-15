@@ -44,7 +44,22 @@ pub struct Settings {
     pub hide_sidebar: bool,
     /// Where the last clone went; new clones start there.
     pub clone_dir: Option<String>,
+    pub theme: ThemeChoice,
+    /// How big everything is drawn; `None` for normal (100%).
+    pub zoom: Option<f32>,
 }
+
+/// Light, dark, or whatever the system uses.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ThemeChoice {
+    #[default]
+    System,
+    Dark,
+    Light,
+}
+
+/// The interface sizes offered.
+pub const ZOOMS: [f32; 5] = [0.9, 1.0, 1.1, 1.25, 1.5];
 
 impl Settings {
     pub const KEY: &'static str = "settings";

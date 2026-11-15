@@ -34,7 +34,7 @@ pub fn show(
 ) -> Option<Action> {
     let mut action = None;
     egui::Frame::new()
-        .fill(theme::BG_RAISED)
+        .fill(theme::bg_raised())
         .inner_margin(egui::Margin::symmetric(12, 0))
         .show(ui, |ui| {
             ui.set_height(36.0);
@@ -45,7 +45,7 @@ pub fn show(
                     |id| format!("as of {}", format::short_sha(id)),
                 );
                 if view.mode == FileMode::Blame {
-                    ui.label(RichText::new(at).size(12.0).color(theme::MUTED));
+                    ui.label(RichText::new(at).size(12.0).color(theme::muted()));
                 }
                 if view.is_loading() {
                     ui.spinner();
@@ -68,7 +68,7 @@ pub fn show(
     ui.painter().hline(
         ui.max_rect().x_range(),
         ui.cursor().top(),
-        Stroke::new(1.0, theme::BORDER),
+        Stroke::new(1.0, theme::border()),
     );
     let inner = match view.mode {
         FileMode::History => history(ui, view, selected, now),
@@ -90,15 +90,15 @@ fn history(ui: &mut egui::Ui, view: &FileView, selected: Option<&str>, now: i64)
     egui::Panel::left("file-history-list")
         .resizable(true)
         .default_size(360.0)
-        .frame(egui::Frame::new().fill(theme::BG_RAISED))
+        .frame(egui::Frame::new().fill(theme::bg_raised()))
         .show(ui, |ui| {
             let changes = match &view.history {
-                None => return message(ui, "Loading…", theme::MUTED),
-                Some(Err(e)) => return message(ui, e, theme::DANGER),
+                None => return message(ui, "Loading…", theme::muted()),
+                Some(Err(e)) => return message(ui, e, theme::danger()),
                 Some(Ok(c)) => c,
             };
             if changes.is_empty() {
-                return message(ui, "No commits changed this file.", theme::MUTED);
+                return message(ui, "No commits changed this file.", theme::muted());
             }
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
@@ -114,9 +114,9 @@ fn history(ui: &mut egui::Ui, view: &FileView, selected: Option<&str>, now: i64)
                         });
                         let painter = ui.painter();
                         if selected == Some(c.id.as_str()) {
-                            painter.rect_filled(rect, 0, theme::BG_SELECTED);
+                            painter.rect_filled(rect, 0, theme::bg_selected());
                         } else if response.hovered() {
-                            painter.rect_filled(rect, 0, theme::BG_HOVER);
+                            painter.rect_filled(rect, 0, theme::bg_hover());
                         }
                         let inner = rect.shrink2(egui::vec2(12.0, 4.0));
                         let top = egui::Rect::from_min_max(
@@ -127,7 +127,13 @@ fn history(ui: &mut egui::Ui, view: &FileView, selected: Option<&str>, now: i64)
                             egui::pos2(inner.min.x, inner.center().y),
                             inner.max,
                         );
-                        widgets::text_in(painter, top, &c.summary, theme::body(13.0), theme::TEXT);
+                        widgets::text_in(
+                            painter,
+                            top,
+                            &c.summary,
+                            theme::body(13.0),
+                            theme::text(),
+                        );
                         let mut detail = format!(
                             "{}  ·  {}  ·  {}",
                             format::short_sha(&c.id),
@@ -137,7 +143,13 @@ fn history(ui: &mut egui::Ui, view: &FileView, selected: Option<&str>, now: i64)
                         if c.path != view.file {
                             detail.push_str(&format!("  ·  as {}", c.path));
                         }
-                        widgets::text_in(painter, bottom, &detail, theme::body(11.0), theme::MUTED);
+                        widgets::text_in(
+                            painter,
+                            bottom,
+                            &detail,
+                            theme::body(11.0),
+                            theme::muted(),
+                        );
                         if response.clicked() {
                             action = Some(Action::Pick {
                                 id: c.id.clone(),
@@ -154,17 +166,17 @@ fn blame(ui: &mut egui::Ui, view: &FileView, now: i64) -> Option<Action> {
     let mut action = None;
     let blame = match &view.blame {
         None => {
-            message(ui, "Loading…", theme::MUTED);
+            message(ui, "Loading…", theme::muted());
             return None;
         }
         Some(Err(e)) => {
-            message(ui, e, theme::DANGER);
+            message(ui, e, theme::danger());
             return None;
         }
         Some(Ok(b)) => b,
     };
     if blame.lines.is_empty() {
-        message(ui, "This file is empty.", theme::MUTED);
+        message(ui, "This file is empty.", theme::muted());
         return None;
     }
     // Newer commits get a stronger stripe.
@@ -191,7 +203,7 @@ fn blame(ui: &mut egui::Ui, view: &FileView, now: i64) -> Option<Action> {
                 let gutter = egui::Rect::from_min_size(rect.min, egui::vec2(GUTTER, ROW));
                 let response = ui.interact(gutter, ui.id().with(("blame", n)), Sense::click());
                 let painter = ui.painter();
-                painter.rect_filled(gutter, 0, theme::BG_RAISED);
+                painter.rect_filled(gutter, 0, theme::bg_raised());
                 // The age stripe.
                 #[expect(clippy::cast_precision_loss, reason = "a colour weight")]
                 let recency = if commit.time == 0 {
@@ -202,10 +214,14 @@ fn blame(ui: &mut egui::Ui, view: &FileView, now: i64) -> Option<Action> {
                 painter.rect_filled(
                     egui::Rect::from_min_size(gutter.min, egui::vec2(3.0, ROW)),
                     0,
-                    theme::ACCENT.gamma_multiply(0.25 + 0.75 * recency),
+                    theme::accent().gamma_multiply(0.25 + 0.75 * recency),
                 );
                 if line.starts_run {
-                    painter.hline(rect.x_range(), rect.top(), Stroke::new(1.0, theme::BORDER));
+                    painter.hline(
+                        rect.x_range(),
+                        rect.top(),
+                        Stroke::new(1.0, theme::border()),
+                    );
                     let who = match &commit.id {
                         Some(id) => format!(
                             "{}  {}  {}",
@@ -221,9 +237,9 @@ fn blame(ui: &mut egui::Ui, view: &FileView, now: i64) -> Option<Action> {
                         &who,
                         theme::body(11.0),
                         if response.hovered() {
-                            theme::TEXT
+                            theme::text()
                         } else {
-                            theme::MUTED
+                            theme::muted()
                         },
                     );
                     if let Some(id) = &commit.id {
@@ -249,7 +265,7 @@ fn blame(ui: &mut egui::Ui, view: &FileView, now: i64) -> Option<Action> {
                     egui::Align2::LEFT_CENTER,
                     number,
                     egui::FontId::monospace(12.0),
-                    theme::MUTED,
+                    theme::muted(),
                 );
                 #[expect(clippy::cast_precision_loss, reason = "a few digits")]
                 let text_x = gutter.right() + 20.0 + digits as f32 * 8.0;
@@ -258,7 +274,7 @@ fn blame(ui: &mut egui::Ui, view: &FileView, now: i64) -> Option<Action> {
                     egui::Align2::LEFT_CENTER,
                     line.text.replace('\t', "    "),
                     egui::FontId::monospace(12.0),
-                    theme::TEXT,
+                    theme::text(),
                 );
             }
         });

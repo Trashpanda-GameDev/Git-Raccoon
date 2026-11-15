@@ -25,7 +25,7 @@ pub fn show(ctx: &egui::Context, prompt: &mut Prompt) -> Option<Option<String>> 
         };
         ui.label(RichText::new(title).strong().size(15.0));
         ui.add_space(6.0);
-        ui.label(RichText::new(prompt.request.prompt.trim()).color(theme::MUTED));
+        ui.label(RichText::new(prompt.request.prompt.trim()).color(theme::muted()));
         ui.add_space(10.0);
         match kind {
             Kind::YesNo => {
@@ -34,7 +34,7 @@ pub fn show(ctx: &egui::Context, prompt: &mut Prompt) -> Option<Option<String>> 
                         "Only say yes if you expected to connect to this host for the first time. The fingerprint can be checked against the one the host publishes.",
                     )
                     .size(12.0)
-                    .color(theme::MUTED),
+                    .color(theme::muted()),
                 );
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
@@ -69,7 +69,7 @@ pub fn show(ctx: &egui::Context, prompt: &mut Prompt) -> Option<Option<String>> 
                             "Sent only to Git. If you use a credential helper, it may remember it.",
                         )
                         .size(12.0)
-                        .color(theme::MUTED),
+                        .color(theme::muted()),
                     );
                 }
                 ui.add_space(12.0);
@@ -91,5 +91,5 @@ pub fn show(ctx: &egui::Context, prompt: &mut Prompt) -> Option<Option<String>> 
 }
 
 fn primary(label: &str) -> egui::Button<'_> {
-    egui::Button::new(RichText::new(label).color(theme::ON_ACCENT).strong()).fill(theme::ACCENT)
+    egui::Button::new(RichText::new(label).color(theme::on_accent()).strong()).fill(theme::accent())
 }

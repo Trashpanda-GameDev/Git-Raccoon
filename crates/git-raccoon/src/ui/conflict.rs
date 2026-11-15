@@ -38,7 +38,7 @@ pub fn show(ui: &mut egui::Ui, open: &mut ConflictFile, busy: bool) -> Option<Ac
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.set_height(40.0);
-                ui.label(RichText::new(icon::WARNING).color(theme::DANGER));
+                ui.label(RichText::new(icon::WARNING).color(theme::danger()));
                 ui.label(RichText::new(&open.file).strong());
                 let status = if open.edit.is_some() {
                     "editing".to_string()
@@ -49,7 +49,7 @@ pub fn show(ui: &mut egui::Ui, open: &mut ConflictFile, busy: bool) -> Option<Ac
                         n => format!("{n} conflicts"),
                     }
                 };
-                ui.label(RichText::new(status).size(12.0).color(theme::MUTED));
+                ui.label(RichText::new(status).size(12.0).color(theme::muted()));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if widgets::icon_button(ui, icon::X, "Close (Esc)").clicked() {
                         action = Some(Action::Close);
@@ -102,7 +102,7 @@ pub fn show(ui: &mut egui::Ui, open: &mut ConflictFile, busy: bool) -> Option<Ac
     ui.painter().hline(
         ui.max_rect().x_range(),
         ui.cursor().top(),
-        Stroke::new(1.0, theme::BORDER),
+        Stroke::new(1.0, theme::border()),
     );
 
     egui::ScrollArea::both()
@@ -124,14 +124,14 @@ pub fn show(ui: &mut egui::Ui, open: &mut ConflictFile, busy: bool) -> Option<Ac
                     }
                     match (&open.text, &chunks) {
                         (Err(e), _) => {
-                            ui.label(RichText::new(e).color(theme::DANGER));
+                            ui.label(RichText::new(e).color(theme::danger()));
                         }
                         (Ok(_), None) => {
                             ui.label(
                                 RichText::new(
                                     "No conflict markers in this file. It may be binary, or deleted on one side: pick a side for the whole file, or edit it and mark it resolved.",
                                 )
-                                .color(theme::MUTED),
+                                .color(theme::muted()),
                             );
                         }
                         (Ok(_), Some(chunks)) => {
@@ -162,14 +162,14 @@ fn chunk_list(ui: &mut egui::Ui, chunks: &[Chunk], busy: bool) -> Option<Action>
                     lines
                 };
                 for line in shown {
-                    ui.label(RichText::new(line).monospace().color(theme::MUTED));
+                    ui.label(RichText::new(line).monospace().color(theme::muted()));
                 }
             }
             Chunk::Conflict(c) => {
                 let index = n;
                 n += 1;
                 egui::Frame::new()
-                    .stroke(Stroke::new(1.0, theme::BORDER))
+                    .stroke(Stroke::new(1.0, theme::border()))
                     .corner_radius(6)
                     .inner_margin(egui::Margin::same(8))
                     .show(ui, |ui| {
@@ -198,7 +198,7 @@ fn chunk_list(ui: &mut egui::Ui, chunks: &[Chunk], busy: bool) -> Option<Action>
                         });
                         side(ui, &format!("Ours ({})", c.ours_label), &c.ours, OURS);
                         if let Some(base) = &c.base {
-                            side(ui, "Before both changes", base, theme::MUTED);
+                            side(ui, "Before both changes", base, theme::muted());
                         }
                         side(
                             ui,
@@ -224,10 +224,10 @@ fn side(ui: &mut egui::Ui, title: &str, text: &str, colour: Color32) {
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             if text.is_empty() {
-                ui.label(RichText::new("(nothing)").italics().color(theme::MUTED));
+                ui.label(RichText::new("(nothing)").italics().color(theme::muted()));
             }
             for line in text.lines() {
-                ui.label(RichText::new(line).monospace().color(theme::TEXT));
+                ui.label(RichText::new(line).monospace().color(theme::text()));
             }
         });
 }
@@ -237,10 +237,10 @@ fn primary_if(label: &str, enabled: bool) -> egui::Button<'_> {
     if enabled {
         primary(label)
     } else {
-        egui::Button::new(RichText::new(label).color(theme::MUTED)).fill(theme::BG_HOVER)
+        egui::Button::new(RichText::new(label).color(theme::muted())).fill(theme::bg_hover())
     }
 }
 
 fn primary(label: &str) -> egui::Button<'_> {
-    egui::Button::new(RichText::new(label).color(theme::ON_ACCENT).strong()).fill(theme::ACCENT)
+    egui::Button::new(RichText::new(label).color(theme::on_accent()).strong()).fill(theme::accent())
 }

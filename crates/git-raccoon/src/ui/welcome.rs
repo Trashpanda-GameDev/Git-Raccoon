@@ -55,8 +55,8 @@ pub fn show(
         ui.allocate_ui_with_layout(egui::vec2(width, 0.0), Layout::top_down(Align::Min), |ui| {
             ui.label(widgets::section_label("Recent"));
             egui::Frame::new()
-                .fill(theme::BG_RAISED)
-                .stroke(Stroke::new(1.0, theme::BORDER))
+                .fill(theme::bg_raised())
+                .stroke(Stroke::new(1.0, theme::border()))
                 .corner_radius(6)
                 .show(ui, |ui| {
                     ui.set_width(width);
@@ -96,10 +96,10 @@ pub fn recent_row(ui: &mut egui::Ui, repo: &RecentRepo, now: i64) -> Option<Acti
     });
     let painter = ui.painter();
     if response.hovered() || remove.hovered() {
-        painter.rect_filled(rect, 0, theme::BG_HOVER);
+        painter.rect_filled(rect, 0, theme::bg_hover());
     }
     let age = crate::format::age(repo.opened_at, now);
-    let age_galley = painter.layout_no_wrap(age, theme::body(12.0), theme::MUTED);
+    let age_galley = painter.layout_no_wrap(age, theme::body(12.0), theme::muted());
     let text_right = rect.right() - 44.0 - age_galley.size().x - 12.0;
     let left = rect.left() + 12.0;
     widgets::text_in(
@@ -110,7 +110,7 @@ pub fn recent_row(ui: &mut egui::Ui, repo: &RecentRepo, now: i64) -> Option<Acti
         ),
         repo.name(),
         theme::body(theme::FONT_SIZE).clone(),
-        theme::TEXT,
+        theme::text(),
     );
     widgets::text_in(
         painter,
@@ -120,7 +120,7 @@ pub fn recent_row(ui: &mut egui::Ui, repo: &RecentRepo, now: i64) -> Option<Acti
         ),
         &repo.path,
         theme::body(12.0),
-        theme::MUTED,
+        theme::muted(),
     );
     painter.galley(
         egui::pos2(
@@ -128,12 +128,12 @@ pub fn recent_row(ui: &mut egui::Ui, repo: &RecentRepo, now: i64) -> Option<Acti
             rect.center().y - age_galley.size().y / 2.0,
         ),
         age_galley,
-        theme::MUTED,
+        theme::muted(),
     );
     let x_colour = if remove.hovered() {
-        theme::TEXT
+        theme::text()
     } else {
-        theme::MUTED
+        theme::muted()
     };
     painter.text(
         remove_rect.center(),
@@ -146,7 +146,7 @@ pub fn recent_row(ui: &mut egui::Ui, repo: &RecentRepo, now: i64) -> Option<Acti
         painter.rect_stroke(
             remove_rect,
             4,
-            egui::Stroke::new(1.0, theme::BORDER),
+            egui::Stroke::new(1.0, theme::border()),
             StrokeKind::Inside,
         );
     }

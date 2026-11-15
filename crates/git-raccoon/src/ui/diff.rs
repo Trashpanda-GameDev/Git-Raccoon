@@ -75,7 +75,7 @@ pub fn show(
 
     // Title bar.
     egui::Frame::new()
-        .fill(theme::BG_RAISED)
+        .fill(theme::bg_raised())
         .inner_margin(egui::Margin::symmetric(12, 0))
         .show(ui, |ui| {
             ui.set_height(36.0);
@@ -90,7 +90,7 @@ pub fn show(
                 };
                 ui.label(RichText::new(title).strong());
                 if let Some(label) = side_label {
-                    ui.label(RichText::new(label).size(12.0).color(theme::MUTED));
+                    ui.label(RichText::new(label).size(12.0).color(theme::muted()));
                 }
                 if loading {
                     ui.spinner();
@@ -133,9 +133,9 @@ pub fn show(
                             if n == 1 { "line" } else { "lines" }
                         );
                         let stage = egui::Button::new(
-                            RichText::new(label).color(theme::ON_ACCENT).strong(),
+                            RichText::new(label).color(theme::on_accent()).strong(),
                         )
-                        .fill(theme::ACCENT);
+                        .fill(theme::accent());
                         if ui.add_enabled(!st.busy, stage).clicked() {
                             action = Some(Action::StagePicked);
                         }
@@ -155,23 +155,25 @@ pub fn show(
     ui.painter().hline(
         ui.max_rect().x_range(),
         ui.cursor().top(),
-        Stroke::new(1.0, theme::BORDER),
+        Stroke::new(1.0, theme::border()),
     );
 
     if let Some(Ok(pair)) = images {
         image_preview(ui, pair);
     } else if let Some(Err(e)) = images {
-        ui.colored_label(theme::DANGER, format!("Could not load images: {e}"));
+        ui.colored_label(theme::danger(), format!("Could not load images: {e}"));
     }
 
     match diff {
         None => {
             ui.add_space(24.0);
-            ui.vertical_centered(|ui| ui.label(RichText::new("Loading diff…").color(theme::MUTED)));
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new("Loading diff…").color(theme::muted()))
+            });
         }
         Some(Err(e)) => {
             ui.add_space(12.0);
-            ui.colored_label(theme::DANGER, e);
+            ui.colored_label(theme::danger(), e);
         }
         Some(Ok(d)) => {
             if let Some(a) = body(ui, d, split, images.is_some(), staging) {
@@ -184,7 +186,7 @@ pub fn show(
 
 fn notice(ui: &mut egui::Ui, text: &str) {
     ui.add_space(24.0);
-    ui.vertical_centered(|ui| ui.label(RichText::new(text).color(theme::MUTED)));
+    ui.vertical_centered(|ui| ui.label(RichText::new(text).color(theme::muted())));
 }
 
 fn body(
@@ -208,7 +210,7 @@ fn body(
 
     let char_width = ui
         .painter()
-        .layout_no_wrap("M".repeat(20), theme::mono(theme::MONO_SIZE), theme::TEXT)
+        .layout_no_wrap("M".repeat(20), theme::mono(theme::MONO_SIZE), theme::text())
         .size()
         .x
         / 20.0;
@@ -257,16 +259,16 @@ fn body(
                 });
                 let picked = st.picked.contains(&(h, l));
                 if picked {
-                    painter.rect_filled(rect, 0, theme::ACCENT.gamma_multiply(0.35));
+                    painter.rect_filled(rect, 0, theme::accent().gamma_multiply(0.35));
                     painter.text(
                         Pos2::new(rect.left() + 9.0, rect.center().y),
                         egui::Align2::CENTER_CENTER,
                         icon::CHECK,
                         theme::body(11.0),
-                        theme::TEXT,
+                        theme::text(),
                     );
                 } else if response.hovered() {
-                    painter.rect_filled(rect, 0, theme::ACCENT.gamma_multiply(0.15));
+                    painter.rect_filled(rect, 0, theme::accent().gamma_multiply(0.15));
                 }
                 response
                     .on_hover_text("Pick this line to stage it on its own (Shift: a range)")
@@ -319,7 +321,11 @@ fn body(
                                     action = Some(picked);
                                 }
                             }
-                            painter.vline(l.right(), l.y_range(), Stroke::new(1.0, theme::BORDER));
+                            painter.vline(
+                                l.right(),
+                                l.y_range(),
+                                Stroke::new(1.0, theme::border()),
+                            );
                         }
                     }
                 } else {
@@ -371,8 +377,8 @@ fn hunk_button(
         egui::vec2(110.0, LINE - 2.0),
     );
     let button = egui::Button::new(RichText::new(label).size(11.0))
-        .fill(theme::BG_RAISED)
-        .stroke(Stroke::new(1.0, theme::BORDER))
+        .fill(theme::bg_raised())
+        .stroke(Stroke::new(1.0, theme::border()))
         .small();
     // Buttons default to a 24 px minimum height; keep this one inside the row.
     let response = ui
@@ -386,8 +392,8 @@ fn hunk_button(
 
 fn backgrounds(kind: LineKind) -> (Color32, Color32) {
     match kind {
-        LineKind::Add => (theme::ADD_BG_STRONG, theme::ADD_BG),
-        LineKind::Delete => (theme::DEL_BG_STRONG, theme::DEL_BG),
+        LineKind::Add => (theme::add_bg_strong(), theme::add_bg()),
+        LineKind::Delete => (theme::del_bg_strong(), theme::del_bg()),
         LineKind::Context | LineKind::NoEol => (Color32::TRANSPARENT, Color32::TRANSPARENT),
     }
 }
@@ -402,10 +408,14 @@ fn marker(kind: LineKind) -> &'static str {
 }
 
 fn header(painter: &egui::Painter, rect: Rect, text: &str) {
-    painter.rect_filled(rect, 0, theme::HUNK_BG);
-    painter.hline(rect.x_range(), rect.top(), Stroke::new(1.0, theme::BORDER));
+    painter.rect_filled(rect, 0, theme::hunk_bg());
+    painter.hline(
+        rect.x_range(),
+        rect.top(),
+        Stroke::new(1.0, theme::border()),
+    );
     let r = rect.shrink2(egui::vec2(12.0, 0.0));
-    widgets::text_in(painter, r, text, theme::mono(12.0), theme::HUNK);
+    widgets::text_in(painter, r, text, theme::mono(12.0), theme::hunk());
 }
 
 fn number(painter: &egui::Painter, rect: Rect, n: Option<u32>) {
@@ -415,7 +425,7 @@ fn number(painter: &egui::Painter, rect: Rect, n: Option<u32>) {
             egui::Align2::RIGHT_CENTER,
             n.to_string(),
             theme::mono(12.0),
-            theme::MUTED,
+            theme::muted(),
         );
     }
 }
@@ -426,7 +436,7 @@ fn code(painter: &egui::Painter, rect: Rect, line: &DiffLine, job: &egui::text::
         egui::Align2::CENTER_CENTER,
         marker(line.kind),
         theme::mono(12.0),
-        theme::MUTED,
+        theme::muted(),
     );
     let galley = painter.layout_job(job.clone());
     let clipped = painter.with_clip_rect(rect.intersect(painter.clip_rect()));
@@ -436,7 +446,7 @@ fn code(painter: &egui::Painter, rect: Rect, line: &DiffLine, job: &egui::text::
             rect.center().y - galley.size().y / 2.0,
         ),
         galley,
-        theme::TEXT,
+        theme::text(),
     );
 }
 
@@ -503,7 +513,7 @@ fn image_preview(ui: &mut egui::Ui, pair: &ImagePair) {
     ui.painter().hline(
         ui.max_rect().x_range(),
         ui.cursor().top(),
-        Stroke::new(1.0, theme::BORDER),
+        Stroke::new(1.0, theme::border()),
     );
 }
 
@@ -521,7 +531,7 @@ fn image_side(ui: &mut egui::Ui, label: &str, side: Option<&Side>, missing: &str
                     ui.label(
                         RichText::new(format!("{dims}{}", format::bytes(s.size)))
                             .size(12.0)
-                            .color(theme::MUTED),
+                            .color(theme::muted()),
                     );
                 });
             }
@@ -532,7 +542,7 @@ fn image_side(ui: &mut egui::Ui, label: &str, side: Option<&Side>, missing: &str
         painter.rect_stroke(
             rect,
             6,
-            Stroke::new(1.0, theme::BORDER),
+            Stroke::new(1.0, theme::border()),
             egui::StrokeKind::Inside,
         );
         let say = |text: &str| {
@@ -541,7 +551,7 @@ fn image_side(ui: &mut egui::Ui, label: &str, side: Option<&Side>, missing: &str
                 egui::Align2::CENTER_CENTER,
                 text,
                 theme::body(12.0),
-                theme::MUTED,
+                theme::muted(),
             );
         };
         match side.map(|s| &s.preview) {
@@ -567,7 +577,7 @@ fn image_side(ui: &mut egui::Ui, label: &str, side: Option<&Side>, missing: &str
 
 /// Shows transparency.
 fn checkerboard(painter: &egui::Painter, rect: Rect) {
-    painter.rect_filled(rect, 6, theme::BG_RAISED);
+    painter.rect_filled(rect, 6, theme::bg_raised());
     let cell = 8.0;
     let clipped = painter.with_clip_rect(rect.shrink(1.0).intersect(painter.clip_rect()));
     let mut y = rect.top();
@@ -578,7 +588,7 @@ fn checkerboard(painter: &egui::Painter, rect: Rect) {
             clipped.rect_filled(
                 Rect::from_min_size(Pos2::new(x, y), egui::vec2(cell, cell)),
                 0,
-                theme::BG_HOVER,
+                theme::bg_hover(),
             );
             x += 2.0 * cell;
         }

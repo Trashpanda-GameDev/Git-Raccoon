@@ -20,10 +20,10 @@ struct DragRow(usize);
 
 fn colour(action: PlanAction) -> Color32 {
     match action {
-        PlanAction::Pick => theme::TEXT,
-        PlanAction::Reword => theme::ACCENT,
-        PlanAction::Squash | PlanAction::Fixup => theme::MODIFIED,
-        PlanAction::Drop => theme::DANGER,
+        PlanAction::Pick => theme::text(),
+        PlanAction::Reword => theme::accent(),
+        PlanAction::Squash | PlanAction::Fixup => theme::modified(),
+        PlanAction::Drop => theme::danger(),
     }
 }
 
@@ -42,7 +42,7 @@ pub fn show(
         .inner_margin(egui::Margin::symmetric(12, 8))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(icon::LIST_NUMBERS).color(theme::ACCENT));
+                ui.label(RichText::new(icon::LIST_NUMBERS).color(theme::accent()));
                 ui.label(RichText::new("Interactive rebase").strong().size(15.0));
                 ui.label(
                     RichText::new(format!(
@@ -50,7 +50,7 @@ pub fn show(
                         planner.rows.len(),
                         planner.base_label
                     ))
-                    .color(theme::MUTED),
+                    .color(theme::muted()),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if widgets::icon_button(ui, icon::X, "Close (Esc)").clicked() {
@@ -62,13 +62,13 @@ pub fn show(
                     let ready = !busy && changed && problem.is_none();
                     let label = RichText::new("Start rebase");
                     let go = if !ready {
-                        egui::Button::new(label.color(theme::MUTED)).fill(theme::BG_HOVER)
+                        egui::Button::new(label.color(theme::muted())).fill(theme::bg_hover())
                     } else if planner.pushed {
                         egui::Button::new(label.color(Color32::WHITE).strong())
-                            .fill(theme::DANGER.gamma_multiply(0.8))
+                            .fill(theme::danger().gamma_multiply(0.8))
                     } else {
-                        egui::Button::new(label.color(theme::ON_ACCENT).strong())
-                            .fill(theme::ACCENT)
+                        egui::Button::new(label.color(theme::on_accent()).strong())
+                            .fill(theme::accent())
                     };
                     let tip = if !changed {
                         "Change something first"
@@ -90,7 +90,7 @@ pub fn show(
                     "Newest at the top. Drag commits to reorder them. Squash and fixup combine a commit with the one below it. The rewritten commits are new commits; if a step conflicts, you'll resolve it and continue.",
                 )
                 .size(12.0)
-                .color(theme::MUTED),
+                .color(theme::muted()),
             );
             if planner.pushed {
                 ui.label(
@@ -99,17 +99,17 @@ pub fn show(
                         icon::WARNING
                     ))
                     .size(12.0)
-                    .color(theme::MODIFIED),
+                    .color(theme::modified()),
                 );
             }
             if let Some(p) = problem {
-                ui.label(RichText::new(p).size(12.0).color(theme::DANGER));
+                ui.label(RichText::new(p).size(12.0).color(theme::danger()));
             }
         });
     ui.painter().hline(
         ui.max_rect().x_range(),
         ui.cursor().top(),
-        Stroke::new(1.0, theme::BORDER),
+        Stroke::new(1.0, theme::border()),
     );
 
     let mut moved: Option<(usize, usize)> = None;
@@ -134,7 +134,7 @@ pub fn show(
                             icon::ANCHOR,
                             planner.base_label
                         ))
-                        .color(theme::MUTED),
+                        .color(theme::muted()),
                     );
                 });
         });
@@ -153,8 +153,8 @@ pub fn show(
 fn row(ui: &mut egui::Ui, planner: &mut Planner, i: usize, count: usize) -> Option<(usize, usize)> {
     let mut moved = None;
     let frame = egui::Frame::new()
-        .fill(theme::BG_RAISED)
-        .stroke(Stroke::new(1.0, theme::BORDER))
+        .fill(theme::bg_raised())
+        .stroke(Stroke::new(1.0, theme::border()))
         .corner_radius(6)
         .inner_margin(egui::Margin::symmetric(8, 6));
     let summary = planner.rows[i].summary.clone();
@@ -169,9 +169,9 @@ fn row(ui: &mut egui::Ui, planner: &mut Planner, i: usize, count: usize) -> Opti
                 icon::DOTS_SIX_VERTICAL,
                 theme::body(14.0),
                 if response.hovered() {
-                    theme::TEXT
+                    theme::text()
                 } else {
-                    theme::MUTED
+                    theme::muted()
                 },
             );
             response.dnd_set_drag_payload(DragRow(i));
@@ -204,7 +204,7 @@ fn row(ui: &mut egui::Ui, planner: &mut Planner, i: usize, count: usize) -> Opti
                 let text = RichText::new(a.name()).size(12.0).color(if selected {
                     colour(a)
                 } else {
-                    theme::MUTED
+                    theme::muted()
                 });
                 let b = ui.selectable_label(selected, text).on_hover_text(a.help());
                 let name = format!("{} {summary}", a.name());
@@ -216,14 +216,14 @@ fn row(ui: &mut egui::Ui, planner: &mut Planner, i: usize, count: usize) -> Opti
             ui.add_space(8.0);
             let mut text = RichText::new(&r.summary);
             if r.action == PlanAction::Drop {
-                text = text.strikethrough().color(theme::MUTED);
+                text = text.strikethrough().color(theme::muted());
             }
             ui.label(text);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
                     RichText::new(&r.id[..7.min(r.id.len())])
                         .monospace()
-                        .color(theme::MUTED),
+                        .color(theme::muted()),
                 );
             });
         });
@@ -246,7 +246,7 @@ fn row(ui: &mut egui::Ui, planner: &mut Planner, i: usize, count: usize) -> Opti
                         icon::ARROW_ELBOW_DOWN_LEFT
                     ))
                     .size(12.0)
-                    .color(theme::MODIFIED),
+                    .color(theme::modified()),
                 );
             }
             _ => {}
@@ -269,7 +269,7 @@ fn row(ui: &mut egui::Ui, planner: &mut Planner, i: usize, count: usize) -> Opti
             target.rect.bottom() + 2.0
         };
         ui.painter()
-            .hline(target.rect.x_range(), y, Stroke::new(2.0, theme::ACCENT));
+            .hline(target.rect.x_range(), y, Stroke::new(2.0, theme::accent()));
     }
     if let Some(dragged) = target.dnd_release_payload::<DragRow>() {
         moved = Some((dragged.0, i));
@@ -292,9 +292,9 @@ fn drag_label(ctx: &egui::Context, planner: &Planner) {
         egui::Order::Tooltip,
         egui::Id::new("drag-commit"),
     ));
-    let galley = painter.layout_no_wrap(r.summary.clone(), theme::body(12.0), theme::ON_ACCENT);
+    let galley = painter.layout_no_wrap(r.summary.clone(), theme::body(12.0), theme::on_accent());
     let rect = egui::Rect::from_min_size(pos + egui::vec2(14.0, 10.0), galley.size())
         .expand2(egui::vec2(8.0, 4.0));
-    painter.rect_filled(rect, 6, theme::ACCENT);
-    painter.galley(rect.min + egui::vec2(8.0, 4.0), galley, theme::ON_ACCENT);
+    painter.rect_filled(rect, 6, theme::accent());
+    painter.galley(rect.min + egui::vec2(8.0, 4.0), galley, theme::on_accent());
 }

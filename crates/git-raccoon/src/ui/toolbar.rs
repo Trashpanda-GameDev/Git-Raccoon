@@ -22,6 +22,7 @@ pub enum Action {
     Push,
     CancelSync,
     Palette,
+    Settings,
 }
 
 /// A fetch, pull or push in progress.
@@ -116,14 +117,14 @@ pub fn show(
 
             let branch = repo.branch.unwrap_or("detached HEAD");
             egui::Frame::new()
-                .fill(theme::BG)
+                .fill(theme::bg())
                 .corner_radius(10)
                 .inner_margin(egui::Margin::symmetric(8, 1))
                 .show(ui, |ui| {
                     ui.label(
                         RichText::new(format!("{}  {branch}", icon::GIT_BRANCH))
                             .size(12.0)
-                            .color(theme::ACCENT),
+                            .color(theme::accent()),
                     );
                 });
 
@@ -171,8 +172,11 @@ pub fn show(
                 }
             }
         }
-        // The command palette, at the far right.
+        // Settings and the command palette, at the far right.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if widgets::icon_button(ui, icon::GEAR_SIX, "Settings").clicked() {
+                action = Some(Action::Settings);
+            }
             let shortcut = crate::commands::shortcut(&crate::commands::Command::Palette)
                 .map(|s| ui.ctx().format_shortcut(&s))
                 .unwrap_or_default();
@@ -191,7 +195,7 @@ pub fn show(
         if opening {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(8.0);
-                ui.label(RichText::new("Opening…").color(theme::MUTED));
+                ui.label(RichText::new("Opening…").color(theme::muted()));
                 ui.spinner();
             });
         }
@@ -214,7 +218,7 @@ fn sync_buttons(ui: &mut egui::Ui, repo: &OpenRepo<'_>) -> Option<Action> {
             (Some(phase), None) => format!("{doing}… {phase}"),
             _ => format!("{doing}…"),
         };
-        ui.label(RichText::new(detail).size(12.0).color(theme::MUTED));
+        ui.label(RichText::new(detail).size(12.0).color(theme::muted()));
         if let Some(p) = sync.percent {
             ui.add(
                 egui::ProgressBar::new(f32::from(p) / 100.0)

@@ -58,7 +58,7 @@ pub fn show(
             if url.changed() && !form.name_edited {
                 form.name = create::folder_name(&form.url);
             }
-            ui.label(RichText::new("Folder").size(12.0).color(theme::MUTED));
+            ui.label(RichText::new("Folder").size(12.0).color(theme::muted()));
             ui.horizontal(|ui| {
                 let field = ui.add(
                     egui::TextEdit::singleline(&mut form.parent)
@@ -87,14 +87,14 @@ pub fn show(
                 format!("{} already exists and isn't empty.", form.dest().display())
             };
             ui.label(RichText::new(text).size(12.0).color(if free {
-                theme::MUTED
+                theme::muted()
             } else {
-                theme::DANGER
+                theme::danger()
             }));
         }
         if let Some(e) = &form.error {
             ui.add_space(4.0);
-            ui.label(RichText::new(e).size(12.0).color(theme::DANGER));
+            ui.label(RichText::new(e).size(12.0).color(theme::danger()));
         }
         ui.add_space(12.0);
         ui.horizontal(|ui| {
@@ -108,7 +108,7 @@ pub fn show(
                     Some(p) => p.phase.clone(),
                     None => "Cloning…".into(),
                 };
-                ui.label(RichText::new(text).size(12.0).color(theme::MUTED));
+                ui.label(RichText::new(text).size(12.0).color(theme::muted()));
                 if let Some(Progress {
                     percent: Some(p), ..
                 }) = progress
@@ -126,8 +126,9 @@ pub fn show(
                     action = Some(Action::Stop);
                 }
             } else {
-                let go = egui::Button::new(RichText::new("Clone").color(theme::ON_ACCENT).strong())
-                    .fill(theme::ACCENT);
+                let go =
+                    egui::Button::new(RichText::new("Clone").color(theme::on_accent()).strong())
+                        .fill(theme::accent());
                 if ui.add_enabled(ready && free, go).clicked() {
                     action = Some(Action::Clone);
                 }
@@ -155,7 +156,7 @@ fn labelled(
     text: &mut String,
     hint: &str,
 ) -> egui::Response {
-    ui.label(RichText::new(name).size(12.0).color(theme::MUTED));
+    ui.label(RichText::new(name).size(12.0).color(theme::muted()));
     let response = ui.add(
         egui::TextEdit::singleline(text)
             .hint_text(hint)
