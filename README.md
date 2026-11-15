@@ -49,6 +49,8 @@ Installers for Windows, macOS (Apple Silicon) and Linux (an AppImage) are publis
    git push origin v0.5.1
    ```
 
+   Or push the commit to the `release` branch (`git push origin main:release`): the release then creates the tag itself. It refuses a version that's already released.
+
 The Release workflow builds the three installers and publishes them as one release (with GitHub's built-in token: nothing to set up). To try them first, run the workflow by hand (Actions > Release > Run workflow): it builds them and keeps them as downloadable artifacts without publishing.
 
 They aren't code-signed yet. On Windows, SmartScreen warns ("More info", then "Run anyway") until the installer builds a reputation. On macOS, right-click the app and choose Open the first time (or allow it in System Settings > Privacy & Security).

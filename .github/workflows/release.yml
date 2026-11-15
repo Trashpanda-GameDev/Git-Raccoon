@@ -1,12 +1,15 @@
 name: Release
 
-# Pushing a tag like v0.5.0 builds the installers (Windows, macOS, Linux)
-# and publishes them, with their update packages, as a GitHub release of
-# this repository. Running the workflow by hand (Actions > Release > Run
-# workflow) only builds them, as downloadable artifacts, to try first.
+# Publishing a release builds the installers (Windows, macOS, Linux) and
+# publishes them, with their update packages, as a GitHub release of this
+# repository, tagged v<the version in Cargo.toml>. Either push that tag, or
+# push the commit to the `release` branch (the release then creates the
+# tag). Running the workflow by hand (Actions > Release > Run workflow)
+# only builds them, as downloadable artifacts, to try first.
 on:
   push:
     tags: ["v*"]
+    branches: [release]
   workflow_dispatch:
 
 env:
@@ -19,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
       - name: From Cargo.toml (a tag must match it)
@@ -28,6 +32,19 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           if [[ "$GITHUB_REF" == refs/tags/* && "${GITHUB_REF#refs/tags/v}" != "$version" ]]; then
             echo "::error::Tag ${GITHUB_REF#refs/tags/} doesn't match the version in Cargo.toml ($version)."
+            exit 1
+          fi
+          if [[ "$GITHUB_REF" == refs/tags/* || "$GITHUB_REF" == refs/heads/release ]]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Not released already
+        if: github.ref == 'refs/heads/release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::error::Version $VERSION is already released: raise the version in Cargo.toml first."
             exit 1
           fi
 
@@ -50,7 +67,7 @@ jobs:
           dotnet-version: 9.0.x
       - run: dotnet tool install -g vpk
       - name: The previous release (so updates can be small deltas)
-        if: startsWith(github.ref, 'refs/tags/')
+        if: needs.version.outputs.publish == 'true'
         continue-on-error: true # the first release has nothing before it
         run: vpk download github --repoUrl ${{ env.RELEASES_REPO }} --token ${{ secrets.GITHUB_TOKEN }} --channel win --outputDir releases
       - name: Package
@@ -123,7 +140,7 @@ jobs:
           dotnet-version: 9.0.x
       - run: dotnet tool install -g vpk
       - name: The previous release (so updates can be small deltas)
-        if: startsWith(github.ref, 'refs/tags/')
+        if: needs.version.outputs.publish == 'true'
         continue-on-error: true
         run: vpk download github --repoUrl ${{ env.RELEASES_REPO }} --token ${{ secrets.GITHUB_TOKEN }} --channel osx --outputDir releases
       - name: Package
@@ -170,7 +187,7 @@ jobs:
           dotnet-version: 9.0.x
       - run: dotnet tool install -g vpk
       - name: The previous release (so updates can be small deltas)
-        if: startsWith(github.ref, 'refs/tags/')
+        if: needs.version.outputs.publish == 'true'
         continue-on-error: true
         run: vpk download github --repoUrl ${{ env.RELEASES_REPO }} --token ${{ secrets.GITHUB_TOKEN }} --channel linux --outputDir releases
       - name: Package
@@ -193,8 +210,8 @@ jobs:
           path: releases
 
   publish:
-    name: Publish to the releases repository
-    if: startsWith(github.ref, 'refs/tags/')
+    name: Publish the release
+    if: needs.version.outputs.publish == 'true'
     needs: [version, windows, macos, linux]
     runs-on: ubuntu-latest
     permissions:
@@ -216,7 +233,8 @@ jobs:
             if [ "$channel" = linux ]; then publish="--publish"; fi
             vpk upload github --repoUrl "$RELEASES_REPO" --token "$TOKEN" \
               --channel "$channel" --outputDir "releases-$channel" \
-              --releaseName "Git Raccoon $VERSION" --tag "v$VERSION" --merge $publish
+              --releaseName "Git Raccoon $VERSION" --tag "v$VERSION" \
+              --targetCommitish "$GITHUB_SHA" --merge $publish
           done
       - name: Upload the installer that asks where to install
         env:
