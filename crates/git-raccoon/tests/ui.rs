@@ -2452,3 +2452,37 @@ fn shows_submodules_worktrees_and_lfs() {
     });
     assert_eq!(h.state().tab_names().0.len(), 2);
 }
+
+#[test]
+fn offers_crash_reports_without_sending_them() {
+    let dir = std::env::temp_dir().join(format!("git-raccoon-crashes-{}", rand_suffix()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (n, what) in [(1, "index out of bounds"), (2, "attempt to divide by zero")] {
+        std::fs::write(
+            dir.join(format!("crash-{n}.txt")),
+            format!("Git Raccoon 0.5.0\nSystem: linux x86_64\nWhat: {what}\n"),
+        )
+        .unwrap();
+    }
+    let mut h = harness(Settings::default());
+    h.state_mut().load_crash_reports(&dir);
+    h.run_ok();
+    h.get_by_label("Git Raccoon ran into a problem");
+    h.get_by_label_contains("index out of bounds");
+    h.get_by_label_contains("1 more after this one");
+    screenshot(&mut h, "42-crash-report");
+
+    // Copying keeps nothing; declining throws the next one away. Nothing is sent.
+    h.get_by_label("Copy report").click();
+    h.run_ok();
+    h.get_by_label_contains("divide by zero");
+    h.get_by_label("Don't send").click();
+    h.run_ok();
+    assert!(!h.state().has_crash_report());
+    assert_eq!(
+        std::fs::read_dir(&dir).unwrap().count(),
+        0,
+        "reports are removed once answered"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

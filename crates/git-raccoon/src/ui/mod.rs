@@ -3,6 +3,7 @@
 pub mod askpass;
 pub mod clone;
 pub mod conflict;
+pub mod crash;
 pub mod details;
 pub mod dialog;
 pub mod diff;

@@ -19,10 +19,15 @@ dbg_macro = "warn"
 todo = "warn"
 unwrap_used = "warn"
 
+# Line numbers are enough for backtraces, and keep build folders small.
+[profile.dev]
+debug = "line-tables-only"
+
 # Dependencies (including libgit2, syntax highlighting and image decoding)
 # are optimised even in dev builds; they are far too slow otherwise.
 [profile.dev.package."*"]
 opt-level = 3
+debug = false
 
 # The history walk and graph layout run on every open; keep them fast too.
 [profile.dev.package.git-raccoon-core]

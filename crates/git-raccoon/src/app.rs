@@ -51,6 +51,8 @@ pub struct App {
     updater: crate::updates::Updater,
     /// Restart into the downloaded update once settings are saved.
     restart_to_update: bool,
+    /// Reports of earlier crashes, offered one at a time.
+    crash_reports: Vec<crate::crash::Report>,
 }
 
 /// A repository being opened: its path, the load, and its tab's id.
@@ -95,6 +97,9 @@ impl App {
         if let Ok(exe) = std::env::current_exe() {
             app.answer_git_questions(&cc.egui_ctx, &exe);
         }
+        if let Some(dir) = crate::crash::folder() {
+            app.load_crash_reports(&dir);
+        }
         app.restore_tabs(&cc.egui_ctx);
         app
     }
@@ -125,6 +130,7 @@ impl App {
             applied: None,
             updater: crate::updates::Updater::new(),
             restart_to_update: false,
+            crash_reports: Vec::new(),
         }
     }
 
@@ -327,6 +333,36 @@ impl App {
         self.error = None;
         self.opening
             .push((path, Task::spawn(ctx, move || repo_view::load(&p)), id));
+    }
+
+    /// Offers the crash reports in `dir` (left by earlier runs).
+    pub fn load_crash_reports(&mut self, dir: &std::path::Path) {
+        self.crash_reports = crate::crash::pending(dir);
+    }
+
+    /// Whether a crash report is waiting for an answer.
+    pub fn has_crash_report(&self) -> bool {
+        !self.crash_reports.is_empty()
+    }
+
+    fn crash_dialog(&mut self, ctx: &egui::Context) {
+        let Some(report) = self.crash_reports.first() else {
+            return;
+        };
+        let more = self.crash_reports.len() - 1;
+        let Some(action) = crate::ui::crash::show(ctx, report, more) else {
+            return;
+        };
+        match action {
+            crate::ui::crash::Action::Send => {
+                ctx.copy_text(report.text.clone());
+                ctx.open_url(egui::OpenUrl::new_tab(crate::crash::issue_url(report)));
+            }
+            crate::ui::crash::Action::Copy => ctx.copy_text(report.text.clone()),
+            crate::ui::crash::Action::Discard => {}
+        }
+        let report = self.crash_reports.remove(0);
+        crate::crash::forget(&report);
     }
 
     /// Notes the open tabs in the settings, to restore them next time.
@@ -858,6 +894,7 @@ impl App {
         // A question, the palette or a dialog has the keyboard.
         let dialog_open = self.repo.as_ref().is_some_and(|r| r.dialog.is_some());
         if self.prompt.is_some()
+            || !self.crash_reports.is_empty()
             || self.palette.is_some()
             || self.clone_form.is_some()
             || self.settings_open
@@ -1500,6 +1537,7 @@ impl eframe::App for App {
             }
         }
         self.palette(&ctx);
+        self.crash_dialog(&ctx);
         self.questions(&ctx);
     }
 

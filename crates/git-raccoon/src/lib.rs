@@ -2,6 +2,7 @@
 
 mod app;
 pub mod commands;
+pub mod crash;
 pub mod format;
 mod highlight;
 mod images;

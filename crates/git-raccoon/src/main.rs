@@ -11,6 +11,8 @@ fn main() -> eframe::Result {
     }
     // Velopack's install, update and uninstall steps run here (and exit).
     velopack::VelopackApp::build().run();
+    // Bugs leave a report beside the settings, offered next time.
+    git_raccoon::crash::install();
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Git Raccoon")
         .with_app_id("git-raccoon")
