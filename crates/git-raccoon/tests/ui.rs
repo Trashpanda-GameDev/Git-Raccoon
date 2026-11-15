@@ -519,7 +519,10 @@ fn wait_for(h: &mut Harness<'_, App>, what: &str, done: impl Fn(&App) -> bool) {
         assert!(
             start.elapsed() < Duration::from_secs(30),
             "timed out waiting for {what}; error shown: {:?}",
-            h.state().repo().and_then(|r| r.refresh_error.clone())
+            h.state()
+                .error()
+                .map(str::to_string)
+                .or_else(|| h.state().repo().and_then(|r| r.refresh_error.clone()))
         );
         h.step();
         std::thread::sleep(Duration::from_millis(20));
@@ -2376,6 +2379,11 @@ fn shows_submodules_worktrees_and_lfs() {
         &sample,
         &["commit", "-q", "-m", "Add the library and the cover art"],
     );
+    // Where git-lfs is set up (as on CI machines), checking out the cover
+    // art would try to download it from a server that doesn't exist.
+    git(&sample, &["config", "filter.lfs.smudge", "cat"]);
+    git(&sample, &["config", "filter.lfs.process", ""]);
+    git(&sample, &["config", "filter.lfs.required", "false"]);
     // The submodule on another commit than recorded.
     git(&sample, &["-C", "vendor/lib", "checkout", "-q", "HEAD~1"]);
 
