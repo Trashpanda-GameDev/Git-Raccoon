@@ -209,6 +209,7 @@ pub fn show(
                         action = Some(Action::OpenFile(f.path.clone()));
                     }
                 },
+                |_, _, _| {},
             );
         });
     action

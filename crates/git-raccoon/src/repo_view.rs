@@ -169,7 +169,11 @@ pub enum Op {
         untracked: bool,
         /// Only the staged changes.
         staged: bool,
+        /// Only these files (all if empty).
+        paths: Vec<String>,
     },
+    /// Add these paths to the .gitignore.
+    Ignore(Vec<String>),
     /// Stash operations, by stash commit id.
     StashApply(String),
     StashPop(String),
@@ -350,7 +354,9 @@ impl Op {
                 message,
                 untracked,
                 staged,
-            } => stash::save(path, &message, untracked, staged),
+                paths,
+            } => stash::save_paths(path, &message, untracked, staged, &paths),
+            Op::Ignore(paths) => git_raccoon_core::ignore::add(path, &paths).map(drop),
             Op::StashApply(id) => stash::apply(path, &id),
             Op::StashPop(id) => stash::pop(path, &id),
             Op::StashPopStaged(id) => stash::pop_staged(path, &id),
@@ -445,6 +451,7 @@ impl Op {
             } => "unstage",
             Op::Discard(..) => "discard",
             Op::Stash { .. } => "stash",
+            Op::Ignore(_) => "ignore",
             Op::StashApply(_) => "apply the stash",
             Op::StashPop(_) | Op::StashPopStaged(_) => "pop the stash",
             Op::StashDrop(_) => "drop the stash",
@@ -497,6 +504,7 @@ impl Op {
                 | Op::UnstageAll
                 | Op::Lines { .. }
                 | Op::Discard(..)
+                | Op::Ignore(_)
                 | Op::TakeSide { .. }
                 | Op::WriteConflict { .. }
                 | Op::MarkResolved(_)
@@ -1013,6 +1021,8 @@ pub enum Dialog {
         staged_files: usize,
         /// Stash only the staged changes.
         staged: bool,
+        /// Only these files (all if empty).
+        paths: Vec<String>,
     },
     /// Name a new branch starting at `start` (a commit id or "HEAD").
     NewBranch {
@@ -1079,6 +1089,8 @@ pub struct RepoView {
     /// Lines picked in the open working diff, as (hunk, line).
     pub picked: std::collections::BTreeSet<(usize, usize)>,
     pub draft: CommitDraft,
+    /// Working files picked together (Ctrl+click, Shift+click).
+    pub file_selection: crate::ui::working::FileSelection,
     committing: Option<Task<Result<Option<Undoable>, String>>>,
     /// How to undo the last action, if it can be.
     pub undo: Option<Undoable>,
@@ -1165,6 +1177,7 @@ impl RepoView {
             dialog: None,
             trash_override: None,
             draft: CommitDraft::default(),
+            file_selection: crate::ui::working::FileSelection::default(),
             committing: None,
             undo: None,
             conflict: None,
@@ -1439,7 +1452,53 @@ impl RepoView {
             untracked: true,
             staged_files,
             staged: staged_files > 0,
+            paths: Vec::new(),
         }
+    }
+
+    /// The stash dialog for just these files.
+    pub fn stash_files_dialog(&self, paths: Vec<String>) -> Dialog {
+        Dialog::Stash {
+            message: String::new(),
+            untracked: true,
+            staged_files: 0,
+            staged: false,
+            paths,
+        }
+    }
+
+    /// Asks before discarding all the changes to `files`, staged ones too.
+    pub fn confirm_discard_staged(&mut self, files: Vec<String>) {
+        let Some(status) = self.status.as_ref() else {
+            return;
+        };
+        // Renamed files: the old name is restored too.
+        let mut all: Vec<String> = files.clone();
+        for f in status.staged.iter().filter(|f| files.contains(&f.path)) {
+            all.extend(f.old_path.clone());
+        }
+        all.sort();
+        all.dedup();
+        let what = match files.as_slice() {
+            [one] => one.clone(),
+            many => format!("{} files", many.len()),
+        };
+        self.dialog = Some(Dialog::Confirm {
+            title: format!("Discard changes to {what}?"),
+            body: format!(
+                "Their changes are thrown away, staged and unstaged. Each file's current version is moved to the {} first, so you can get it back from there.",
+                trash_name()
+            ),
+            button: "Discard".into(),
+            danger: true,
+            op: Op::Then(
+                files
+                    .into_iter()
+                    .map(Op::UnstageFile)
+                    .chain([Op::Discard(all, self.trash_override.clone())])
+                    .collect(),
+            ),
+        });
     }
 
     pub fn checkout(&mut self, ctx: &egui::Context, name: String) {

@@ -1093,6 +1093,89 @@ fn staged_files_stay_in_view_beside_many_unstaged_ones() {
 }
 
 #[test]
+fn picks_several_files_and_acts_on_them_together() {
+    use egui::accesskit::Role;
+    let sample = Sample::build();
+    for i in 0..6 {
+        sample.write(&format!("notes/{i:02}.txt"), "new\n");
+    }
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    let bin = sample.dir.with_extension("bin");
+    h.state_mut().repo_mut().unwrap().trash_override = Some(bin.clone());
+    let status = |app: &App| app.repo().unwrap().status.clone().unwrap_or_default();
+    let names = |files: &[git_raccoon_core::working::WorkingFile]| {
+        files.iter().map(|f| f.path.clone()).collect::<Vec<_>>()
+    };
+    wait_for(&mut h, "the new files", |app| {
+        status(app).unstaged.len() == 6
+    });
+    h.get_by_label("Working changes").click();
+    settle(&mut h);
+
+    // Ctrl+click picks a second file; right-click stages both.
+    h.get_by_label("notes/00.txt").click();
+    h.run_ok();
+    h.get_by_label("notes/02.txt")
+        .click_modifiers(egui::Modifiers::COMMAND);
+    h.run_ok();
+    h.get_by_label("notes/02.txt").click_secondary();
+    h.run_ok();
+    screenshot(&mut h, "47-file-menu");
+    h.get_by_label_contains("Stage 2 files").click();
+    wait_for(&mut h, "two staged", |app| status(app).staged.len() == 2);
+    assert_eq!(
+        names(&status(h.state()).staged),
+        ["notes/00.txt", "notes/02.txt"]
+    );
+
+    // Shift+click picks a range; they're ignored.
+    h.get_by_label("notes/01.txt").click();
+    h.run_ok();
+    h.get_by_label("notes/04.txt")
+        .click_modifiers(egui::Modifiers::SHIFT);
+    h.run_ok();
+    h.get_by_label("notes/04.txt").click_secondary();
+    h.run_ok();
+    h.get_by_label_contains("Ignore 3 new files").click();
+    wait_for(&mut h, "ignored", |app| {
+        names(&status(app).unstaged) == [".gitignore", "notes/05.txt"]
+    });
+    assert_eq!(
+        read(&sample, ".gitignore").as_deref(),
+        Some("/notes/01.txt\n/notes/03.txt\n/notes/04.txt\n")
+    );
+
+    // A folder's menu, in the folder view: stash what's in notes/.
+    h.get_by_label("Show folders").click();
+    h.run_ok();
+    h.get_all_by_label("notes/")
+        .next()
+        .unwrap()
+        .click_secondary();
+    h.run_ok();
+    h.get_by_label_contains("Stash notes/").click();
+    h.run_ok();
+    h.get_by_role_and_label(Role::Button, "Stash").click();
+    wait_for(&mut h, "stashed", |app| {
+        names(&status(app).unstaged) == [".gitignore"]
+    });
+    assert_eq!(read(&sample, "notes/05.txt"), None);
+
+    // Discarding staged files asks first, then they're gone (to the bin).
+    let staged = h.get_all_by_label("notes/").last().unwrap();
+    staged.click_secondary();
+    h.run_ok();
+    h.get_by_label_contains("Discard changes to notes/").click();
+    h.run_ok();
+    h.get_by_role_and_label(Role::Button, "Discard").click();
+    wait_for(&mut h, "discarded", |app| status(app).staged.is_empty());
+    assert_eq!(read(&sample, "notes/00.txt"), None);
+    assert!(bin.join("00.txt").exists());
+    let _ = std::fs::remove_dir_all(&bin);
+}
+
+#[test]
 fn stashes_pops_and_drops() {
     let sample = Sample::build();
     let mut h = harness(Settings::default());

@@ -107,13 +107,21 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
                 untracked,
                 staged_files,
                 staged,
+                paths,
             } => {
-                let about = if *staged {
-                    "Puts the staged changes aside; the rest stay as they are. Apply or pop the stash later to get them back."
-                } else {
-                    "Puts all uncommitted changes aside, leaving a clean working tree. Apply or pop the stash later to get them back."
+                let chosen = match paths.as_slice() {
+                    [] => None,
+                    [one] => Some(one.clone()),
+                    many => Some(format!("{} files", many.len())),
                 };
-                heading(ui, "Stash changes", Some(about));
+                let about = if let Some(what) = &chosen {
+                    format!("Puts the changes to {what} aside; the rest stay as they are. Apply or pop the stash later to get them back.")
+                } else if *staged {
+                    "Puts the staged changes aside; the rest stay as they are. Apply or pop the stash later to get them back.".to_string()
+                } else {
+                    "Puts all uncommitted changes aside, leaving a clean working tree. Apply or pop the stash later to get them back.".to_string()
+                };
+                heading(ui, "Stash changes", Some(&about));
                 if *staged_files > 0 {
                     let files = if *staged_files == 1 {
                         "1 file".to_string()
@@ -283,11 +291,13 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
                 message,
                 untracked,
                 staged,
+                paths,
                 ..
             } => Some(Op::Stash {
                 message,
                 untracked,
                 staged,
+                paths,
             }),
             Dialog::NewBranch {
                 start,

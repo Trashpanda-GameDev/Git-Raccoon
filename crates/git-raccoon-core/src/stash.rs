@@ -13,6 +13,17 @@ use crate::{Error, Result};
 /// Stashes the uncommitted changes, untracked files too if asked; or with
 /// `staged_only`, just the staged changes, leaving the rest as it is.
 pub fn save(path: &str, message: &str, include_untracked: bool, staged_only: bool) -> Result<()> {
+    save_paths(path, message, include_untracked, staged_only, &[])
+}
+
+/// [`save`], for just the changes to `paths` (all changes if it's empty).
+pub fn save_paths(
+    path: &str,
+    message: &str,
+    include_untracked: bool,
+    staged_only: bool,
+    paths: &[String],
+) -> Result<()> {
     let mut args = vec!["stash", "push"];
     if staged_only {
         args.push("--staged");
@@ -22,6 +33,10 @@ pub fn save(path: &str, message: &str, include_untracked: bool, staged_only: boo
     let message = message.trim();
     if !message.is_empty() {
         args.extend(["--message", message]);
+    }
+    if !paths.is_empty() {
+        args.push("--");
+        args.extend(paths.iter().map(String::as_str));
     }
     cli::run(path, &args, None).map(drop)
 }
@@ -173,6 +188,31 @@ mod tests {
         assert_eq!(status.staged.len(), 1);
         assert_eq!(status.staged[0].path, "f.txt");
         assert!(stash_ids(&t).is_empty());
+    }
+
+    #[test]
+    fn stashes_just_the_chosen_files() {
+        let t = repo();
+        t.write("g.txt", "one\n");
+        t.commit_all("second");
+        t.write("f.txt", "changed\n");
+        t.write("g.txt", "changed too\n");
+        t.write("new.txt", "new\n");
+        save_paths(
+            t.path(),
+            "some",
+            true,
+            false,
+            &["f.txt".into(), "new.txt".into()],
+        )
+        .unwrap();
+        assert_eq!(read(&t, "f.txt").as_deref(), Some("one\n"), "stashed");
+        assert_eq!(read(&t, "new.txt"), None, "stashed");
+        assert_eq!(read(&t, "g.txt").as_deref(), Some("changed too\n"), "kept");
+        let id = stash_ids(&t)[0].0.clone();
+        pop(t.path(), &id).unwrap();
+        assert_eq!(read(&t, "f.txt").as_deref(), Some("changed\n"));
+        assert_eq!(read(&t, "new.txt").as_deref(), Some("new\n"));
     }
 
     #[test]

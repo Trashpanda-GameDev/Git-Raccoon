@@ -56,9 +56,19 @@ pub fn rows<'a>(paths: impl Iterator<Item = &'a str>, tree: bool) -> usize {
     count
 }
 
+/// The order `items` are shown in: as given, or by path in a tree.
+pub fn order<T>(items: &[T], path: impl Fn(&T) -> &str, tree: bool) -> Vec<&T> {
+    let mut sorted: Vec<&T> = items.iter().collect();
+    if tree {
+        sorted.sort_by(|a, b| path(a).cmp(path(b)));
+    }
+    sorted
+}
+
 /// Draws `items` as paths, or as folders (which fold when clicked) with
-/// the files inside them; `row` draws each file shown. `salt` keeps
-/// different lists' folded folders apart.
+/// the files inside them; `row` draws each file shown, and `folder` is
+/// given each folder's row (its path, and the items inside it). `salt`
+/// keeps different lists' folded folders apart.
 pub fn show<T>(
     ui: &mut egui::Ui,
     salt: impl Hash + std::fmt::Debug,
@@ -66,6 +76,7 @@ pub fn show<T>(
     path: impl Fn(&T) -> &str,
     tree: bool,
     mut row: impl FnMut(&mut egui::Ui, &T, Shown),
+    mut folder: impl FnMut(&egui::Response, &str, Vec<&T>),
 ) {
     if !tree {
         for item in items {
@@ -74,8 +85,7 @@ pub fn show<T>(
         return;
     }
     let id = egui::Id::new(&salt);
-    let mut sorted: Vec<&T> = items.iter().collect();
-    sorted.sort_by(|a, b| path(a).cmp(path(b)));
+    let sorted = order(items, &path, true);
     // The folders the last file was in, and the depth of a folded one
     // among them (whose contents are hidden).
     let mut open: Vec<&str> = Vec::new();
@@ -95,9 +105,16 @@ pub fn show<T>(
             let full = dirs[..=depth].join("/");
             let key = id.with(&full);
             let folded = ui.data(|d| d.get_temp::<bool>(key).unwrap_or(false));
-            if folder_row(ui, name, &full, depth, folded).clicked() {
+            let response = folder_row(ui, name, &full, depth, folded);
+            if response.clicked() {
                 ui.data_mut(|d| d.insert_temp(key, !folded));
             }
+            let prefix = format!("{full}/");
+            let inside = items
+                .iter()
+                .filter(|i| path(i).starts_with(&prefix))
+                .collect();
+            folder(&response, &full, inside);
             if folded {
                 folded_at = Some(depth);
             }

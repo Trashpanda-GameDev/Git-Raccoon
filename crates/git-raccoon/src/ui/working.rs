@@ -36,6 +36,8 @@ pub enum Action {
     Stash,
     /// Discard every change, staged or not (after asking).
     DiscardAll,
+    /// Something done to several picked files (or a folder's) at once.
+    Bulk(Bulk),
     /// Switch files between paths and folders.
     ToggleTree,
     Close,
@@ -53,6 +55,151 @@ pub struct State<'a> {
     pub draft: &'a mut CommitDraft,
     /// Files shown as a tree of folders.
     pub tree: bool,
+    /// The files picked (to stage, discard, ignore or stash together).
+    pub selection: &'a mut FileSelection,
+}
+
+/// Files picked in one of the lists: a click picks one, Ctrl+click adds
+/// or removes one, Shift+click picks a range.
+#[derive(Debug, Default)]
+pub struct FileSelection {
+    pub side: Option<Side>,
+    pub paths: Vec<String>,
+    /// Where a Shift+click range starts.
+    anchor: Option<String>,
+}
+
+impl FileSelection {
+    /// Picks just `path`.
+    pub fn only(&mut self, side: Side, path: &str) {
+        self.side = Some(side);
+        self.paths = vec![path.to_string()];
+        self.anchor = Some(path.to_string());
+    }
+
+    /// A click on `path`, in a list shown in `order`. Returns whether it
+    /// was a plain click (which also opens the file).
+    pub fn click(&mut self, side: Side, path: &str, mods: egui::Modifiers, order: &[&str]) -> bool {
+        if self.side != Some(side) {
+            self.paths.clear();
+            self.anchor = None;
+        }
+        self.side = Some(side);
+        if mods.command {
+            if let Some(i) = self.paths.iter().position(|p| p == path) {
+                self.paths.remove(i);
+            } else {
+                self.paths.push(path.to_string());
+            }
+            self.anchor = Some(path.to_string());
+            false
+        } else if mods.shift
+            && let Some(anchor) = &self.anchor
+            && let (Some(a), Some(b)) = (
+                order.iter().position(|p| p == anchor),
+                order.iter().position(|p| *p == path),
+            )
+        {
+            let (from, to) = if a <= b { (a, b) } else { (b, a) };
+            self.paths = order[from..=to].iter().map(|p| (*p).to_string()).collect();
+            false
+        } else {
+            self.only(side, path);
+            true
+        }
+    }
+}
+
+/// What to do with several files at once.
+pub enum Bulk {
+    Stage(Vec<String>),
+    Unstage(Vec<String>),
+    /// Discard their changes (staged ones too, from the staged list).
+    Discard(Side, Vec<String>),
+    /// Add these patterns to the .gitignore.
+    Ignore(Vec<String>),
+    Stash(Vec<String>),
+}
+
+/// The right-click menu for `files` in a list (or in a folder of it).
+fn bulk_menu(
+    ui: &mut egui::Ui,
+    side: Side,
+    files: &[&WorkingFile],
+    folder: Option<&str>,
+) -> Option<Action> {
+    if files.is_empty() {
+        return None;
+    }
+    let paths: Vec<String> = files.iter().map(|f| f.path.clone()).collect();
+    let what = match (folder, paths.as_slice()) {
+        (Some(folder), _) => format!("{folder}/"),
+        (None, [one]) => one.rsplit('/').next().unwrap_or(one).to_string(),
+        (None, many) => format!("{} files", many.len()),
+    };
+    let untracked: Vec<String> = files
+        .iter()
+        .filter(|f| f.status == git_raccoon_core::details::FileStatus::Untracked)
+        .map(|f| f.path.clone())
+        .collect();
+    let mut chosen = None;
+    let mut item = |ui: &mut egui::Ui, glyph: &str, text: String, enabled: bool, bulk: Bulk| {
+        if ui
+            .add_enabled(enabled, egui::Button::new(format!("{glyph}  {text}")))
+            .clicked()
+        {
+            chosen = Some(Action::Bulk(bulk));
+        }
+    };
+    match side {
+        Side::Unstaged => item(
+            ui,
+            icon::PLUS,
+            format!("Stage {what}"),
+            true,
+            Bulk::Stage(paths.clone()),
+        ),
+        Side::Staged => item(
+            ui,
+            icon::MINUS,
+            format!("Unstage {what}"),
+            true,
+            Bulk::Unstage(paths.clone()),
+        ),
+    }
+    item(
+        ui,
+        icon::STACK,
+        format!("Stash {what}…"),
+        true,
+        Bulk::Stash(paths.clone()),
+    );
+    // A folder of new files is ignored as a folder; otherwise the new files.
+    let ignore = match folder {
+        Some(folder) if untracked.len() == files.len() => vec![format!("{folder}/")],
+        _ => untracked.clone(),
+    };
+    let ignore_what = match (folder, untracked.as_slice()) {
+        (Some(_), _) if untracked.len() == files.len() => what.clone(),
+        (_, [one]) => one.rsplit('/').next().unwrap_or(one).to_string(),
+        (_, many) => format!("{} new files", many.len()),
+    };
+    item(
+        ui,
+        icon::EYE_SLASH,
+        format!("Ignore {ignore_what}"),
+        !ignore.is_empty(),
+        Bulk::Ignore(ignore),
+    );
+    ui.separator();
+    item(
+        ui,
+        icon::TRASH,
+        format!("Discard changes to {what}…"),
+        true,
+        Bulk::Discard(side, paths),
+    );
+    chosen
 }
 
 pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
@@ -66,6 +213,7 @@ pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
         active_conflict,
         draft,
         tree,
+        selection,
     } = st;
     ui.horizontal(|ui| {
         ui.set_height(36.0);
@@ -199,7 +347,7 @@ pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
             folded,
             tree,
         };
-        match file_list(ui, status, &list) {
+        match file_list(ui, status, &list, selection) {
             Some(ListAction::Fold) => {
                 ui.data_mut(|d| d.insert_temp(folded_id(side), !folded));
             }
@@ -257,7 +405,12 @@ fn split(space: f32, first: f32, second: f32) -> (f32, f32) {
     }
 }
 
-fn file_list(ui: &mut egui::Ui, status: &WorkingStatus, list: &List<'_>) -> Option<ListAction> {
+fn file_list(
+    ui: &mut egui::Ui,
+    status: &WorkingStatus,
+    list: &List<'_>,
+    selection: &mut FileSelection,
+) -> Option<ListAction> {
     let &List {
         side,
         busy,
@@ -342,6 +495,11 @@ fn file_list(ui: &mut egui::Ui, status: &WorkingStatus, list: &List<'_>) -> Opti
             action.map(ListAction::Do)
         };
     }
+    let order: Vec<&str> = file_list::order(files, |f| f.path.as_str(), tree)
+        .into_iter()
+        .map(|f| f.path.as_str())
+        .collect();
+    let mut folder_action = None;
     egui::ScrollArea::vertical()
         .id_salt(("files", side == Side::Staged))
         .max_height(height)
@@ -354,7 +512,8 @@ fn file_list(ui: &mut egui::Ui, status: &WorkingStatus, list: &List<'_>) -> Opti
                 |f| f.path.as_str(),
                 tree,
                 |ui, f, shown| {
-                    let is_active = active.is_some_and(|(s, p)| s == side && p == f.path);
+                    let chosen = selection.side == Some(side) && selection.paths.contains(&f.path);
+                    let is_active = chosen || active.is_some_and(|(s, p)| s == side && p == f.path);
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 2.0;
                         // Room for the buttons: stage/unstage, plus discard when unstaged.
@@ -366,8 +525,26 @@ fn file_list(ui: &mut egui::Ui, status: &WorkingStatus, list: &List<'_>) -> Opti
                             })
                             .inner;
                         if row.clicked() {
-                            action = Some(Action::Open(side, f.path.clone()));
+                            let mods = ui.input(|i| i.modifiers);
+                            if selection.click(side, &f.path, mods, &order) {
+                                action = Some(Action::Open(side, f.path.clone()));
+                            }
                         }
+                        // Right-click acts on the selection, or on this file
+                        // if it isn't part of it.
+                        if row.secondary_clicked() && !chosen {
+                            selection.only(side, &f.path);
+                        }
+                        row.context_menu(|ui| {
+                            let chosen: Vec<&WorkingFile> = files
+                                .iter()
+                                .filter(|f| selection.paths.contains(&f.path))
+                                .collect();
+                            if let Some(a) = bulk_menu(ui, side, &chosen, None) {
+                                action = Some(a);
+                                ui.close();
+                            }
+                        });
                         let (glyph, verb) = match side {
                             Side::Unstaged => (icon::PLUS, "Stage"),
                             Side::Staged => (icon::MINUS, "Unstage"),
@@ -398,8 +575,19 @@ fn file_list(ui: &mut egui::Ui, status: &WorkingStatus, list: &List<'_>) -> Opti
                         }
                     });
                 },
+                |response, folder, inside| {
+                    response.context_menu(|ui| {
+                        if let Some(a) = bulk_menu(ui, side, &inside, Some(folder)) {
+                            folder_action = Some(a);
+                            ui.close();
+                        }
+                    });
+                },
             );
         });
+    if folder_action.is_some() {
+        action = folder_action;
+    }
     ui.add_space(14.0);
     ui.spacing_mut().item_spacing.y = 6.0;
     if fold {

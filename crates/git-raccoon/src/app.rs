@@ -1330,6 +1330,7 @@ impl App {
                             active_conflict: repo.conflict.as_ref().map(|c| c.file.as_str()),
                             draft: &mut repo.draft,
                             tree: self.settings.file_tree,
+                            selection: &mut repo.file_selection,
                         },
                     )
                 })
@@ -1349,6 +1350,34 @@ impl App {
                 }
                 Some(working::Action::Close) => repo.deselect(),
                 Some(working::Action::DiscardAll) => repo.confirm_discard_all(),
+                Some(working::Action::Bulk(bulk)) => {
+                    repo.file_selection = working::FileSelection::default();
+                    match bulk {
+                        working::Bulk::Stage(files) => {
+                            repo.run(
+                                &ctx,
+                                Op::Then(files.into_iter().map(Op::StageFile).collect()),
+                            );
+                        }
+                        working::Bulk::Unstage(files) => {
+                            repo.run(
+                                &ctx,
+                                Op::Then(files.into_iter().map(Op::UnstageFile).collect()),
+                            );
+                        }
+                        working::Bulk::Discard(
+                            git_raccoon_core::working::Side::Unstaged,
+                            files,
+                        ) => {
+                            repo.confirm_discard(files);
+                        }
+                        working::Bulk::Discard(_, files) => repo.confirm_discard_staged(files),
+                        working::Bulk::Ignore(patterns) => repo.run(&ctx, Op::Ignore(patterns)),
+                        working::Bulk::Stash(files) => {
+                            repo.dialog = Some(repo.stash_files_dialog(files));
+                        }
+                    }
+                }
                 Some(working::Action::ToggleTree) => {
                     self.settings.file_tree = !self.settings.file_tree;
                 }

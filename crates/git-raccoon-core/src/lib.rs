@@ -14,6 +14,7 @@ pub mod discard;
 mod error;
 pub mod file_history;
 pub mod graph;
+pub mod ignore;
 pub mod interactive;
 pub mod merge;
 pub mod modules;
