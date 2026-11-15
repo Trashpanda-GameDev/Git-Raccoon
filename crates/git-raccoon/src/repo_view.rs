@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use eframe::egui;
 use git_raccoon_core::commit::{self, Committed};
 use git_raccoon_core::details::{self, CommitDetails, LineKind};
+use git_raccoon_core::interactive::{self, Step};
 use git_raccoon_core::merge::{self, MergeMode};
 use git_raccoon_core::refs::{self, Refs};
 use git_raccoon_core::repo::{GraphCommit, History};
@@ -252,6 +253,11 @@ pub enum Op {
         to: String,
     },
     Rebase(String),
+    /// Rewrite the commits after `base` following `steps` (oldest first).
+    InteractiveRebase {
+        base: String,
+        steps: Vec<Step>,
+    },
     CherryPick(String),
     Revert(String),
     Reset {
@@ -367,6 +373,7 @@ impl Op {
             Op::ResetKeep { expected, to } => undo::reset_keep(path, &expected, &to),
             Op::UndoMixedReset { expected, to } => undo::reset_mixed(path, &expected, &to),
             Op::Rebase(onto) => rewrite::rebase(path, &onto),
+            Op::InteractiveRebase { base, steps } => interactive::run(path, &base, &steps),
             Op::CherryPick(id) => rewrite::cherry_pick(path, &id),
             Op::Revert(id) => rewrite::revert(path, &id),
             Op::Reset { id, mode } => rewrite::reset(path, &id, mode),
@@ -420,7 +427,7 @@ impl Op {
                 "resolve the conflict"
             }
             Op::ResetKeep { .. } | Op::UndoMixedReset { .. } => "undo",
-            Op::Rebase(_) => "rebase",
+            Op::Rebase(_) | Op::InteractiveRebase { .. } => "rebase",
             Op::CherryPick(_) => "cherry-pick",
             Op::Revert(_) => "revert",
             Op::Reset { .. } => "reset",
@@ -527,7 +534,11 @@ impl Before {
             }
             Op::Stash { .. } => b.stash_top = stash::top(path).ok().flatten(),
             Op::StashThen(inner) => return Before::capture(inner, path),
-            Op::Rebase(_) | Op::CherryPick(_) | Op::Revert(_) | Op::Reset { .. } => {
+            Op::Rebase(_)
+            | Op::InteractiveRebase { .. }
+            | Op::CherryPick(_)
+            | Op::Revert(_)
+            | Op::Reset { .. } => {
                 b.head = undo::head_id(path).ok().flatten();
             }
             _ => {}
@@ -638,7 +649,11 @@ fn undo_for(op: &Op, before: Before, path: &str) -> Option<Undoable> {
             u.op = Op::Then(ops);
             return Some(u);
         }
-        Op::Rebase(_) | Op::CherryPick(_) | Op::Revert(_) | Op::Reset { .. } => {
+        Op::Rebase(_)
+        | Op::InteractiveRebase { .. }
+        | Op::CherryPick(_)
+        | Op::Revert(_)
+        | Op::Reset { .. } => {
             // Stopped on conflicts: abort is the way back, not undo.
             if merge::in_progress(path).ok()?.is_some() {
                 return None;
@@ -649,6 +664,7 @@ fn undo_for(op: &Op, before: Before, path: &str) -> Option<Undoable> {
             }
             let label = match op {
                 Op::Rebase(onto) => format!("Undo rebase onto {onto}"),
+                Op::InteractiveRebase { .. } => "Undo interactive rebase".to_string(),
                 Op::CherryPick(id) => format!("Undo cherry-pick of {}", short(id)),
                 Op::Revert(id) => format!("Undo revert of {}", short(id)),
                 _ => "Undo reset".to_string(),
@@ -745,6 +761,99 @@ struct Running {
     message: Option<String>,
     control: Arc<Control>,
     task: Task<Result<Option<Undoable>, Error>>,
+}
+
+/// What to do with a commit in an interactive rebase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlanAction {
+    Pick,
+    Reword,
+    Squash,
+    Fixup,
+    Drop,
+}
+
+impl PlanAction {
+    pub const ALL: [PlanAction; 5] = [
+        PlanAction::Pick,
+        PlanAction::Reword,
+        PlanAction::Squash,
+        PlanAction::Fixup,
+        PlanAction::Drop,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            PlanAction::Pick => "Pick",
+            PlanAction::Reword => "Reword",
+            PlanAction::Squash => "Squash",
+            PlanAction::Fixup => "Fixup",
+            PlanAction::Drop => "Drop",
+        }
+    }
+
+    pub fn help(self) -> &'static str {
+        match self {
+            PlanAction::Pick => "Keep the commit as it is",
+            PlanAction::Reword => "Keep it, with a new message",
+            PlanAction::Squash => "Combine it into the commit below, keeping both messages",
+            PlanAction::Fixup => {
+                "Combine it into the commit below, keeping only that one's message"
+            }
+            PlanAction::Drop => "Leave it out (its changes go too)",
+        }
+    }
+}
+
+pub struct PlanRow {
+    pub id: String,
+    pub summary: String,
+    pub message: String,
+    pub action: PlanAction,
+    /// The new message, for Reword.
+    pub new_message: String,
+}
+
+/// An interactive rebase being planned.
+pub struct Planner {
+    pub base: String,
+    /// Describes the base commit ("a1b2c3d “Fix it”").
+    pub base_label: String,
+    /// Newest first, as in the graph.
+    pub rows: Vec<PlanRow>,
+    /// Some of these commits are already pushed.
+    pub pushed: bool,
+}
+
+impl Planner {
+    /// The plan as Git runs it: oldest first.
+    pub fn steps(&self) -> Vec<Step> {
+        self.rows
+            .iter()
+            .rev()
+            .map(|r| Step {
+                id: r.id.clone(),
+                action: match r.action {
+                    PlanAction::Pick => interactive::Action::Pick,
+                    PlanAction::Reword => interactive::Action::Reword(r.new_message.clone()),
+                    PlanAction::Squash => interactive::Action::Squash,
+                    PlanAction::Fixup => interactive::Action::Fixup,
+                    PlanAction::Drop => interactive::Action::Drop,
+                },
+            })
+            .collect()
+    }
+
+    /// Whether anything would change.
+    pub fn changes_anything(&self, original: &[String]) -> bool {
+        let order: Vec<&str> = self.rows.iter().map(|r| r.id.as_str()).collect();
+        order != original.iter().map(String::as_str).collect::<Vec<_>>()
+            || self.rows.iter().any(|r| match r.action {
+                PlanAction::Pick => false,
+                PlanAction::Reword => r.new_message.trim() != r.message.trim(),
+                _ => true,
+            })
+    }
 }
 
 /// A conflicted file open for resolving.
@@ -844,6 +953,9 @@ pub struct RepoView {
     pub undo: Option<Undoable>,
     /// The conflicted file being resolved, if one is open.
     pub conflict: Option<ConflictFile>,
+    /// An interactive rebase being planned (shown instead of the history),
+    /// with the commits' original order.
+    pub planner: Option<(Planner, Vec<String>)>,
     /// When the running refresh started (an older read can't drop a newer undo).
     refresh_started: std::time::Instant,
     /// Where a Shift-click range of picks starts.
@@ -918,6 +1030,7 @@ impl RepoView {
             committing: None,
             undo: None,
             conflict: None,
+            planner: None,
             refresh_started: std::time::Instant::now(),
             diff: Keyed::default(),
             images: Keyed::default(),
@@ -1280,6 +1393,56 @@ impl RepoView {
                 )],
             });
         }
+    }
+
+    /// Opens the interactive rebase planner for the commits after `base`.
+    pub fn plan_rebase(&mut self, base: String, base_label: String) {
+        match interactive::commits(self.path(), &base) {
+            Ok(commits) => {
+                let pushed = commits
+                    .first()
+                    .is_some_and(|c| interactive::is_pushed(self.path(), &c.id));
+                let rows: Vec<PlanRow> = commits
+                    .into_iter()
+                    .rev()
+                    .map(|c| PlanRow {
+                        new_message: c.message.clone(),
+                        id: c.id,
+                        summary: c.summary,
+                        message: c.message,
+                        action: PlanAction::Pick,
+                    })
+                    .collect();
+                let original = rows.iter().map(|r| r.id.clone()).collect();
+                self.conflict = None;
+                self.active_file = None;
+                self.planner = Some((
+                    Planner {
+                        base,
+                        base_label,
+                        rows,
+                        pushed,
+                    },
+                    original,
+                ));
+            }
+            Err(e) => self.refresh_error = Some(format!("Can't rebase from here: {e}")),
+        }
+    }
+
+    /// Runs the planned interactive rebase.
+    pub fn start_planned_rebase(&mut self, ctx: &egui::Context) {
+        let Some((planner, _)) = self.planner.take() else {
+            return;
+        };
+        let steps = planner.steps();
+        self.run(
+            ctx,
+            Op::InteractiveRebase {
+                base: planner.base,
+                steps,
+            },
+        );
     }
 
     /// Asks before rebasing the checked-out branch onto `onto`.

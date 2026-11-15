@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use git_raccoon_core::create;
 use git_raccoon_core::sync::Progress;
 
-use crate::ui::{clone, conflict};
+use crate::ui::{clone, conflict, rebase};
 use crate::ui::{
     details, dialog, diff, history, search_bar, sidebar, toolbar, welcome, widgets, working,
 };
@@ -363,7 +363,9 @@ impl App {
             return;
         }
         if escape {
-            if repo.conflict.is_some() {
+            if repo.planner.is_some() {
+                repo.planner = None;
+            } else if repo.conflict.is_some() {
                 repo.conflict = None;
             } else if repo.active_file.is_some() {
                 repo.active_file = None;
@@ -697,6 +699,14 @@ impl App {
             .frame(Frame::new().fill(theme::BG))
             .show(ui, |ui| {
                 let busy = repo.op_running();
+                if let Some((planner, original)) = &mut repo.planner {
+                    match rebase::show(ui, planner, original, busy) {
+                        Some(rebase::Action::Start) => repo.start_planned_rebase(&ctx),
+                        Some(rebase::Action::Cancel) => repo.planner = None,
+                        None => {}
+                    }
+                    return;
+                }
                 if let Some(open) = &mut repo.conflict {
                     match conflict::show(ui, open, busy) {
                         Some(conflict::Action::Pick(i, pick)) => repo.pick_conflict(&ctx, i, pick),
@@ -786,6 +796,9 @@ impl App {
                     Some(history::Click::CherryPick { id }) => repo.run(&ctx, Op::CherryPick(id)),
                     Some(history::Click::Revert { id }) => repo.run(&ctx, Op::Revert(id)),
                     Some(history::Click::Reset { id, label }) => repo.ask_reset(id, label),
+                    Some(history::Click::InteractiveRebase { id, label }) => {
+                        repo.plan_rebase(id, label);
+                    }
                     None => {}
                 }
             });

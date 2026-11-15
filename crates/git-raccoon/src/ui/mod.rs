@@ -7,6 +7,7 @@ pub mod details;
 pub mod dialog;
 pub mod diff;
 pub mod history;
+pub mod rebase;
 pub mod search_bar;
 pub mod sidebar;
 pub mod toolbar;

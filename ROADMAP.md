@@ -62,7 +62,7 @@ The operations people open a GUI for.
 - [x] Rebase onto a branch
 - [x] Cherry-pick, revert and reset (soft, mixed, hard)
 - [x] Conflict view: list conflicted files, pick ours/theirs per hunk, edit the result
-- [ ] Interactive rebase: reorder, squash, reword and drop commits by drag and drop
+- [x] Interactive rebase: reorder, squash, reword and drop commits by drag and drop
 - [x] Clear in-progress banners for merges, rebases and cherry-picks, with continue and abort
 
 ## v0.5: Power (depth and comfort)

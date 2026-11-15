@@ -13,6 +13,7 @@ pub mod details;
 pub mod discard;
 mod error;
 pub mod graph;
+pub mod interactive;
 pub mod merge;
 pub mod refs;
 pub mod remote;

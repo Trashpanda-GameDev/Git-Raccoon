@@ -90,8 +90,19 @@ fn finish(
 /// Runs `git <args>` in `path`, feeding `stdin` if given. Returns what it
 /// printed; a failure becomes [`Error::Command`] with its output.
 pub fn run(path: &str, args: &[&str], stdin: Option<&str>) -> Result<String> {
+    run_env(path, args, stdin, &[])
+}
+
+/// [`run`], with extra environment variables for git.
+pub fn run_env(
+    path: &str,
+    args: &[&str],
+    stdin: Option<&str>,
+    env: &[(&str, &str)],
+) -> Result<String> {
     let mut child = spawn(
         git(path)
+            .envs(env.iter().copied())
             .args(args)
             .stdin(if stdin.is_some() {
                 Stdio::piped()

@@ -1852,3 +1852,109 @@ fn cherry_picks_reverts_resets_and_rebases() {
     undo(&mut h, "Undo rebase onto main", &topic_before);
     assert_eq!(h.state().error(), None);
 }
+
+fn log_summaries(sample: &Sample) -> Vec<String> {
+    let out = std::process::Command::new("git")
+        .args(["log", "--format=%s", "-5"])
+        .current_dir(sample.path())
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn plans_and_runs_an_interactive_rebase() {
+    let sample = Sample::build();
+    for n in ["one", "two"] {
+        sample.write(&format!("notes/{n}.txt"), format!("{n}\n"));
+        git(&sample, &["add", "notes"]);
+        git(&sample, &["commit", "-q", "-m", &format!("Note {n}")]);
+    }
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    let start = head_id(h.state());
+
+    menu_item(
+        &mut h,
+        "Merge branch 'feature/graph'",
+        "Interactive rebase from here",
+    );
+    h.get_by_label("Interactive rebase");
+    assert_eq!(
+        h.state()
+            .repo()
+            .unwrap()
+            .planner
+            .as_ref()
+            .unwrap()
+            .0
+            .rows
+            .len(),
+        4
+    );
+
+    // Drag "Note two" to the bottom (oldest).
+    let from = h.get_by_label("Drag Note two").rect().center();
+    let to = h.get_by_label("Drag Add icon").rect().center();
+    drag(&mut h, from, to);
+    let order: Vec<String> = h
+        .state()
+        .repo()
+        .unwrap()
+        .planner
+        .as_ref()
+        .unwrap()
+        .0
+        .rows
+        .iter()
+        .map(|r| r.summary.clone())
+        .collect();
+    assert_eq!(
+        order,
+        [
+            "Note one",
+            "Redraw icon and rename loader",
+            "Add icon",
+            "Note two"
+        ]
+    );
+
+    h.get_by_label("Drop Note one").click();
+    h.run_ok();
+    h.get_by_label("Fixup Redraw icon and rename loader")
+        .click();
+    h.run_ok();
+    h.get_by_label("Reword Add icon").click();
+    h.run_ok();
+    h.get_by_label("Message for Add icon").click();
+    h.run_ok();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+    h.get_by_label("Message for Add icon")
+        .type_text("Add the icon");
+    h.run_ok();
+    screenshot(&mut h, "31-interactive-rebase");
+    h.get_by_label("Start rebase").click();
+    wait_for(&mut h, "the rebase", |app| {
+        head_summary(app) == "Add the icon"
+    });
+    assert_eq!(
+        log_summaries(&sample)[..3],
+        ["Add the icon", "Note two", "Merge branch 'feature/graph'"]
+    );
+    assert!(read(&sample, "notes/two.txt").is_some() && read(&sample, "notes/one.txt").is_none());
+    assert!(
+        read(&sample, "src/repo_loader.rs").is_some(),
+        "the fixed-up commit's changes stay"
+    );
+
+    // And undo the lot.
+    wait_for(&mut h, "the undo", |app| {
+        undo_label(app).as_deref() == Some("Undo interactive rebase")
+    });
+    h.get_by_label("Undo").click();
+    wait_for(&mut h, "undone", move |app| head_id(app) == start);
+    assert_eq!(h.state().error(), None);
+}

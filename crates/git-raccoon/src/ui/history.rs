@@ -104,6 +104,10 @@ pub enum Click {
         id: String,
         label: String,
     },
+    InteractiveRebase {
+        id: String,
+        label: String,
+    },
 }
 
 /// Shows the history; returns what was clicked, if anything.
@@ -269,6 +273,12 @@ pub fn show(
                             5,
                             on_branch,
                         ),
+                        (
+                            icon::LIST_NUMBERS,
+                            "Interactive rebase from here…".to_string(),
+                            6,
+                            on_branch,
+                        ),
                     ];
                     for (glyph, text, which, enabled) in items {
                         if which == 3 {
@@ -285,7 +295,8 @@ pub fn show(
                                 2 => Click::CheckoutDetached { id, label },
                                 3 => Click::CherryPick { id },
                                 4 => Click::Revert { id },
-                                _ => Click::Reset { id, label },
+                                5 => Click::Reset { id, label },
+                                _ => Click::InteractiveRebase { id, label },
                             });
                             ui.close();
                         }
