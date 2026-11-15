@@ -1,4 +1,5 @@
-//! The bar across the top: sidebar toggle, app name, repo menu, branch, refresh.
+//! The bar across the top: sidebar toggle, repo menu, branch, refresh,
+//! sync, undo. (The app's name and icon are in the window's title bar.)
 
 use eframe::egui::{self, RichText};
 use egui_phosphor::regular as icon;
@@ -9,13 +10,10 @@ use crate::ui::{welcome, widgets};
 
 pub enum Action {
     ToggleSidebar,
-    Browse,
-    Clone,
-    Init,
     Open(String),
     Forget(String),
-    Close,
     Refresh,
+    NewBranch,
     Undo,
     Fetch,
     Pull,
@@ -53,7 +51,6 @@ pub struct OpenRepo<'a> {
 
 pub fn show(
     ui: &mut egui::Ui,
-    logo: &egui::TextureHandle,
     repo: Option<OpenRepo<'_>>,
     recent: &[RecentRepo],
     opening: bool,
@@ -66,44 +63,16 @@ pub fn show(
         if widgets::icon_button(ui, icon::SIDEBAR_SIMPLE, "Show or hide the sidebar").clicked() {
             action = Some(Action::ToggleSidebar);
         }
-        ui.add(egui::Image::new(logo).fit_to_exact_size(egui::vec2(20.0, 20.0)));
-        ui.label(RichText::new("Git Raccoon").strong().size(14.0));
 
         if let Some(repo) = repo {
             ui.add_space(8.0);
             let button = RichText::new(format!("{}  {}", repo.name, icon::CARET_DOWN)).strong();
             let menu = ui.menu_button(button, |ui| {
                 ui.set_width(420.0);
-                if ui
-                    .button(format!("{}  Open repository…", icon::FOLDER_OPEN))
-                    .clicked()
-                {
-                    action = Some(Action::Browse);
-                    ui.close();
-                }
-                if ui
-                    .button(format!("{}  Clone repository…", icon::DOWNLOAD_SIMPLE))
-                    .clicked()
-                {
-                    action = Some(Action::Clone);
-                    ui.close();
-                }
-                if ui
-                    .button(format!("{}  New repository…", icon::FOLDER_PLUS))
-                    .clicked()
-                {
-                    action = Some(Action::Init);
-                    ui.close();
-                }
-                if ui
-                    .button(format!("{}  Close repository", icon::X_CIRCLE))
-                    .clicked()
-                {
-                    action = Some(Action::Close);
-                    ui.close();
-                }
-                if !recent.is_empty() {
-                    ui.separator();
+                // Open, clone and new are on a new tab; closing is the tab's ✕.
+                if recent.is_empty() {
+                    ui.label(RichText::new("No recent repositories").color(theme::muted()));
+                } else {
                     ui.label(widgets::section_label("Recent"));
                     ui.spacing_mut().item_spacing.y = 0.0;
                     for r in recent {
@@ -165,6 +134,21 @@ pub fn show(
                 pill.on_hover_text(tip);
             }
             ui.add_space(6.0);
+            let branch = ui.add_enabled(
+                !repo.busy,
+                egui::Button::new(RichText::new(format!("{}  Branch", icon::GIT_BRANCH)).size(12.0)),
+            );
+            ui.ctx()
+                .accesskit_node_builder(branch.id, |n| n.set_label("Branch"));
+            let shortcut = crate::commands::shortcut(&crate::commands::Command::NewBranch)
+                .map(|s| ui.ctx().format_shortcut(&s))
+                .unwrap_or_default();
+            if branch
+                .on_hover_text(format!("Create a branch from the checked-out commit ({shortcut})"))
+                .clicked()
+            {
+                action = Some(Action::NewBranch);
+            }
             if let Some(a) = sync_buttons(ui, &repo) {
                 action = Some(a);
             }

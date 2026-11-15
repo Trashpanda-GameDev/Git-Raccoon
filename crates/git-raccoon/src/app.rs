@@ -401,17 +401,41 @@ impl App {
 
     /// The tabs' names (for the tab bar) and which one is showing.
     pub fn tab_names(&self) -> (Vec<String>, usize) {
-        let names = self
-            .tabs
+        let names = self.tab_list().into_iter().map(|(_, name)| name).collect();
+        (names, self.active)
+    }
+
+    /// Each tab's id and name.
+    fn tab_list(&self) -> Vec<(u64, String)> {
+        self.tabs
             .iter()
             .map(|t| {
-                t.path.as_deref().map_or_else(
+                let name = t.path.as_deref().map_or_else(
                     || "New tab".to_string(),
                     |p| settings::repo_name(p).to_string(),
-                )
+                );
+                (t.id, name)
             })
-            .collect();
-        (names, self.active)
+            .collect()
+    }
+
+    /// Moves a tab (dragged) to another place.
+    pub fn move_tab(&mut self, from: usize, to: usize) {
+        if from >= self.tabs.len() || to >= self.tabs.len() || from == to {
+            return;
+        }
+        let tab = self.tabs.remove(from);
+        self.tabs.insert(to, tab);
+        self.active = if self.active == from {
+            to
+        } else if from < self.active && self.active <= to {
+            self.active - 1
+        } else if to <= self.active && self.active < from {
+            self.active + 1
+        } else {
+            self.active
+        };
+        self.remember_tabs();
     }
 
     /// Opens an empty tab (showing the welcome screen) and switches to it.
@@ -997,7 +1021,7 @@ impl App {
         let now = settings::now();
 
         // Tabs.
-        let (names, active) = self.tab_names();
+        let (list, active) = (self.tab_list(), self.active);
         let tab_action = Panel::top("tabs")
             .frame(Frame::new().fill(theme::bg()).inner_margin(Margin {
                 left: 6,
@@ -1005,12 +1029,13 @@ impl App {
                 top: 4,
                 bottom: 0,
             }))
-            .show(ui, |ui| tabs::show(ui, &names, active))
+            .show(ui, |ui| tabs::show(ui, &list, active))
             .inner;
         match tab_action {
             Some(tabs::Action::Switch(i)) => self.switch_tab(&ctx, i),
             Some(tabs::Action::Close(i)) => self.close_tab(&ctx, i),
             Some(tabs::Action::New) => self.new_tab(&ctx),
+            Some(tabs::Action::Move { from, to }) => self.move_tab(from, to),
             None => {}
         }
 
@@ -1041,7 +1066,6 @@ impl App {
                 });
                 toolbar::show(
                     ui,
-                    &self.logo,
                     open,
                     &self.settings.recent,
                     self.active_opening(),
@@ -1054,12 +1078,9 @@ impl App {
             Some(toolbar::Action::ToggleSidebar) => {
                 self.settings.hide_sidebar = !self.settings.hide_sidebar
             }
-            Some(toolbar::Action::Browse) => self.browse(&ctx),
-            Some(toolbar::Action::Clone) => self.show_clone(),
-            Some(toolbar::Action::Init) => self.pick_new_repository(&ctx),
             Some(toolbar::Action::Open(p)) => self.open(&ctx, p),
             Some(toolbar::Action::Forget(p)) => self.settings.forget(&p),
-            Some(toolbar::Action::Close) => self.close(&ctx),
+            Some(toolbar::Action::NewBranch) => self.run_command(&ctx, Command::NewBranch),
             Some(toolbar::Action::Palette) => self.run_command(&ctx, Command::Palette),
             Some(toolbar::Action::Settings) => self.run_command(&ctx, Command::Settings),
             Some(toolbar::Action::RestartToUpdate) => self.restart_to_update = true,
@@ -1490,6 +1511,9 @@ impl App {
                         repo.plan_rebase(id, label);
                     }
                     Some(history::Click::Checkout(name)) => repo.checkout(&ctx, name),
+                    Some(history::Click::Merge { source, target }) => {
+                        repo.ask_merge(source, Some(target));
+                    }
                     Some(history::Click::CheckoutRemote(name)) => {
                         repo.run(&ctx, Op::CheckoutRemote(name));
                     }
@@ -1544,6 +1568,8 @@ impl eframe::App for App {
         }
         let ctx = ui.ctx().clone();
         self.panels(ui);
+        // A branch being dragged (from the sidebar or the graph) follows the pointer.
+        sidebar::drag_label(ui.ctx());
         // Above everything: the clone dialog, then Git's questions.
         self.clone_dialog(&ctx);
         if self.settings_open {

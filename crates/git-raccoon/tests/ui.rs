@@ -1196,6 +1196,31 @@ fn spreads_out_a_commits_labels_and_checks_them_out() {
 }
 
 #[test]
+fn merges_by_dragging_labels_on_the_graph() {
+    use egui::accesskit::Role;
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+
+    // Drag fix/ui/toolbar-glitch's label onto main's.
+    let label = |h: &Harness<'_, App>, summary: &str| {
+        let row = h.get_by_label(summary).rect();
+        egui::pos2(row.left() + 30.0, row.center().y)
+    };
+    let (from, to) = (
+        label(&h, "Fix toolbar glitch"),
+        label(&h, "Redraw icon and rename loader"),
+    );
+    drag(&mut h, from, to);
+    h.get_by_label("Merge fix/ui/toolbar-glitch into main?");
+    h.get_by_role_and_label(Role::Button, "Merge").click();
+    // The branch is just ahead of main: main fast-forwards to it.
+    wait_for(&mut h, "the merge", |app| {
+        head_summary(app) == "Fix toolbar glitch"
+    });
+}
+
+#[test]
 fn double_clicking_a_remote_branch_brings_the_local_one_up_to_it() {
     let sample = Sample::build();
     // A local branch behind its remote copy: "sync" at the merge, the
@@ -1731,17 +1756,9 @@ fn clones_and_starts_repositories() {
     );
 
     // Cloning into a folder that's in use isn't offered.
-    // The repository menu (its label ends with the menu's caret, unlike the tab's).
-    h.get_all_by_label_contains("git-raccoon")
-        .find(|n| {
-            n.accesskit_node().label().is_some_and(|l| {
-                l.starts_with("git-raccoon") && l.chars().count() > name.chars().count() + 1
-            })
-        })
-        .unwrap()
-        .click();
-    h.run_ok();
-    h.get_by_label_contains("Clone repository").click();
+    // From a new tab.
+    press(&mut h, egui::Modifiers::COMMAND, Key::T);
+    h.get_by_label("Clone a repository…").click();
     h.run_ok();
     type_into(&mut h, "Repository URL", sample.path());
     h.get_by_label_contains("already exists and isn't empty");
@@ -2424,6 +2441,35 @@ fn keeps_repositories_in_tabs() {
     assert_eq!(tab_names(&h).0.len(), 2);
     assert_eq!(tab_names(&h).1, 0);
     assert!(h.state().repo().unwrap().path().contains(&name_a));
+
+    // Dragging a tab past its neighbour reorders them; it stays the one shown.
+    let tab = |h: &Harness<'_, App>, name: &str| {
+        h.get_all_by_label(name)
+            .map(|n| n.rect())
+            .min_by(|a, b| a.top().total_cmp(&b.top()))
+            .unwrap()
+    };
+    let from = tab(&h, &name_a);
+    drag(
+        &mut h,
+        from.center(),
+        from.center() + egui::vec2(from.width() * 1.6, 0.0),
+    );
+    assert_eq!(tab_names(&h), (vec![name_b.clone(), name_a.clone()], 1));
+    assert!(h.state().repo().unwrap().path().contains(&name_a));
+    assert_eq!(h.state().settings().open_tabs.len(), 2);
+    assert!(
+        h.state().settings().open_tabs[0].contains(&name_b),
+        "remembered"
+    );
+    // And back.
+    let from = tab(&h, &name_a);
+    drag(
+        &mut h,
+        from.center(),
+        from.center() - egui::vec2(from.width() * 1.6, 0.0),
+    );
+    assert_eq!(tab_names(&h), (vec![name_a.clone(), name_b.clone()], 0));
 
     // Keys and clicks switch; each tab keeps its own selection.
     h.get_by_label("Add icon").click();

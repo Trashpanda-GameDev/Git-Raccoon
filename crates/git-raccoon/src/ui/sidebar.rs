@@ -369,21 +369,28 @@ pub enum Action {
     },
 }
 
-/// What's carried while dragging a branch (to drop it on another to merge).
+/// What's carried while dragging a branch (to drop it on another to merge):
+/// from the sidebar or from a label on the graph, onto either.
 #[derive(Clone)]
 struct DragBranch(String);
 
-/// Lets a row be dragged as `name`, and shows where it's being dragged.
-fn drag_source(response: &egui::Response, name: &str) {
+/// Lets a row or label be dragged as the branch `name` ("origin/x" for a
+/// remote one).
+pub fn drag_source(response: &egui::Response, name: &str) {
     response.dnd_set_drag_payload(DragBranch(name.to_string()));
 }
 
-/// Lets a local branch row take a dropped branch. Returns the merge asked for.
-fn drop_target(ui: &egui::Ui, response: &egui::Response, name: &str) -> Option<Action> {
+/// Lets a local branch's row or label take a dropped branch: outlines it
+/// while one is dragged over it, and returns the one dropped on it.
+pub fn dropped_branch(
+    painter: &egui::Painter,
+    response: &egui::Response,
+    name: &str,
+) -> Option<String> {
     if let Some(dragged) = response.dnd_hover_payload::<DragBranch>()
         && dragged.0 != name
     {
-        ui.painter().rect_stroke(
+        painter.rect_stroke(
             response.rect.shrink(1.0),
             4,
             Stroke::new(1.5, theme::accent()),
@@ -391,14 +398,19 @@ fn drop_target(ui: &egui::Ui, response: &egui::Response, name: &str) -> Option<A
         );
     }
     let dropped = response.dnd_release_payload::<DragBranch>()?;
-    (dropped.0 != name).then(|| Action::Merge {
-        source: dropped.0.clone(),
+    (dropped.0 != name).then(|| dropped.0.clone())
+}
+
+/// Lets a local branch row take a dropped branch. Returns the merge asked for.
+fn drop_target(ui: &egui::Ui, response: &egui::Response, name: &str) -> Option<Action> {
+    dropped_branch(ui.painter(), response, name).map(|source| Action::Merge {
+        source,
         target: Some(name.to_string()),
     })
 }
 
 /// While a branch is dragged, a label follows the pointer.
-fn drag_label(ctx: &egui::Context) {
+pub fn drag_label(ctx: &egui::Context) {
     let (Some(dragged), Some(pos)) = (
         egui::DragAndDrop::payload::<DragBranch>(ctx),
         ctx.pointer_interact_pos(),
@@ -946,7 +958,6 @@ pub fn show(
             }
             ui.add_space(12.0);
         });
-    drag_label(ui.ctx());
     c.action
 }
 

@@ -112,6 +112,35 @@ pub enum Click {
     Checkout(String),
     /// A remote branch label double-clicked ("origin/main").
     CheckoutRemote(String),
+    /// A branch label dragged onto a local branch's label: merge it there.
+    Merge {
+        source: String,
+        target: String,
+    },
+}
+
+/// The branch a label stands for when dragged: a local or remote branch.
+fn draggable(r: &RefLabel) -> Option<&str> {
+    matches!(r.kind, RefKind::Local | RefKind::Remote).then_some(r.name.as_str())
+}
+
+/// Makes a label a drag source (a branch) and a drop target (a local
+/// branch). Returns the merge asked for by a drop on it.
+fn drag_and_drop(
+    painter: &egui::Painter,
+    response: &egui::Response,
+    r: &RefLabel,
+) -> Option<Click> {
+    if let Some(name) = draggable(r) {
+        crate::ui::sidebar::drag_source(response, name);
+    }
+    if r.kind != RefKind::Local {
+        return None;
+    }
+    crate::ui::sidebar::dropped_branch(painter, response, &r.name).map(|source| Click::Merge {
+        source,
+        target: r.name.clone(),
+    })
 }
 
 /// What double-clicking a label on `c` does.
@@ -415,14 +444,6 @@ pub fn show(
                 (theme::text(), theme::muted())
             };
             let refs_cell = cell(0.0, cols.refs);
-            let pills = ref_pills(painter, refs_cell, c, dim);
-            // Double-clicking a label checks it out.
-            if let Some((_, p)) = double_click.filter(|(r, _)| *r == row)
-                && let Some(i) = pills.iter().position(|rect| rect.contains(p))
-                && let Some(action) = labels(c).get(i).and_then(|(r, _)| label_click(c, r))
-            {
-                clicked = Some(action);
-            }
             // More than one label: hovering spreads them all out.
             if labels(c).len() > 1
                 && overlay.is_none()
@@ -432,6 +453,31 @@ pub fn show(
                 && ui.clip_rect().contains(refs_cell.center())
             {
                 overlay = Some((row, refs_cell, Rect::NOTHING));
+            }
+            // While they're spread out, "+N" is hidden.
+            let spread = overlay.is_some_and(|(r, _, _)| r == row);
+            let pills = ref_pills(painter, refs_cell, c, dim, spread);
+            // A label can be dragged onto another branch to merge, and
+            // double-clicked to check out; a click selects the commit.
+            if let (Some(rect), Some((r, _))) = (pills.first(), labels(c).first()) {
+                let response =
+                    ui.interact(*rect, ui.id().with(("label", row)), Sense::click_and_drag());
+                if let Some(merge) = drag_and_drop(painter, &response, r) {
+                    clicked = Some(merge);
+                } else if response.double_clicked() {
+                    if let Some(action) = label_click(c, r) {
+                        clicked = Some(action);
+                    }
+                } else if response.clicked() {
+                    clicked = Some(Click::Row(row));
+                }
+            }
+            // Double-clicking a label checks it out.
+            if let Some((_, p)) = double_click.filter(|(r, _)| *r == row)
+                && let Some(i) = pills.iter().position(|rect| rect.contains(p))
+                && let Some(action) = labels(c).get(i).and_then(|(r, _)| label_click(c, r))
+            {
+                clicked = Some(action);
             }
             let mut x = cols.refs + cols.graph;
             widgets::text_in(
@@ -639,9 +685,16 @@ fn ref_text(r: &RefLabel, on_remote: bool) -> String {
     text
 }
 
-/// Draws the first label, and "+N" for the others. Returns where the
+/// Draws the first label, and "+N" for the others unless they're `spread`
+/// out. Returns where the
 /// first label is (as the rect of `labels(c)[0]`).
-fn ref_pills(painter: &egui::Painter, cell: Rect, c: &GraphCommit, dim: bool) -> Vec<Rect> {
+fn ref_pills(
+    painter: &egui::Painter,
+    cell: Rect,
+    c: &GraphCommit,
+    dim: bool,
+    spread: bool,
+) -> Vec<Rect> {
     let shown = labels(c);
     let Some(&(first, on_remote)) = shown.first() else {
         return Vec::new();
@@ -650,7 +703,7 @@ fn ref_pills(painter: &egui::Painter, cell: Rect, c: &GraphCommit, dim: bool) ->
     if dim {
         colour = colour.gamma_multiply(0.45);
     }
-    let more = shown.len() - 1;
+    let more = if spread { 0 } else { shown.len() - 1 };
     let reserve = if more > 0 { 34.0 } else { 0.0 };
     let left = Pos2::new(cell.left(), cell.center().y);
     let rect = widgets::pill(
@@ -721,8 +774,8 @@ fn all_labels(
                             .x
                             + 14.0;
                         let width = width.min(360.0);
-                        let (rect, response) =
-                            ui.allocate_exact_size(egui::vec2(width, 20.0), Sense::click());
+                        let (rect, response) = ui
+                            .allocate_exact_size(egui::vec2(width, 20.0), Sense::click_and_drag());
                         let what = label_click(c, r);
                         let name = r.name.clone();
                         response.widget_info(|| {
@@ -762,7 +815,9 @@ fn all_labels(
                         } else {
                             response.on_hover_text(tip)
                         };
-                        if response.double_clicked() {
+                        if let Some(merge) = drag_and_drop(ui.painter(), &response, r) {
+                            action = Some(merge);
+                        } else if response.double_clicked() {
                             action = what;
                         } else if response.clicked() {
                             action = Some(Click::Row(row));

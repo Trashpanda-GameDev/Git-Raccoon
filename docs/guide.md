@@ -47,7 +47,7 @@ Your open repositories come back the next time you start Git Raccoon.
 - **Diffs** show unified or side by side, with syntax highlighting, the changed words marked, and images previewed.
 - **Search:** press Ctrl+F for the search bar, to find commits by message, author or SHA, or by the files they touch. Enter and Shift+Enter go through the matches; Esc closes it.
 
-The toolbar has the repository menu, the current branch, Fetch, Pull and Push, Undo, the command palette and settings.
+The toolbar has the repository menu (your recent repositories, to switch to one), the current branch, Branch (a new branch from the checked-out commit), Fetch, Pull and Push, Undo, the command palette and settings.
 
 ## Committing
 
@@ -83,7 +83,7 @@ Progress shows in the toolbar, with a Cancel button.
 
 ## Merging, rebasing and conflicts
 
-- **Merge:** right-click a branch and choose *Merge into …*, or **drag** it onto another branch in the sidebar. You can fast-forward when possible or always create a merge commit.
+- **Merge:** right-click a branch and choose *Merge into …*, or **drag** it onto another branch, in the sidebar or by its label on the graph. You can fast-forward when possible or always create a merge commit.
 - **Rebase:** right-click a branch and choose *Rebase … onto …* (it warns if your commits are already pushed).
 
 If changes conflict, a banner says a merge (or rebase) is in progress, and the conflicted files open:
@@ -112,7 +112,7 @@ After most actions, the toolbar shows exactly what **Undo** would do ("Undo comm
 
 ## Tabs, submodules and worktrees
 
-- Each repository opens in its own **tab**. Ctrl+T opens a new tab, Ctrl+W closes one, Ctrl+Tab moves between them. Tabs in the background keep working.
+- Each repository opens in its own **tab**. Ctrl+T opens a new tab, Ctrl+W closes one, Ctrl+Tab moves between them; drag a tab to put it somewhere else. Tabs in the background keep working.
 - **Submodules** are listed in the sidebar with their state; right-click to open one in a tab, or update it.
 - **Worktrees** (extra working folders of the same repository) are listed too: **+** adds one on a new or existing branch; right-click to open or remove one.
 - Repositories using **Git LFS** show an *LFS* badge (amber if git-lfs isn't installed), and diffs of LFS files show their sizes.

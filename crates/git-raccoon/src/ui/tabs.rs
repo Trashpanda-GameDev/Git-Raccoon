@@ -10,24 +10,42 @@ pub enum Action {
     Switch(usize),
     Close(usize),
     New,
+    /// A tab dragged past its neighbour: move it from one place to another.
+    Move {
+        from: usize,
+        to: usize,
+    },
 }
 
 const HEIGHT: f32 = 32.0;
 const MAX_WIDTH: f32 = 220.0;
 const MIN_WIDTH: f32 = 90.0;
 
-pub fn show(ui: &mut egui::Ui, names: &[String], active: usize) -> Option<Action> {
+/// `tabs` are each tab's lasting id (so a tab dragged to a new place is
+/// still the one being dragged) and name.
+pub fn show(ui: &mut egui::Ui, tabs: &[(u64, String)], active: usize) -> Option<Action> {
     let mut action = None;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         // Tabs share the width (less room for +), each between MIN and MAX.
         #[expect(clippy::cast_precision_loss, reason = "a handful of tabs")]
         let width =
-            ((ui.available_width() - 40.0) / names.len().max(1) as f32).clamp(MIN_WIDTH, MAX_WIDTH);
-        for (i, name) in names.iter().enumerate() {
+            ((ui.available_width() - 40.0) / tabs.len().max(1) as f32).clamp(MIN_WIDTH, MAX_WIDTH);
+        for (i, (id, name)) in tabs.iter().enumerate() {
             let chosen = i == active;
-            let (rect, response) =
-                ui.allocate_exact_size(egui::vec2(width, HEIGHT), Sense::click());
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(width, HEIGHT), Sense::hover());
+            let response = ui.interact(rect, ui.id().with(("tab", id)), Sense::click_and_drag());
+            // Dragged past the middle of a neighbour: take its place.
+            if response.dragged()
+                && let Some(x) = response.interact_pointer_pos().map(|p| p.x)
+            {
+                if x < rect.left() - width / 2.0 && i > 0 {
+                    action = Some(Action::Move { from: i, to: i - 1 });
+                } else if x > rect.right() + width / 2.0 && i + 1 < tabs.len() {
+                    action = Some(Action::Move { from: i, to: i + 1 });
+                }
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            }
             response.widget_info(|| {
                 egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, chosen, name)
             });
@@ -51,7 +69,7 @@ pub fn show(ui: &mut egui::Ui, names: &[String], active: usize) -> Option<Action
             } else if response.hovered() {
                 painter.rect_filled(rect.shrink2(egui::vec2(2.0, 4.0)), 4, theme::bg_hover());
             }
-            if i + 1 < names.len() && !chosen && i + 1 != active {
+            if i + 1 < tabs.len() && !chosen && i + 1 != active {
                 painter.vline(
                     rect.right(),
                     rect.y_range().shrink(9.0),
@@ -115,7 +133,7 @@ pub fn show(ui: &mut egui::Ui, names: &[String], active: usize) -> Option<Action
             );
             if close.clicked() || response.middle_clicked() {
                 action = Some(Action::Close(i));
-            } else if response.clicked() {
+            } else if response.clicked() || response.drag_started() {
                 action = Some(Action::Switch(i));
             }
             response.on_hover_text(name);
