@@ -38,8 +38,12 @@ pub fn now() -> i64 {
 #[serde(default)]
 pub struct Settings {
     pub recent: Vec<RecentRepo>,
-    /// Reopened on start.
+    /// Reopened on start (from before tabs; `open_tabs` wins).
     pub last_repo: Option<String>,
+    /// The repositories open in tabs, reopened on start.
+    pub open_tabs: Vec<String>,
+    /// Which of them was showing.
+    pub active_tab: usize,
     pub split_diff: bool,
     pub hide_sidebar: bool,
     /// Where the last clone went; new clones start there.

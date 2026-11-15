@@ -42,7 +42,9 @@ cargo run --release -- path/to/repo
 | Command palette | Ctrl+K, Ctrl+Shift+P |
 | Settings (theme, interface size, diff layout) | Ctrl+, |
 | Open repository | Ctrl+O |
-| Close repository | Ctrl+W |
+| New tab / Close tab | Ctrl+T / Ctrl+W |
+| Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab |
+| Go to tab 1–9 | Ctrl+1 … Ctrl+9 |
 | Refresh | F5 |
 | Search commits | Ctrl+F |
 | Show or hide the sidebar | Ctrl+B |

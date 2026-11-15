@@ -67,7 +67,7 @@ The operations people open a GUI for.
 
 ## v0.5: Power (depth and comfort)
 
-- [ ] Multiple repos in tabs
+- [x] Multiple repos in tabs
 - [x] Command palette and keyboard shortcuts for every action (every action is in the palette; the frequent ones have shortcuts)
 - [x] File history and blame
 - [x] Light and dark themes; settings screen (plus Raccoon, Pastel, Abyss, Forest, Paper and High contrast looks)

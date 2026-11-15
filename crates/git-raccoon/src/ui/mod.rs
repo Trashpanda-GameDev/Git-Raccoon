@@ -13,6 +13,7 @@ pub mod rebase;
 pub mod search_bar;
 pub mod settings;
 pub mod sidebar;
+pub mod tabs;
 pub mod toolbar;
 pub mod welcome;
 pub mod widgets;

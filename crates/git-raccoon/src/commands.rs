@@ -12,6 +12,9 @@ pub enum Command {
     CloneRepo,
     NewRepo,
     CloseRepo,
+    NewTab,
+    NextTab,
+    PreviousTab,
     Refresh,
     Find,
     ToggleSidebar,
@@ -70,6 +73,15 @@ pub const SHORTCUTS: &[(Command, Option<KeyboardShortcut>)] = &[
     (
         Command::CloseRepo,
         Some(KeyboardShortcut::new(CTRL, Key::W)),
+    ),
+    (Command::NewTab, Some(KeyboardShortcut::new(CTRL, Key::T))),
+    (
+        Command::PreviousTab,
+        Some(KeyboardShortcut::new(CTRL_SHIFT, Key::Tab)),
+    ),
+    (
+        Command::NextTab,
+        Some(KeyboardShortcut::new(CTRL, Key::Tab)),
     ),
     (
         Command::Refresh,

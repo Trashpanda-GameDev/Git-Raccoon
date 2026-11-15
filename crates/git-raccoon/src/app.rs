@@ -15,7 +15,7 @@ use git_raccoon_core::sync::Progress;
 
 use crate::commands::{self, Command, Entry};
 use crate::repo_view::FileMode;
-use crate::ui::{clone, conflict, file_view, palette, rebase};
+use crate::ui::{clone, conflict, file_view, palette, rebase, tabs};
 use crate::ui::{
     details, dialog, diff, history, search_bar, sidebar, toolbar, welcome, widgets, working,
 };
@@ -24,11 +24,17 @@ use git_raccoon_core::working::Side;
 pub struct App {
     settings: Settings,
     logo: egui::TextureHandle,
+    /// The active tab's repository (the others are parked in `tabs`).
     repo: Option<RepoView>,
-    /// A repository being opened: its path and the load in progress.
-    opening: Option<(String, Task<Result<Loaded, String>>)>,
+    /// Repositories being opened: path, the load, and the tab they're for.
+    opening: Vec<Opening>,
     error: Option<String>,
+    /// The active tab's history scroll position.
     scroll: history::Scroll,
+    tabs: Vec<Tab>,
+    /// Which tab is showing.
+    active: usize,
+    next_tab: u64,
     /// Answers Git's questions (passwords, passphrases) while running.
     askpass: Option<git_raccoon_core::askpass::Server>,
     /// The question being shown.
@@ -42,6 +48,17 @@ pub struct App {
     settings_open: bool,
     /// The look and zoom last applied.
     applied: Option<(theme::Look, f32)>,
+}
+
+/// A repository being opened: its path, the load, and its tab's id.
+type Opening = (String, Task<Result<Loaded, String>>, u64);
+
+/// A tab. While it isn't the active one, its repository is parked here.
+struct Tab {
+    id: u64,
+    /// Its repository's path, once one is open (or opening).
+    path: Option<String>,
+    parked: Option<(Option<RepoView>, history::Scroll)>,
 }
 
 /// A clone running in the background.
@@ -75,9 +92,7 @@ impl App {
         if let Ok(exe) = std::env::current_exe() {
             app.answer_git_questions(&cc.egui_ctx, &exe);
         }
-        if let Some(last) = app.settings.last_repo.clone() {
-            app.open(&cc.egui_ctx, last);
-        }
+        app.restore_tabs(&cc.egui_ctx);
         app
     }
 
@@ -88,9 +103,16 @@ impl App {
             settings,
             logo: logo(ctx),
             repo: None,
-            opening: None,
+            opening: Vec::new(),
             error: None,
             scroll: history::Scroll::default(),
+            tabs: vec![Tab {
+                id: 0,
+                path: None,
+                parked: None,
+            }],
+            active: 0,
+            next_tab: 1,
             askpass: None,
             prompt: None,
             clone_form: None,
@@ -259,10 +281,10 @@ impl App {
         }
         // Only a running Git asks; once it has finished (or was cancelled),
         // its question is moot.
+        // (A background tab's fetch can ask too.)
         let git_running = self
-            .repo
-            .as_ref()
-            .is_some_and(|r| r.is_staging() || r.is_committing())
+            .all_repos()
+            .any(|r| r.is_staging() || r.is_committing())
             || self.cloning.is_some();
         if !git_running && let Some(prompt) = self.prompt.take() {
             prompt.request.answer(None);
@@ -278,11 +300,154 @@ impl App {
     }
 
     /// Starts opening a repository in the background.
+    /// Opens a repository: in this tab if it's empty, otherwise in a new
+    /// one; or switches to the tab that already has it.
     pub fn open(&mut self, ctx: &egui::Context, path: impl Into<String>) {
         let path = path.into();
+        let key = path.trim_end_matches(['/', '\\']).to_string();
+        if let Some(i) = self
+            .tabs
+            .iter()
+            .position(|t| t.path.as_deref() == Some(key.as_str()))
+        {
+            self.switch_tab(ctx, i);
+            return;
+        }
+        if self.tabs[self.active].path.is_some() {
+            self.new_tab(ctx);
+        }
+        let id = self.tabs[self.active].id;
+        self.tabs[self.active].path = Some(key);
         let p = path.clone();
         self.error = None;
-        self.opening = Some((path, Task::spawn(ctx, move || repo_view::load(&p))));
+        self.opening
+            .push((path, Task::spawn(ctx, move || repo_view::load(&p)), id));
+    }
+
+    /// Notes the open tabs in the settings, to restore them next time.
+    pub fn remember_tabs(&mut self) {
+        self.settings.open_tabs = self.tabs.iter().filter_map(|t| t.path.clone()).collect();
+        self.settings.active_tab = self.tabs[..self.active.min(self.tabs.len())]
+            .iter()
+            .filter(|t| t.path.is_some())
+            .count();
+    }
+
+    /// Opens the tabs open last time.
+    pub fn restore_tabs(&mut self, ctx: &egui::Context) {
+        let mut paths = std::mem::take(&mut self.settings.open_tabs);
+        if paths.is_empty() {
+            paths.extend(self.settings.last_repo.clone());
+        }
+        let active = self.settings.active_tab;
+        for p in paths {
+            self.open(ctx, p);
+        }
+        if active < self.tabs.len() {
+            self.switch_tab(ctx, active);
+        }
+    }
+
+    /// The tabs' names (for the tab bar) and which one is showing.
+    pub fn tab_names(&self) -> (Vec<String>, usize) {
+        let names = self
+            .tabs
+            .iter()
+            .map(|t| {
+                t.path.as_deref().map_or_else(
+                    || "New tab".to_string(),
+                    |p| settings::repo_name(p).to_string(),
+                )
+            })
+            .collect();
+        (names, self.active)
+    }
+
+    /// Opens an empty tab (showing the welcome screen) and switches to it.
+    pub fn new_tab(&mut self, ctx: &egui::Context) {
+        let id = self.next_tab;
+        self.next_tab += 1;
+        self.tabs.push(Tab {
+            id,
+            path: None,
+            parked: None,
+        });
+        let last = self.tabs.len() - 1;
+        self.switch_tab(ctx, last);
+    }
+
+    /// Shows tab `i`.
+    pub fn switch_tab(&mut self, ctx: &egui::Context, i: usize) {
+        if i >= self.tabs.len() || i == self.active {
+            return;
+        }
+        let current = (self.repo.take(), std::mem::take(&mut self.scroll));
+        self.tabs[self.active].parked = Some(current);
+        let (repo, scroll) = self.tabs[i].parked.take().unwrap_or_default();
+        self.repo = repo;
+        self.scroll = scroll;
+        self.active = i;
+        self.palette = None;
+        self.update_title(ctx);
+    }
+
+    /// Closes tab `i`. The last tab left is never closed, just emptied.
+    pub fn close_tab(&mut self, ctx: &egui::Context, i: usize) {
+        if i >= self.tabs.len() {
+            return;
+        }
+        if self.tabs.len() == 1 {
+            self.repo = None;
+            self.scroll = history::Scroll::default();
+            self.tabs[0].path = None;
+            self.opening.clear();
+            self.update_title(ctx);
+            return;
+        }
+        let id = self.tabs[i].id;
+        self.opening.retain(|o| o.2 != id);
+        if i == self.active {
+            self.repo = None;
+            self.tabs.remove(i);
+            self.active = usize::MAX; // nothing is showing for a moment
+            let next = i.min(self.tabs.len() - 1);
+            let (repo, scroll) = self.tabs[next].parked.take().unwrap_or_default();
+            self.repo = repo;
+            self.scroll = scroll;
+            self.active = next;
+        } else {
+            self.tabs.remove(i);
+            if i < self.active {
+                self.active -= 1;
+            }
+        }
+        self.update_title(ctx);
+    }
+
+    fn update_title(&self, ctx: &egui::Context) {
+        let title = match &self.repo {
+            Some(r) => format!(
+                "{} — Git Raccoon",
+                settings::repo_name(r.path().trim_end_matches(['/', '\\']))
+            ),
+            None => "Git Raccoon".to_string(),
+        };
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
+    }
+
+    /// Every open repository, the active one first.
+    fn all_repos(&self) -> impl Iterator<Item = &RepoView> {
+        self.repo.iter().chain(
+            self.tabs
+                .iter()
+                .filter_map(|t| t.parked.as_ref().and_then(|p| p.0.as_ref())),
+        )
+    }
+
+    /// Whether the active tab is still opening its repository.
+    fn active_opening(&self) -> bool {
+        let id = self.tabs[self.active].id;
+        self.opening.iter().any(|o| o.2 == id)
     }
 
     pub fn repo(&self) -> Option<&RepoView> {
@@ -303,7 +468,7 @@ impl App {
 
     /// Whether anything is still loading (for tests waiting on results).
     pub fn is_busy(&self) -> bool {
-        self.opening.is_some()
+        !self.opening.is_empty()
             || self.cloning.is_some()
             || self.repo.as_ref().is_some_and(|r| {
                 r.is_refreshing()
@@ -327,36 +492,68 @@ impl App {
         }
     }
 
+    /// Closes the active tab's repository (and the tab, unless it's the last).
     fn close(&mut self, ctx: &egui::Context) {
-        self.repo = None;
-        self.opening = None;
         self.error = None;
-        self.settings.last_repo = None;
-        ctx.send_viewport_cmd(egui::ViewportCommand::Title("Git Raccoon".into()));
+        self.close_tab(ctx, self.active);
     }
 
     fn poll_opening(&mut self, ctx: &egui::Context) {
-        let Some((path, task)) = &self.opening else {
-            return;
-        };
-        let Some(result) = task.poll() else { return };
-        let path = path.clone();
-        self.opening = None;
-        match result {
-            Ok(loaded) => {
-                let repo = RepoView::new(ctx, loaded);
-                let root = repo.path().trim_end_matches(['/', '\\']).to_string();
-                ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
-                    "{} — Git Raccoon",
-                    settings::repo_name(&root)
-                )));
-                self.settings.remember(&root);
-                self.settings.last_repo = Some(root);
-                self.scroll = history::Scroll::default();
-                self.repo = Some(repo);
+        let mut i = 0;
+        while i < self.opening.len() {
+            let Some(result) = self.opening[i].1.poll() else {
+                i += 1;
+                continue;
+            };
+            let (path, _, id) = self.opening.remove(i);
+            let Some(tab) = self.tabs.iter().position(|t| t.id == id) else {
+                continue; // its tab was closed
+            };
+            match result {
+                Ok(loaded) => {
+                    let repo = RepoView::new(ctx, loaded);
+                    let root = repo.path().trim_end_matches(['/', '\\']).to_string();
+                    self.settings.remember(&root);
+                    self.settings.last_repo = Some(root.clone());
+                    // Already open in another tab (opened by a subfolder, say): go there.
+                    let elsewhere =
+                        |t: &Tab| t.id != id && t.path.as_deref() == Some(root.as_str());
+                    if self.tabs.iter().any(elsewhere) {
+                        self.close_tab(ctx, tab);
+                        let found = self
+                            .tabs
+                            .iter()
+                            .position(|t| t.path.as_deref() == Some(root.as_str()));
+                        if let Some(other) = found {
+                            self.switch_tab(ctx, other);
+                        }
+                        continue;
+                    }
+                    self.tabs[tab].path = Some(root);
+                    if tab == self.active {
+                        self.scroll = history::Scroll::default();
+                        self.repo = Some(repo);
+                        self.update_title(ctx);
+                    } else {
+                        self.tabs[tab].parked = Some((Some(repo), history::Scroll::default()));
+                    }
+                }
+                Err(e) => {
+                    self.error = Some(format!("Could not open {path}: {e}"));
+                    // An empty tab goes back to the welcome screen.
+                    let has_repo = if tab == self.active {
+                        self.repo.is_some()
+                    } else {
+                        self.tabs[tab]
+                            .parked
+                            .as_ref()
+                            .is_some_and(|p| p.0.is_some())
+                    };
+                    if !has_repo {
+                        self.tabs[tab].path = None;
+                    }
+                }
             }
-            // Keep whatever repo was open; just report the failure.
-            Err(e) => self.error = Some(format!("Could not open {path}: {e}")),
         }
     }
 
@@ -372,6 +569,10 @@ impl App {
             return matches!(
                 command,
                 Command::Palette
+                    | Command::NewTab
+                    | Command::NextTab
+                    | Command::PreviousTab
+                    | Command::CloseRepo
                     | Command::Settings
                     | Command::OpenRepo
                     | Command::CloneRepo
@@ -385,6 +586,9 @@ impl App {
         match command {
             Command::Palette
             | Command::Settings
+            | Command::NewTab
+            | Command::NextTab
+            | Command::PreviousTab
             | Command::OpenRepo
             | Command::CloneRepo
             | Command::NewRepo
@@ -434,6 +638,11 @@ impl App {
             });
         };
         add(Command::Settings, "Settings…".into());
+        add(Command::NewTab, "New tab".into());
+        if self.tabs.len() > 1 {
+            add(Command::NextTab, "Next tab".into());
+            add(Command::PreviousTab, "Previous tab".into());
+        }
         add(Command::OpenRepo, "Open repository…".into());
         add(Command::CloneRepo, "Clone repository…".into());
         add(Command::NewRepo, "New repository…".into());
@@ -535,6 +744,15 @@ impl App {
         match command {
             Command::Palette => self.palette = Some(palette::State::default()),
             Command::Settings => self.settings_open = true,
+            Command::NewTab => self.new_tab(ctx),
+            Command::NextTab => {
+                let next = (self.active + 1) % self.tabs.len();
+                self.switch_tab(ctx, next);
+            }
+            Command::PreviousTab => {
+                let previous = (self.active + self.tabs.len() - 1) % self.tabs.len();
+                self.switch_tab(ctx, previous);
+            }
             Command::OpenRepo => self.browse(ctx),
             Command::CloneRepo => self.show_clone(),
             Command::NewRepo => self.pick_new_repository(ctx),
@@ -665,6 +883,24 @@ impl App {
                 return;
             }
         }
+        // Ctrl+1 to Ctrl+9: that tab.
+        let digits = [
+            egui::Key::Num1,
+            egui::Key::Num2,
+            egui::Key::Num3,
+            egui::Key::Num4,
+            egui::Key::Num5,
+            egui::Key::Num6,
+            egui::Key::Num7,
+            egui::Key::Num8,
+            egui::Key::Num9,
+        ];
+        for (i, key) in digits.into_iter().enumerate() {
+            if ctx.input_mut(|inp| inp.consume_key(egui::Modifiers::COMMAND, key)) {
+                self.switch_tab(ctx, i);
+                return;
+            }
+        }
         let Some(repo) = &mut self.repo else { return };
         if typing {
             return;
@@ -712,6 +948,24 @@ impl App {
         let ctx = ui.ctx().clone();
         let now = settings::now();
 
+        // Tabs.
+        let (names, active) = self.tab_names();
+        let tab_action = Panel::top("tabs")
+            .frame(Frame::new().fill(theme::bg()).inner_margin(Margin {
+                left: 6,
+                right: 6,
+                top: 4,
+                bottom: 0,
+            }))
+            .show(ui, |ui| tabs::show(ui, &names, active))
+            .inner;
+        match tab_action {
+            Some(tabs::Action::Switch(i)) => self.switch_tab(&ctx, i),
+            Some(tabs::Action::Close(i)) => self.close_tab(&ctx, i),
+            Some(tabs::Action::New) => self.new_tab(&ctx),
+            None => {}
+        }
+
         // Toolbar.
         let bar = Panel::top("toolbar")
             .frame(
@@ -741,7 +995,7 @@ impl App {
                     &self.logo,
                     open,
                     &self.settings.recent,
-                    self.opening.is_some(),
+                    self.active_opening(),
                     now,
                 )
             })
@@ -878,7 +1132,7 @@ impl App {
                         .inner_margin(Margin::same(16)),
                 )
                 .show(ui, |ui| {
-                    if self.opening.is_some() {
+                    if self.active_opening() {
                         return;
                     }
                     match welcome::show(ui, &self.logo, &self.settings.recent, now) {
@@ -1185,6 +1439,12 @@ impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.apply_look(ctx);
         self.poll_opening(ctx);
+        // Background tabs keep going: their operations finish, files are watched.
+        for tab in &mut self.tabs {
+            if let Some((Some(repo), _)) = &mut tab.parked {
+                repo.poll(ctx);
+            }
+        }
         self.poll_clone(ctx);
         if let Some(repo) = &mut self.repo {
             repo.poll(ctx);
@@ -1216,6 +1476,7 @@ impl eframe::App for App {
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        self.remember_tabs();
         eframe::set_value(storage, Settings::KEY, &self.settings);
     }
 }

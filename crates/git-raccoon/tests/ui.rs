@@ -1577,7 +1577,15 @@ fn clones_and_starts_repositories() {
     );
 
     // Cloning into a folder that's in use isn't offered.
-    h.get_by_label_contains("git-raccoon").click(); // the repository menu
+    // The repository menu (its label ends with the menu's caret, unlike the tab's).
+    h.get_all_by_label_contains("git-raccoon")
+        .find(|n| {
+            n.accesskit_node().label().is_some_and(|l| {
+                l.starts_with("git-raccoon") && l.chars().count() > name.chars().count() + 1
+            })
+        })
+        .unwrap()
+        .click();
     h.run_ok();
     h.get_by_label_contains("Clone repository").click();
     h.run_ok();
@@ -2220,4 +2228,98 @@ fn renders_every_theme() {
         );
         press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
     }
+}
+
+fn tab_names(h: &Harness<'_, App>) -> (Vec<String>, usize) {
+    h.state().tab_names()
+}
+
+#[test]
+fn keeps_repositories_in_tabs() {
+    let a = Sample::build();
+    let b = Sample::build();
+    let (name_a, name_b) = (
+        Path::new(a.path())
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string(),
+        Path::new(b.path())
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string(),
+    );
+    let mut h = harness(Settings::default());
+    open(&mut h, a.path());
+    assert_eq!(tab_names(&h), (vec![name_a.clone()], 0));
+
+    // A new tab shows the welcome screen; opening there fills it.
+    press(&mut h, egui::Modifiers::COMMAND, Key::T);
+    assert_eq!(tab_names(&h), (vec![name_a.clone(), "New tab".into()], 1));
+    assert!(h.state().repo().is_none());
+    h.get_by_label("Open a repository…");
+    open(&mut h, b.path());
+    assert_eq!(tab_names(&h), (vec![name_a.clone(), name_b.clone()], 1));
+    screenshot(&mut h, "40-tabs");
+
+    // Opening one that's already open just switches to it.
+    open(&mut h, a.path());
+    assert_eq!(tab_names(&h).0.len(), 2);
+    assert_eq!(tab_names(&h).1, 0);
+    assert!(h.state().repo().unwrap().path().contains(&name_a));
+
+    // Keys and clicks switch; each tab keeps its own selection.
+    h.get_by_label("Add icon").click();
+    settle(&mut h);
+    press(&mut h, egui::Modifiers::COMMAND, Key::Tab);
+    assert_eq!(tab_names(&h).1, 1);
+    assert!(h.state().repo().unwrap().selected.is_none());
+    press(&mut h, egui::Modifiers::COMMAND, Key::Num1);
+    assert_eq!(tab_names(&h).1, 0);
+    assert_eq!(selected_summary(&h).as_deref(), Some("Add icon"));
+    h.get_by_label(&name_b).click();
+    h.run_ok();
+    assert_eq!(tab_names(&h).1, 1);
+
+    // An operation started in one tab finishes while another is showing.
+    b.write("README.md", "# Changed in the background\n");
+    wait_for(&mut h, "the change", |app| status_counts(app).1 == 1);
+    press(&mut h, CTRL_SHIFT, Key::S);
+    press(&mut h, egui::Modifiers::COMMAND, Key::Num1);
+    let staged_in_b = || {
+        std::process::Command::new("git")
+            .args(["diff", "--cached", "--name-only"])
+            .current_dir(b.path())
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default()
+    };
+    let start = Instant::now();
+    while staged_in_b() != "README.md" {
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "staged in the background"
+        );
+        h.step();
+    }
+
+    // The tabs come back next time.
+    h.state_mut().remember_tabs();
+    let saved = h.state().settings().clone();
+    assert_eq!(saved.open_tabs.len(), 2);
+    let mut again = harness(saved);
+    let ctx = again.ctx.clone();
+    again.state_mut().restore_tabs(&ctx);
+    settle(&mut again);
+    assert_eq!(tab_names(&again), (vec![name_a.clone(), name_b.clone()], 0));
+
+    // Closing a tab; the last one is just emptied.
+    h.get_by_label(&format!("Close tab {name_a}")).click();
+    h.run_ok();
+    assert_eq!(tab_names(&h), (vec![name_b.clone()], 0));
+    assert!(h.state().repo().unwrap().path().contains(&name_b));
+    press(&mut h, egui::Modifiers::COMMAND, Key::W);
+    assert_eq!(tab_names(&h), (vec!["New tab".to_string()], 0));
+    assert!(h.state().repo().is_none());
 }
