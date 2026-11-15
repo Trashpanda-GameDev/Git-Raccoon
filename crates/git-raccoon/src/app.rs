@@ -40,8 +40,8 @@ pub struct App {
     palette: Option<palette::State>,
     /// The settings window is open.
     settings_open: bool,
-    /// The look last applied: light theme, and zoom.
-    applied: Option<(bool, f32)>,
+    /// The look and zoom last applied.
+    applied: Option<(theme::Look, f32)>,
 }
 
 /// A clone running in the background.
@@ -230,19 +230,15 @@ impl App {
     /// Applies the chosen theme (following the system's, if asked) and size,
     /// when they change.
     fn apply_look(&mut self, ctx: &egui::Context) {
-        let light = match self.settings.theme {
-            ThemeChoice::Light => true,
-            ThemeChoice::Dark => false,
-            ThemeChoice::System => ctx.system_theme() == Some(egui::Theme::Light),
-        };
+        let look = look_for(self.settings.theme, ctx.system_theme());
         let zoom = self.settings.zoom.unwrap_or(1.0);
-        if self.applied == Some((light, zoom)) {
+        if self.applied == Some((look, zoom)) {
             return;
         }
-        let theme_changed = self.applied.is_none_or(|(l, _)| l != light);
-        self.applied = Some((light, zoom));
+        let theme_changed = self.applied.is_none_or(|(l, _)| l != look);
+        self.applied = Some((look, zoom));
         if theme_changed {
-            theme::set_light(ctx, light);
+            theme::set(ctx, look);
             // Diffs carry their colours: draw them again.
             if let Some(repo) = &mut self.repo {
                 repo.diff.clear();
@@ -1221,5 +1217,21 @@ impl eframe::App for App {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, Settings::KEY, &self.settings);
+    }
+}
+
+/// The look a theme choice means now (System follows the system's light or dark).
+pub(crate) fn look_for(choice: ThemeChoice, system: Option<egui::Theme>) -> theme::Look {
+    use theme::Look;
+    match choice {
+        ThemeChoice::System if system == Some(egui::Theme::Light) => Look::Light,
+        ThemeChoice::System | ThemeChoice::Dark => Look::Dark,
+        ThemeChoice::Light => Look::Light,
+        ThemeChoice::Raccoon => Look::Raccoon,
+        ThemeChoice::Pastel => Look::Pastel,
+        ThemeChoice::Abyss => Look::Abyss,
+        ThemeChoice::Forest => Look::Forest,
+        ThemeChoice::Paper => Look::Paper,
+        ThemeChoice::HighContrast => Look::HighContrast,
     }
 }

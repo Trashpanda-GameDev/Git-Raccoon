@@ -4,6 +4,7 @@ use eframe::egui::{self, RichText};
 
 use crate::settings::{Settings, ThemeChoice, ZOOMS};
 use crate::theme;
+use crate::theme::Look;
 use crate::ui::widgets;
 
 pub enum Action {
@@ -26,17 +27,40 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings) -> Option<Action> {
             });
             ui.add_space(6.0);
         };
-        row(ui, "Theme", &mut |ui| {
-            settings.theme = widgets::segmented(
-                ui,
-                settings.theme,
-                &[
-                    (ThemeChoice::System, "System"),
-                    (ThemeChoice::Dark, "Dark"),
-                    (ThemeChoice::Light, "Light"),
-                ],
-            );
-        });
+        ui.label(RichText::new("Theme").color(theme::muted()));
+        ui.add_space(4.0);
+        let system = ctx.system_theme();
+        let choices = [
+            ThemeChoice::System,
+            ThemeChoice::Dark,
+            ThemeChoice::Light,
+            ThemeChoice::Raccoon,
+            ThemeChoice::Pastel,
+            ThemeChoice::Abyss,
+            ThemeChoice::Forest,
+            ThemeChoice::Paper,
+            ThemeChoice::HighContrast,
+        ];
+        egui::Grid::new("themes")
+            .spacing(egui::vec2(8.0, 8.0))
+            .show(ui, |ui| {
+                for (i, choice) in choices.into_iter().enumerate() {
+                    if swatch(
+                        ui,
+                        choice,
+                        crate::app::look_for(choice, system),
+                        settings.theme == choice,
+                    )
+                    .clicked()
+                    {
+                        settings.theme = choice;
+                    }
+                    if i % 3 == 2 {
+                        ui.end_row();
+                    }
+                }
+            });
+        ui.add_space(10.0);
         row(ui, "Interface size", &mut |ui| {
             let current = settings.zoom.unwrap_or(1.0);
             let options: Vec<(u32, String)> = ZOOMS
@@ -101,4 +125,101 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings) -> Option<Action> {
         action = Some(Action::Close);
     }
     action
+}
+
+/// A small preview of a look, to pick it.
+fn swatch(ui: &mut egui::Ui, choice: ThemeChoice, look: Look, chosen: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(136.0, 64.0), egui::Sense::click());
+    let name = if choice == ThemeChoice::System {
+        "System".to_string()
+    } else {
+        look.name().to_string()
+    };
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, chosen, &name)
+    });
+    let (bg, raised, text, accent, lanes) = look.preview();
+    let painter = ui.painter();
+    painter.rect_filled(rect, 6, bg);
+    if choice == ThemeChoice::System {
+        // Half light, half dark.
+        let (light_bg, ..) = Look::Light.preview();
+        let (dark_bg, ..) = Look::Dark.preview();
+        let (left, right) = rect.split_left_right_at_fraction(0.5);
+        painter.rect_filled(
+            left,
+            egui::CornerRadius {
+                nw: 6,
+                sw: 6,
+                ne: 0,
+                se: 0,
+            },
+            light_bg,
+        );
+        painter.rect_filled(
+            right,
+            egui::CornerRadius {
+                nw: 0,
+                sw: 0,
+                ne: 6,
+                se: 6,
+            },
+            dark_bg,
+        );
+    } else {
+        let strip = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 18.0));
+        painter.rect_filled(
+            strip,
+            egui::CornerRadius {
+                nw: 6,
+                ne: 6,
+                sw: 0,
+                se: 0,
+            },
+            raised,
+        );
+        for (i, c) in lanes.iter().enumerate() {
+            #[expect(clippy::cast_precision_loss, reason = "four dots")]
+            let x = rect.left() + 14.0 + i as f32 * 12.0;
+            painter.circle_filled(egui::pos2(x, strip.center().y), 4.0, *c);
+        }
+        painter.rect_filled(
+            egui::Rect::from_min_size(
+                egui::pos2(rect.right() - 34.0, strip.center().y - 4.0),
+                egui::vec2(22.0, 8.0),
+            ),
+            3,
+            accent,
+        );
+    }
+    let label_colour = if choice == ThemeChoice::System {
+        theme::text()
+    } else {
+        text
+    };
+    let label_bg = if choice == ThemeChoice::System {
+        theme::bg_raised()
+    } else {
+        bg
+    };
+    let label = egui::Rect::from_min_max(egui::pos2(rect.left(), rect.bottom() - 26.0), rect.max);
+    if choice == ThemeChoice::System {
+        painter.rect_filled(label.shrink2(egui::vec2(30.0, 3.0)), 4, label_bg);
+    }
+    painter.text(
+        label.center(),
+        egui::Align2::CENTER_CENTER,
+        &name,
+        theme::body(13.0),
+        label_colour,
+    );
+    let stroke = if chosen {
+        egui::Stroke::new(2.0, theme::accent())
+    } else if response.hovered() {
+        egui::Stroke::new(1.0, theme::muted())
+    } else {
+        egui::Stroke::new(1.0, theme::border())
+    };
+    painter.rect_stroke(rect, 6, stroke, egui::StrokeKind::Inside);
+    response
 }

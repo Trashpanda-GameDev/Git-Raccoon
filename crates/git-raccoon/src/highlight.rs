@@ -11,7 +11,6 @@ use git_raccoon_core::words;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{FontStyle, Theme};
 use syntect::parsing::{SyntaxReference, SyntaxSet};
-use two_face::theme::EmbeddedThemeName;
 
 use crate::theme;
 
@@ -23,16 +22,10 @@ fn syntaxes() -> &'static SyntaxSet {
     SET.get_or_init(two_face::syntax::extra_newlines)
 }
 
-/// The syntax colours for the current light or dark theme.
+/// The syntax colours for the current look.
 fn syntax_theme() -> &'static Theme {
-    static DARK: OnceLock<Theme> = OnceLock::new();
-    static LIGHT: OnceLock<Theme> = OnceLock::new();
-    let (slot, name) = if theme::is_light() {
-        (&LIGHT, EmbeddedThemeName::OneHalfLight)
-    } else {
-        (&DARK, EmbeddedThemeName::TwoDark)
-    };
-    slot.get_or_init(|| two_face::theme::extra().get(name).clone())
+    static SET: OnceLock<two_face::theme::EmbeddedLazyThemeSet> = OnceLock::new();
+    SET.get_or_init(two_face::theme::extra).get(theme::syntax())
 }
 
 /// The grammar for a file path, by extension or file name; `None` for plain text.

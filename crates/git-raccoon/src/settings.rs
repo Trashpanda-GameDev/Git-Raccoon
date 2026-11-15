@@ -49,13 +49,19 @@ pub struct Settings {
     pub zoom: Option<f32>,
 }
 
-/// Light, dark, or whatever the system uses.
+/// A look, or light or dark following the system.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ThemeChoice {
     #[default]
     System,
     Dark,
     Light,
+    Raccoon,
+    Pastel,
+    Abyss,
+    Forest,
+    Paper,
+    HighContrast,
 }
 
 /// The interface sizes offered.

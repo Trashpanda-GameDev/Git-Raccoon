@@ -2183,3 +2183,41 @@ fn switches_theme_and_size_in_settings() {
     assert_eq!(h.state().settings().zoom, None);
     assert!(h.ctx.theme() == egui::Theme::Dark);
 }
+
+#[test]
+fn renders_every_theme() {
+    use git_raccoon::settings::ThemeChoice;
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    h.get_by_label("Reject bare repositories when loading")
+        .click();
+    settle(&mut h);
+    h.get_by_label("src/loader.rs").click();
+    settle(&mut h);
+    press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    for (choice, name) in [
+        (ThemeChoice::Raccoon, "Raccoon"),
+        (ThemeChoice::Pastel, "Pastel"),
+        (ThemeChoice::Abyss, "Abyss"),
+        (ThemeChoice::Forest, "Forest"),
+        (ThemeChoice::Paper, "Paper"),
+        (ThemeChoice::HighContrast, "High contrast"),
+        (ThemeChoice::Light, "Light"),
+        (ThemeChoice::Dark, "Dark"),
+    ] {
+        h.get_by_label(name).click();
+        h.run_ok();
+        assert_eq!(h.state().settings().theme, choice);
+        if name == "Raccoon" {
+            screenshot(&mut h, "38-theme-picker");
+        }
+        h.get_by_label("Done").click();
+        settle(&mut h);
+        screenshot(
+            &mut h,
+            &format!("39-theme-{}", name.replace(' ', "-").to_lowercase()),
+        );
+        press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    }
+}
