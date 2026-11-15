@@ -4,7 +4,7 @@
 
 A fast, friendly desktop Git client, written in Rust with [egui](https://github.com/emilk/egui) (eframe on wgpu) and [git2](https://docs.rs/git2).
 
-See [ROADMAP.md](ROADMAP.md) for what is planned.
+See the [user guide](docs/guide.md) for how to use it, and [ROADMAP.md](ROADMAP.md) for what is planned.
 
 ## Layout
 
