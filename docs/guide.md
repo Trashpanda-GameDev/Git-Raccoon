@@ -22,7 +22,7 @@ Git Raccoon is a desktop app for working with Git repositories: you see your pro
 
 Download the installer for your system from the [releases page](https://github.com/Trashpanda-GameDev/Git-Raccoon/releases):
 
-- **Windows:** `GitRaccoon-win-Installer.exe` asks where to install Git Raccoon (any folder you can write to: it keeps itself up to date there). `GitRaccoon-win-Setup.exe` installs in one click, to your user's AppData folder. Both install for you only (no administrator needed), add Desktop and Start-menu shortcuts, and uninstall from *Settings > Apps*. Windows may warn that the installer is from an unknown publisher: choose *More info*, then *Run anyway*.
+- **Windows:** `GitRaccoon-win-Setup.exe`. It asks where to install Git Raccoon (any folder you can write to, since it keeps itself up to date there), installs for you only (no administrator needed), adds Desktop and Start-menu shortcuts, and uninstalls from *Settings > Apps*. Windows may warn that the installer is from an unknown publisher: choose *More info*, then *Run anyway*.
 - **macOS (Apple Silicon):** the `.pkg` installer. The first time, right-click Git Raccoon in Applications and choose *Open* (or allow it in *System Settings > Privacy & Security*).
 - **Linux:** the `.AppImage`. Make it executable (`chmod +x`) and run it.
 

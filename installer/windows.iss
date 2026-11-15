@@ -3,7 +3,8 @@
 ; It's a front end for Velopack's own setup (GitRaccoon-win-Setup.exe, made
 ; by `vpk pack`), which it runs with the folder chosen here. So the app is
 ; installed exactly as Velopack installs it, in that folder: it still
-; updates itself, and is uninstalled from Settings > Apps as usual.
+; updates itself, and is uninstalled from Settings > Apps as usual. It's
+; published in place of Velopack's setup, under the same name.
 ;
 ; Built by the Release workflow with Inno Setup (https://jrsoftware.org):
 ;     set VERSION=0.5.1
@@ -35,7 +36,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
 SetupIconFile=..\crates\git-raccoon\assets\icon.ico
 OutputDir=..\installer-out
-OutputBaseFilename=GitRaccoon-win-Installer
+OutputBaseFilename=GitRaccoon-win-Setup
 Compression=none
 
 [Files]
@@ -81,7 +82,7 @@ begin
       '--silent --installto "' + ExpandConstant('{app}') + '"',
       '', SW_SHOW, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
       MsgBox('Git Raccoon couldn''t be installed (error ' + IntToStr(ResultCode) + ').'
-        + #13#10#13#10 + 'Try GitRaccoon-win-Setup.exe from the releases page instead, which installs to the usual folder.',
+        + #13#10#13#10 + 'Try again, installing to the folder suggested at first.',
         mbError, MB_OK);
   end;
 end;

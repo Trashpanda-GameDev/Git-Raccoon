@@ -84,8 +84,9 @@ jobs:
           --splashImage crates/git-raccoon/assets/splash.png
           --channel win
           --outputDir releases
-      # An installer that asks where to install (Velopack's always installs
-      # to the user's AppData folder).
+      # An installer that asks where to install, and runs Velopack's (which
+      # always installs to the user's AppData folder). It's published as
+      # GitRaccoon-win-Setup.exe in place of Velopack's.
       - name: Installer that asks where to install
         shell: pwsh
         env:
@@ -99,7 +100,7 @@ jobs:
         shell: pwsh
         run: |
           $dir = "C:\Raccoon test\Git Raccoon"
-          $p = Start-Process installer-out\GitRaccoon-win-Installer.exe -PassThru `
+          $p = Start-Process installer-out\GitRaccoon-win-Setup.exe -PassThru `
             -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', "/DIR=`"$dir`""
           $p.WaitForExit()
           Get-ChildItem -Recurse "C:\Raccoon test" | Select-Object -First 30 FullName
@@ -236,8 +237,10 @@ jobs:
               --releaseName "Git Raccoon $VERSION" --tag "v$VERSION" \
               --targetCommitish "$GITHUB_SHA" --merge $publish
           done
-      - name: Upload the installer that asks where to install
+      # The Windows installer that asks where to install replaces Velopack's
+      # (same name), so there's one installer per system.
+      - name: The Windows installer that asks where to install
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.version.outputs.version }}
-        run: gh release upload "v$VERSION" installer-win/GitRaccoon-win-Installer.exe --clobber --repo "$GITHUB_REPOSITORY"
+        run: gh release upload "v$VERSION" installer-win/GitRaccoon-win-Setup.exe --clobber --repo "$GITHUB_REPOSITORY"
