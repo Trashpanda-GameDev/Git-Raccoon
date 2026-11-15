@@ -1128,30 +1128,37 @@ fn double_click_at(h: &mut Harness<'_, App>, pos: egui::Pos2) {
 #[test]
 fn spreads_out_a_commits_labels_and_checks_them_out() {
     let sample = Sample::build();
-    // A second branch where main is: three labels on one commit.
+    // Where main is: origin/main (shown with main, as one label), and a
+    // second branch and a tag: three labels on one commit.
     git(&sample, &["branch", "release"]);
+    git(&sample, &["tag", "v0.2.0"]);
     let mut h = harness(Settings::default());
     open(&mut h, sample.path());
+    let in_graph = |h: &Harness<'_, App>, name: &str| {
+        // The sidebar lists them too: the graph's are further right.
+        h.query_all_by_label(name)
+            .map(|n| n.rect().center())
+            .filter(|p| p.x > 230.0)
+            .max_by(|a, b| a.y.total_cmp(&b.y))
+    };
 
     // Hovering over the labels shows each of them.
     let row = h.get_by_label("Redraw icon and rename loader").rect();
     let labels = egui::pos2(row.left() + 30.0, row.center().y);
-    // (The sidebar lists "release" too; "origin/main" is only on the graph.)
-    assert!(h.query_by_label("origin/main").is_none(), "only on hover");
+    assert!(in_graph(&h, "release").is_none(), "only on hover");
     h.hover_at(labels);
     h.run_ok();
-    h.get_by_label("origin/main");
+    assert!(in_graph(&h, "v0.2.0").is_some());
+    assert!(
+        h.query_by_label("origin/main").is_none(),
+        "origin/main is part of main's label"
+    );
     screenshot(&mut h, "44-all-labels");
     // Still there when the pointer moves down onto them.
-    // The graph's "release": the one further right than the sidebar's.
-    let release = h
-        .get_all_by_label("release")
-        .map(|n| n.rect().center())
-        .max_by(|a, b| a.x.total_cmp(&b.x))
-        .unwrap();
+    let release = in_graph(&h, "release").unwrap();
     h.hover_at(release);
     h.run_ok();
-    h.get_by_label("origin/main");
+    assert!(in_graph(&h, "v0.2.0").is_some());
 
     // Double-clicking one checks it out.
     double_click_at(&mut h, release);
@@ -1162,9 +1169,9 @@ fn spreads_out_a_commits_labels_and_checks_them_out() {
     // Moving away puts them away.
     h.hover_at(egui::pos2(row.right() - 10.0, row.bottom() + 200.0));
     h.run_ok();
-    assert!(h.query_by_label("origin/main").is_none());
+    assert!(in_graph(&h, "v0.2.0").is_none());
 
-    // A commit's only label can be double-clicked where it is.
+    // A label shown in its row can be double-clicked where it is.
     let row = h.get_by_label("Fix toolbar glitch").rect();
     double_click_at(&mut h, egui::pos2(row.left() + 30.0, row.center().y));
     wait_for(&mut h, "the checkout", |app| {

@@ -419,12 +419,12 @@ pub fn show(
             // Double-clicking a label checks it out.
             if let Some((_, p)) = double_click.filter(|(r, _)| *r == row)
                 && let Some(i) = pills.iter().position(|rect| rect.contains(p))
-                && let Some(action) = c.refs.get(i).and_then(|r| label_click(c, r))
+                && let Some(action) = labels(c).get(i).and_then(|(r, _)| label_click(c, r))
             {
                 clicked = Some(action);
             }
             // More than one label: hovering spreads them all out.
-            if c.refs.len() > 1
+            if labels(c).len() > 1
                 && overlay.is_none()
                 && pointer.is_some_and(|p| {
                     Rect::from_x_y_ranges(refs_cell.x_range(), top..=top + ROW_HEIGHT).contains(p)
@@ -595,8 +595,31 @@ fn working_row(ui: &mut egui::Ui, repo: &mut RepoView, cols: &Columns, width: f3
     response.clicked()
 }
 
-/// A label's text: its name, after an icon for its kind.
-fn ref_text(r: &RefLabel) -> String {
+/// The labels to show for a commit. A local branch and its remote copy
+/// ("main" and "origin/main") on the same commit are one label, marked as
+/// being on the remote too (`true`).
+fn labels(c: &GraphCommit) -> Vec<(&RefLabel, bool)> {
+    let remote_copy = |local: &RefLabel, r: &RefLabel| {
+        r.kind == RefKind::Remote
+            && r.name
+                .split_once('/')
+                .is_some_and(|(_, rest)| rest == local.name)
+    };
+    let locals: Vec<&RefLabel> = c.refs.iter().filter(|r| r.kind == RefKind::Local).collect();
+    c.refs
+        .iter()
+        .filter(|r| !locals.iter().any(|l| remote_copy(l, r)))
+        .map(|r| {
+            let on_remote =
+                r.kind == RefKind::Local && c.refs.iter().any(|other| remote_copy(r, other));
+            (r, on_remote)
+        })
+        .collect()
+}
+
+/// A label's text: its name after an icon for its kind, and a cloud after
+/// it when the remote has it there too.
+fn ref_text(r: &RefLabel, on_remote: bool) -> String {
     let glyph = match (r.kind, r.is_head) {
         (RefKind::Local, true) => icon::CHECK,
         (RefKind::Local, false) => "",
@@ -604,31 +627,37 @@ fn ref_text(r: &RefLabel) -> String {
         (RefKind::Tag, _) => icon::TAG,
         (RefKind::Head, _) => icon::DIAMOND,
     };
-    if glyph.is_empty() {
+    let mut text = if glyph.is_empty() {
         r.name.clone()
     } else {
         format!("{glyph} {}", r.name)
+    };
+    if on_remote {
+        text.push_str("  ");
+        text.push_str(icon::CLOUD);
     }
+    text
 }
 
 /// Draws the first label, and "+N" for the others. Returns where the
-/// first label is (as the rect of `c.refs[0]`).
+/// first label is (as the rect of `labels(c)[0]`).
 fn ref_pills(painter: &egui::Painter, cell: Rect, c: &GraphCommit, dim: bool) -> Vec<Rect> {
-    let Some(first) = c.refs.first() else {
+    let shown = labels(c);
+    let Some(&(first, on_remote)) = shown.first() else {
         return Vec::new();
     };
     let mut colour = theme::lane_color(c.column);
     if dim {
         colour = colour.gamma_multiply(0.45);
     }
-    let more = c.refs.len() - 1;
+    let more = shown.len() - 1;
     let reserve = if more > 0 { 34.0 } else { 0.0 };
     let left = Pos2::new(cell.left(), cell.center().y);
     let rect = widgets::pill(
         painter,
         left,
         cell.width() - reserve,
-        &ref_text(first),
+        &ref_text(first, on_remote),
         colour,
         first.is_head,
     );
@@ -678,8 +707,8 @@ fn all_labels(
                 })
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = GAP;
-                    for r in &c.refs {
-                        let text = ref_text(r);
+                    for (r, on_remote) in labels(c) {
+                        let text = ref_text(r, on_remote);
                         // Measure, then claim the space and draw into it.
                         let width = ui
                             .painter()
@@ -711,10 +740,27 @@ fn all_labels(
                             colour,
                             r.is_head,
                         );
-                        let response = if what.is_some() {
-                            response.on_hover_text("Double-click to check out")
-                        } else {
+                        let mut tips = Vec::new();
+                        if on_remote {
+                            let copies: Vec<&str> = c
+                                .refs
+                                .iter()
+                                .filter(|o| {
+                                    o.kind == RefKind::Remote
+                                        && o.name.split_once('/').is_some_and(|(_, b)| b == r.name)
+                                })
+                                .map(|o| o.name.as_str())
+                                .collect();
+                            tips.push(format!("{} is here too", copies.join(" and ")));
+                        }
+                        if what.is_some() {
+                            tips.push("Double-click to check out".to_string());
+                        }
+                        let tip = tips.join(". ");
+                        let response = if tip.is_empty() {
                             response
+                        } else {
+                            response.on_hover_text(tip)
                         };
                         if response.double_clicked() {
                             action = what;
