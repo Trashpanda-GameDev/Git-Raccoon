@@ -253,14 +253,18 @@ fn harness(settings: Settings) -> Harness<'static, App> {
 
 /// Steps frames until background work is done.
 fn settle(h: &mut Harness<'_, App>) {
+    // Idle for a few frames in a row: some work only starts on the next frame.
     let start = Instant::now();
+    let mut idle = 0;
     while start.elapsed() < Duration::from_secs(20) {
         h.step();
-        if !h.state().is_busy() {
-            for _ in 0..3 {
-                h.step();
+        if h.state().is_busy() {
+            idle = 0;
+        } else {
+            idle += 1;
+            if idle >= 3 {
+                return;
             }
-            return;
         }
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -506,7 +510,8 @@ fn wait_for(h: &mut Harness<'_, App>, what: &str, done: impl Fn(&App) -> bool) {
     while !done(h.state()) {
         assert!(
             start.elapsed() < Duration::from_secs(30),
-            "timed out waiting for {what}"
+            "timed out waiting for {what}; error shown: {:?}",
+            h.state().repo().and_then(|r| r.refresh_error.clone())
         );
         h.step();
         std::thread::sleep(Duration::from_millis(20));
@@ -701,6 +706,8 @@ fn stages_files_hunks_and_lines() {
             .as_ref()
             .is_some_and(|s| s.staged.len() == 1)
     });
+    // Let the open diff reload before picking lines in it.
+    settle(&mut h);
     assert_eq!(
         staged(&sample, "notes.txt").unwrap(),
         numbered(|i| (i == 18).then_some("line 18 edited"))
@@ -716,6 +723,9 @@ fn stages_files_hunks_and_lines() {
     h.run_ok();
     assert_eq!(h.state().repo().unwrap().picked.len(), 1);
     screenshot(&mut h, "10-pick-line");
+    // Move off the gutter first: on a slow run its tooltip can cover the button.
+    h.get_by_label("Stage 1 line").hover();
+    h.run_ok();
     h.get_by_label("Stage 1 line").click();
     wait_for(&mut h, "the line staged", |app| {
         app.repo().unwrap().picked.is_empty() && !app.is_busy()
@@ -1202,4 +1212,123 @@ fn creates_checks_out_renames_and_deletes_branches_and_tags() {
     wait_for(&mut h, "detached HEAD", |app| head_branch(app).is_none());
     assert!(read(&sample, "src/loader.rs").is_some());
     screenshot(&mut h, "19-detached");
+}
+
+fn undo_label(app: &App) -> Option<String> {
+    app.repo().unwrap().undo.as_ref().map(|u| u.label.clone())
+}
+
+fn git(sample: &Sample, args: &[&str]) {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(sample.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn undoes_the_last_action() {
+    use egui::accesskit::Role;
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    let head = |app: &App| {
+        app.repo().unwrap().history.ids()[app.repo().unwrap().history.head_row().unwrap()]
+    };
+    assert_eq!(undo_label(h.state()), None);
+    let first_head = head(h.state());
+
+    // Undo a commit: the change is staged again and the message is back.
+    sample.write("notes.txt", "remember this\n");
+    git(&sample, &["add", "notes.txt"]);
+    wait_for(&mut h, "the staged file", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.staged.len() == 1)
+    });
+    h.get_by_label("Working changes").click();
+    settle(&mut h);
+    type_into(&mut h, "Commit summary", "Write notes");
+    h.get_by_role_and_label(Role::Button, "Commit 1 file")
+        .click();
+    wait_for(&mut h, "the undo", |app| undo_label(app).is_some());
+    assert_eq!(
+        undo_label(h.state()).unwrap(),
+        "Undo commit \u{201c}Write notes\u{201d}"
+    );
+    settle(&mut h);
+    assert_ne!(head(h.state()), first_head);
+    screenshot(&mut h, "20-undo-commit");
+    h.get_by_label("Undo").click();
+    wait_for(&mut h, "the commit undone", move |app| {
+        app.repo().unwrap().undo.is_none() && !app.is_busy()
+    });
+    settle(&mut h);
+    assert_eq!(head(h.state()), first_head);
+    let repo = h.state().repo().unwrap();
+    assert_eq!(repo.draft.summary, "Write notes");
+    assert_eq!(repo.status.as_ref().unwrap().staged[0].path, "notes.txt");
+
+    // Undo deleting a branch.
+    menu_item(&mut h, "graph", "Delete");
+    h.get_by_label("Delete branch").click();
+    wait_for(&mut h, "the delete", |app| {
+        !has_branch(app, "feature/graph")
+    });
+    wait_for(&mut h, "the undo", |app| undo_label(app).is_some());
+    h.get_by_label("Undo").click();
+    wait_for(&mut h, "the branch back", |app| {
+        has_branch(app, "feature/graph")
+    });
+
+    // Undo a checkout. (The staged notes travel along.)
+    menu_item(&mut h, "toolbar-glitch", "Check out");
+    wait_for(&mut h, "the checkout", |app| {
+        head_branch(app).as_deref() == Some("fix/ui/toolbar-glitch")
+    });
+    wait_for(&mut h, "the undo", |app| undo_label(app).is_some());
+    h.get_by_label("Undo").click();
+    wait_for(&mut h, "main again", |app| {
+        head_branch(app).as_deref() == Some("main")
+    });
+
+    // Ctrl+Z undoes creating a tag.
+    menu_item(&mut h, "Add icon", "Create tag here");
+    type_into(&mut h, "Tag name", "oops");
+    h.get_by_role_and_label(Role::Button, "Create tag").click();
+    wait_for(&mut h, "the tag", |app| {
+        app.repo()
+            .unwrap()
+            .refs
+            .tags
+            .iter()
+            .any(|t| t.name == "oops")
+    });
+    wait_for(&mut h, "the undo", |app| undo_label(app).is_some());
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+    wait_for(&mut h, "the tag gone", |app| {
+        app.repo()
+            .unwrap()
+            .refs
+            .tags
+            .iter()
+            .all(|t| t.name != "oops")
+    });
+
+    // Moving HEAD outside the app drops the undo.
+    menu_item(&mut h, "graph", "Rename");
+    h.get_by_label("New branch name").click();
+    h.get_by_label("New branch name").type_text("-2");
+    h.run_ok();
+    h.get_by_role_and_label(Role::Button, "Rename").click();
+    wait_for(&mut h, "the undo", |app| undo_label(app).is_some());
+    git(&sample, &["commit", "-q", "-m", "Committed in a terminal"]);
+    wait_for(&mut h, "the undo dropped", |app| undo_label(app).is_none());
 }

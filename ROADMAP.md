@@ -41,7 +41,7 @@ Everyday local work without leaving the app.
 - [x] Stash: save, apply, pop and drop
 - [x] Branches: create, check out, rename and delete
 - [x] Tags: create (lightweight and annotated) and delete
-- [ ] Undo the last action, using the reflog
+- [x] Undo the last action (commits, amends and checkouts from the reflog; branches, tags and stashes from what the app recorded)
 
 ## v0.3: Sync (remotes)
 

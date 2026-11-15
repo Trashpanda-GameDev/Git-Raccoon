@@ -163,6 +163,10 @@ impl App {
         if ctx.egui_wants_keyboard_input() {
             return;
         }
+        if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Z)) {
+            repo.undo(ctx);
+            return;
+        }
         if escape {
             if repo.active_file.is_some() {
                 repo.active_file = None;
@@ -220,6 +224,7 @@ impl eframe::App for App {
                     path: r.path(),
                     branch: r.history.branch(),
                     refreshing: r.is_refreshing(),
+                    undo: r.undo.as_ref().map(|u| u.label.as_str()),
                 });
                 toolbar::show(
                     ui,
@@ -239,6 +244,11 @@ impl eframe::App for App {
             Some(toolbar::Action::Open(p)) => self.open(&ctx, p),
             Some(toolbar::Action::Forget(p)) => self.settings.forget(&p),
             Some(toolbar::Action::Close) => self.close(&ctx),
+            Some(toolbar::Action::Undo) => {
+                if let Some(r) = &mut self.repo {
+                    r.undo(&ctx);
+                }
+            }
             Some(toolbar::Action::Refresh) => {
                 if let Some(r) = &mut self.repo {
                     r.refresh(&ctx);

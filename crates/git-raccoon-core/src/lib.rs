@@ -17,6 +17,7 @@ pub mod stage;
 pub mod stash;
 #[cfg(test)]
 mod testutil;
+pub mod undo;
 pub mod watch;
 pub mod words;
 pub mod working;

@@ -53,6 +53,21 @@ pub fn drop_stash(path: &str, id: &str) -> Result<()> {
     cli::run(path, &["stash", "drop", &reference(path, id)?], None).map(drop)
 }
 
+/// Puts a dropped stash back on the stash list by its commit id.
+pub fn store(path: &str, id: &str, message: &str) -> Result<()> {
+    cli::run(path, &["stash", "store", "--message", message, id], None).map(drop)
+}
+
+/// The newest stash's commit id.
+pub fn top(path: &str) -> Result<Option<String>> {
+    let repo = Repository::discover(path)?;
+    Ok(repo
+        .find_reference("refs/stash")
+        .ok()
+        .and_then(|r| r.target())
+        .map(|id| id.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

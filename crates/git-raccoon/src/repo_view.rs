@@ -14,7 +14,7 @@ use git_raccoon_core::repo::{GraphCommit, History};
 use git_raccoon_core::stage::{self, Pick};
 use git_raccoon_core::watch::{Changes, RepoWatcher};
 use git_raccoon_core::working::{self, Side, WorkingStatus};
-use git_raccoon_core::{Error, branch, discard, stash};
+use git_raccoon_core::{Error, branch, discard, stash, undo};
 
 use crate::highlight::RenderedDiff;
 use crate::images::ImagePair;
@@ -30,12 +30,19 @@ const MAX_CACHED: usize = 20_000;
 pub struct Loaded {
     pub history: History,
     pub refs: Refs,
+    /// HEAD's commit when it was read.
+    pub head: Option<String>,
 }
 
 pub fn load(path: &str) -> Result<Loaded, String> {
     let history = History::load(path, 0).map_err(|e| e.to_string())?;
     let refs = refs::load_refs(path).map_err(|e| e.to_string())?;
-    Ok(Loaded { history, refs })
+    let head = undo::head_id(path).ok().flatten();
+    Ok(Loaded {
+        history,
+        refs,
+        head,
+    })
 }
 
 /// Rows of the history read on demand and kept for reuse.
@@ -169,6 +176,32 @@ pub enum Op {
     /// Stash everything (untracked files too), then run the operation:
     /// for a checkout that local changes were in the way of.
     StashThen(Box<Op>),
+    // What undoing uses:
+    /// Move the branch back from commit `expected` to `to`, keeping changes staged.
+    UndoCommit {
+        expected: String,
+        to: String,
+    },
+    /// Delete a branch only if it still points at `expected`.
+    DeleteBranchAt {
+        name: String,
+        expected: String,
+    },
+    RestoreBranch {
+        name: String,
+        id: String,
+        upstream: Option<String>,
+    },
+    RestoreTag {
+        name: String,
+        id: String,
+    },
+    StashStore {
+        id: String,
+        message: String,
+    },
+    /// Several operations in order, stopping at the first failure.
+    Then(Vec<Op>),
 }
 
 impl Op {
@@ -219,6 +252,20 @@ impl Op {
                 stash::save(path, &format!("Stashed by Git Raccoon to {what}"), true)?;
                 op.run(path)
             }
+            Op::UndoCommit { expected, to } => undo::reset_soft(path, &expected, &to),
+            Op::DeleteBranchAt { name, expected } => undo::delete_branch_at(path, &name, &expected),
+            Op::RestoreBranch { name, id, upstream } => {
+                undo::restore_ref(path, &format!("refs/heads/{name}"), &id)?;
+                if let Some(up) = upstream {
+                    undo::set_upstream(path, &name, &up);
+                }
+                Ok(())
+            }
+            Op::RestoreTag { name, id } => {
+                undo::restore_ref(path, &format!("refs/tags/{name}"), &id)
+            }
+            Op::StashStore { id, message } => stash::store(path, &id, &message),
+            Op::Then(ops) => ops.into_iter().try_for_each(|op| op.run(path)),
         }
     }
 
@@ -249,6 +296,12 @@ impl Op {
             Op::CreateTag { .. } => "create the tag",
             Op::DeleteTag(_) => "delete the tag",
             Op::StashThen(op) => op.verb(),
+            Op::UndoCommit { .. }
+            | Op::DeleteBranchAt { .. }
+            | Op::RestoreBranch { .. }
+            | Op::RestoreTag { .. }
+            | Op::StashStore { .. }
+            | Op::Then(_) => "undo",
         }
     }
 
@@ -277,11 +330,222 @@ impl Op {
     }
 }
 
+/// How to undo the last action.
+#[derive(Debug, Clone)]
+pub struct Undoable {
+    /// What the button says ("Undo commit “Fix it”").
+    pub label: String,
+    pub op: Op,
+    /// HEAD right after the action; if it moves elsewhere, the undo is dropped.
+    head: Option<String>,
+    created: std::time::Instant,
+    /// For an undone commit: its message, to put back in the commit box.
+    message: Option<String>,
+}
+
+impl Undoable {
+    fn new(path: &str, label: String, op: Op) -> Self {
+        Undoable {
+            label,
+            op,
+            head: undo::head_id(path).ok().flatten(),
+            created: std::time::Instant::now(),
+            message: None,
+        }
+    }
+}
+
+/// What an operation will destroy, read just before it runs, so it can be
+/// put back.
+#[derive(Default)]
+struct Before {
+    tip: Option<String>,
+    upstream: Option<String>,
+    tag: Option<String>,
+    stash_message: Option<String>,
+    branch_existed: bool,
+    stash_top: Option<String>,
+}
+
+impl Before {
+    fn capture(op: &Op, path: &str) -> Self {
+        let mut b = Before::default();
+        match op {
+            Op::DeleteBranch { name, .. } => {
+                b.tip = branch::tip(path, name).ok();
+                b.upstream = undo::upstream_of(path, name).ok().flatten();
+            }
+            Op::DeleteTag(name) => {
+                b.tag = undo::ref_target(path, &format!("refs/tags/{name}")).ok()
+            }
+            Op::StashDrop(id) => {
+                b.stash_message = refs::load_refs(path).ok().and_then(|r| {
+                    r.stashes
+                        .into_iter()
+                        .find(|s| &s.target == id)
+                        .map(|s| s.message)
+                });
+            }
+            Op::CheckoutRemote(name) => {
+                b.branch_existed = branch::tip(path, local_name(name)).is_ok();
+            }
+            Op::Stash { .. } => b.stash_top = stash::top(path).ok().flatten(),
+            Op::StashThen(inner) => return Before::capture(inner, path),
+            _ => {}
+        }
+        b
+    }
+}
+
+/// "feature" for the remote branch "origin/feature".
+fn local_name(remote_branch: &str) -> &str {
+    remote_branch
+        .split_once('/')
+        .map_or(remote_branch, |(_, rest)| rest)
+}
+
+fn short(id: &str) -> &str {
+    &id[..7.min(id.len())]
+}
+
+/// Switching back to where the last checkout came from, per the reflog.
+fn checkout_back(path: &str) -> Option<Op> {
+    let last = undo::last_head_move(path).ok()??;
+    let from = last.checked_out_from()?;
+    if branch::tip(path, from).is_ok() {
+        Some(Op::Checkout(from.to_string()))
+    } else {
+        Some(Op::CheckoutDetached(last.from?))
+    }
+}
+
+/// How to undo `op`, which just succeeded; `None` if it can't be undone.
+fn undo_for(op: &Op, before: Before, path: &str) -> Option<Undoable> {
+    let delete_new = |name: &str| {
+        Some(Op::DeleteBranchAt {
+            name: name.to_string(),
+            expected: branch::tip(path, name).ok()?,
+        })
+    };
+    let (label, ops): (String, Vec<Op>) = match op {
+        Op::CreateBranch { name, checkout, .. } => {
+            let mut ops = Vec::new();
+            if *checkout {
+                ops.push(checkout_back(path)?);
+            }
+            ops.push(delete_new(name)?);
+            (format!("Undo create branch {name}"), ops)
+        }
+        Op::Checkout(name) => (format!("Undo check out {name}"), vec![checkout_back(path)?]),
+        Op::CheckoutDetached(id) => (
+            format!("Undo check out {}", short(id)),
+            vec![checkout_back(path)?],
+        ),
+        Op::CheckoutRemote(name) => {
+            let mut ops = vec![checkout_back(path)?];
+            if !before.branch_existed {
+                ops.push(delete_new(local_name(name))?);
+            }
+            (format!("Undo check out {name}"), ops)
+        }
+        Op::RenameBranch { old, new } => (
+            format!("Undo rename {old} to {new}"),
+            vec![Op::RenameBranch {
+                old: new.clone(),
+                new: old.clone(),
+            }],
+        ),
+        Op::DeleteBranch { name, .. } => (
+            format!("Undo delete branch {name}"),
+            vec![Op::RestoreBranch {
+                name: name.clone(),
+                id: before.tip?,
+                upstream: before.upstream,
+            }],
+        ),
+        Op::CreateTag { name, .. } => (
+            format!("Undo create tag {name}"),
+            vec![Op::DeleteTag(name.clone())],
+        ),
+        Op::DeleteTag(name) => (
+            format!("Undo delete tag {name}"),
+            vec![Op::RestoreTag {
+                name: name.clone(),
+                id: before.tag?,
+            }],
+        ),
+        Op::Stash { .. } => {
+            let top = stash::top(path).ok()??;
+            if before.stash_top.as_ref() == Some(&top) {
+                return None; // nothing was stashed
+            }
+            ("Undo stash".into(), vec![Op::StashPop(top)])
+        }
+        Op::StashDrop(id) => (
+            "Undo drop stash".into(),
+            vec![Op::StashStore {
+                id: id.clone(),
+                message: before.stash_message?,
+            }],
+        ),
+        Op::StashThen(inner) => {
+            let top = stash::top(path).ok()??;
+            let mut u = undo_for(inner, before, path)?;
+            let mut ops = match u.op {
+                Op::Then(ops) => ops,
+                op => vec![op],
+            };
+            ops.push(Op::StashPop(top));
+            u.op = Op::Then(ops);
+            return Some(u);
+        }
+        _ => return None,
+    };
+    let op = if ops.len() == 1 {
+        ops.into_iter().next()?
+    } else {
+        Op::Then(ops)
+    };
+    Some(Undoable::new(path, label, op))
+}
+
+/// How to undo the commit that was just made, from the reflog.
+fn undo_commit(path: &str, made: &Committed, amend: bool, message: &str) -> Option<Undoable> {
+    let last = undo::last_head_move(path).ok()??;
+    if !last.is_commit(amend) || last.to != made.id {
+        return None;
+    }
+    let summary: String = message
+        .lines()
+        .next()
+        .unwrap_or("")
+        .chars()
+        .take(40)
+        .collect();
+    let label = if amend {
+        format!("Undo amend \u{201c}{summary}\u{201d}")
+    } else {
+        format!("Undo commit \u{201c}{summary}\u{201d}")
+    };
+    let mut u = Undoable::new(
+        path,
+        label,
+        Op::UndoCommit {
+            expected: made.id.clone(),
+            to: last.from?,
+        },
+    );
+    u.message = (!amend).then(|| message.to_string());
+    Some(u)
+}
+
 /// An operation running in the background.
 struct Running {
     /// What was asked, to offer a way on if Git refuses.
     op: Op,
-    task: Task<Result<(), Error>>,
+    /// For an undo of a commit: the message to put back in the commit box.
+    message: Option<String>,
+    task: Task<Result<Option<Undoable>, Error>>,
 }
 
 /// What this system calls its trash.
@@ -355,7 +619,11 @@ pub struct RepoView {
     /// Lines picked in the open working diff, as (hunk, line).
     pub picked: std::collections::BTreeSet<(usize, usize)>,
     pub draft: CommitDraft,
-    committing: Option<Task<Result<Committed, String>>>,
+    committing: Option<Task<Result<Option<Undoable>, String>>>,
+    /// How to undo the last action, if it can be.
+    pub undo: Option<Undoable>,
+    /// When the running refresh started (an older read can't drop a newer undo).
+    refresh_started: std::time::Instant,
     /// Where a Shift-click range of picks starts.
     pick_anchor: Option<(usize, usize)>,
     /// An operation in progress.
@@ -426,6 +694,8 @@ impl RepoView {
             trash_override: None,
             draft: CommitDraft::default(),
             committing: None,
+            undo: None,
+            refresh_started: std::time::Instant::now(),
             diff: Keyed::default(),
             images: Keyed::default(),
             search: Search::default(),
@@ -489,7 +759,8 @@ impl RepoView {
             self.draft.amend,
         );
         self.committing = Some(Task::spawn(ctx, move || {
-            commit::commit(&path, &message, amend).map_err(|e| e.to_string())
+            let made = commit::commit(&path, &message, amend).map_err(|e| e.to_string())?;
+            Ok(undo_commit(&path, &made, amend, &message))
         }));
     }
 
@@ -568,12 +839,31 @@ impl RepoView {
         if self.op.is_some() {
             return;
         }
+        self.start(ctx, op, None);
+    }
+
+    fn start(&mut self, ctx: &egui::Context, op: Op, message: Option<String>) {
         let path = self.path().to_string();
         let task_op = op.clone();
         self.op = Some(Running {
             op,
-            task: Task::spawn(ctx, move || task_op.run(&path)),
+            message,
+            task: Task::spawn(ctx, move || {
+                let before = Before::capture(&task_op, &path);
+                task_op.clone().run(&path)?;
+                Ok(undo_for(&task_op, before, &path))
+            }),
         });
+    }
+
+    /// Undoes the last action, if it can be undone.
+    pub fn undo(&mut self, ctx: &egui::Context) {
+        if self.op.is_some() || self.committing.is_some() {
+            return;
+        }
+        if let Some(u) = self.undo.take() {
+            self.start(ctx, u.op, u.message);
+        }
     }
 
     /// The checked-out branch, if any.
@@ -768,6 +1058,7 @@ impl RepoView {
     /// Reloads the repository in the background, keeping the selection.
     pub fn refresh(&mut self, ctx: &egui::Context) {
         let path = self.path().to_string();
+        self.refresh_started = std::time::Instant::now();
         self.refreshing = Some(Task::spawn(ctx, move || load(&path)));
         self.refresh_status(ctx);
     }
@@ -805,8 +1096,9 @@ impl RepoView {
         {
             self.committing = None;
             match result {
-                Ok(_) => {
+                Ok(undo) => {
                     self.draft = CommitDraft::default();
+                    self.undo = undo;
                     self.refresh(ctx);
                 }
                 Err(e) => self.refresh_error = Some(format!("Could not commit:\n{e}")),
@@ -815,14 +1107,29 @@ impl RepoView {
         if let Some(running) = &self.op
             && let Some(result) = running.task.poll()
         {
-            let op = running.op.clone();
+            let (op, message) = (running.op.clone(), running.message.clone());
             self.op = None;
             self.picked.clear();
             self.pick_anchor = None;
-            if let Err(e) = result
-                && !self.offer_way_on(&op, &e)
+            match result {
+                Ok(Some(undo)) => self.undo = Some(undo),
+                // Something changed that can't be undone: older undos would be out of order.
+                Ok(None) if op.changes_refs() => self.undo = None,
+                Ok(None) => {}
+                Err(e) => {
+                    if !self.offer_way_on(&op, &e) {
+                        self.refresh_error = Some(format!("Could not {}:\n{e}", op.verb()));
+                    }
+                }
+            }
+            // An undone commit's message goes back in the commit box.
+            if let Some(m) = message
+                && self.draft.summary.trim().is_empty()
+                && self.draft.body.trim().is_empty()
             {
-                self.refresh_error = Some(format!("Could not {}:\n{e}", op.verb()));
+                let (summary, body) = m.split_once('\n').unwrap_or((&m, ""));
+                self.draft.summary = summary.trim().to_string();
+                self.draft.body = body.trim().to_string();
             }
             if op.changes_refs() {
                 self.refresh(ctx);
@@ -937,6 +1244,14 @@ impl RepoView {
     fn replace(&mut self, loaded: Loaded) {
         self.history = Arc::new(loaded.history);
         self.refs = loaded.refs;
+        // HEAD moved elsewhere (outside the app, say): the undo no longer applies.
+        if self
+            .undo
+            .as_ref()
+            .is_some_and(|u| u.created < self.refresh_started && u.head != loaded.head)
+        {
+            self.undo = None;
+        }
         self.rows = RowCache::new(self.history.clone());
         self.refresh_error = None;
         if let Some(sel) = &mut self.selected {

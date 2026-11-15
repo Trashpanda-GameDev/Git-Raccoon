@@ -14,6 +14,7 @@ pub enum Action {
     Forget(String),
     Close,
     Refresh,
+    Undo,
 }
 
 pub struct OpenRepo<'a> {
@@ -21,6 +22,8 @@ pub struct OpenRepo<'a> {
     pub path: &'a str,
     pub branch: Option<&'a str>,
     pub refreshing: bool,
+    /// What undo would do, if anything.
+    pub undo: Option<&'a str>,
 }
 
 pub fn show(
@@ -105,6 +108,28 @@ pub fn show(
                     action = Some(Action::Refresh);
                 }
             });
+            // Says what it would undo, so there are no surprises.
+            match repo.undo {
+                Some(what) => {
+                    let text: String = if what.chars().count() > 48 {
+                        what.chars().take(47).chain(['…']).collect()
+                    } else {
+                        what.to_string()
+                    };
+                    let button = ui.add(egui::Button::new(
+                        RichText::new(format!("{}  {text}", icon::ARROW_U_UP_LEFT)).size(12.0),
+                    ));
+                    ui.ctx()
+                        .accesskit_node_builder(button.id, |n| n.set_label("Undo"));
+                    if button.on_hover_text(format!("{what} (Ctrl+Z)")).clicked() {
+                        action = Some(Action::Undo);
+                    }
+                }
+                None => {
+                    widgets::named_icon_button(ui, icon::ARROW_U_UP_LEFT, "Undo", false)
+                        .on_disabled_hover_text("Nothing to undo");
+                }
+            }
         }
         if opening {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
