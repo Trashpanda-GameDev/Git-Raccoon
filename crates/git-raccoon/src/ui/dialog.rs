@@ -12,10 +12,15 @@ use crate::theme;
 /// user confirms; closes the dialog on confirm, cancel or Esc.
 pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Option<Op> {
     let current = open.as_mut()?;
-    let mut answer: Option<bool> = None;
+    // Some(Some(i)): button i; Some(None): cancelled.
+    let mut answer: Option<Option<usize>> = None;
     let modal = egui::Modal::new(egui::Id::new("dialog")).show(ctx, |ui| {
         ui.set_width(420.0);
-        let (button, danger, ready) = match current {
+        let single = match current {
+            Dialog::Choice { title, body, .. } => {
+                heading(ui, title, Some(body));
+                (String::new(), false, true)
+            }
             Dialog::Confirm {
                 title,
                 body,
@@ -35,7 +40,7 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
                     ),
                 );
                 if field(ui, message, "Message (optional)", "Stash message", None) {
-                    answer = Some(true);
+                    answer = Some(Some(0));
                 }
                 ui.checkbox(untracked, "Include untracked files");
                 ("Stash".into(), false, true)
@@ -53,7 +58,7 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
                 );
                 let problem = branch_problem(name, refs, None);
                 if field(ui, name, "Branch name", "Branch name", problem) && problem.is_none() {
-                    answer = Some(true);
+                    answer = Some(Some(0));
                 }
                 ui.checkbox(checkout, "Check it out");
                 let label = if *checkout {
@@ -67,7 +72,7 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
                 heading(ui, &format!("Rename {old}"), None);
                 let problem = branch_problem(name, refs, Some(old));
                 if field(ui, name, "New name", "New branch name", problem) && problem.is_none() {
-                    answer = Some(true);
+                    answer = Some(Some(0));
                 }
                 ("Rename".into(), false, problem.is_none() && name != old)
             }
@@ -82,7 +87,7 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
                 if field(ui, name, "Tag name, e.g. v1.0.0", "Tag name", problem)
                     && problem.is_none()
                 {
-                    answer = Some(true);
+                    answer = Some(Some(0));
                 }
                 ui.add_space(4.0);
                 let notes = ui.add(
@@ -104,33 +109,45 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
                 )
             }
         };
+        let buttons: Vec<(String, bool, bool)> = match current {
+            Dialog::Choice { choices, .. } => choices
+                .iter()
+                .map(|(label, danger, _)| (label.clone(), *danger, true))
+                .collect(),
+            _ => vec![single],
+        };
         ui.add_space(12.0);
         ui.horizontal(|ui| {
-            let (fill, text) = if !ready {
-                (theme::BG_HOVER, theme::MUTED)
-            } else if danger {
-                (theme::DANGER.gamma_multiply(0.8), egui::Color32::WHITE)
-            } else {
-                (theme::ACCENT, theme::ON_ACCENT)
-            };
-            let go = egui::Button::new(RichText::new(button).color(text).strong()).fill(fill);
-            if ui.add_enabled(ready, go).clicked() {
-                answer = Some(true);
+            for (i, (button, danger, ready)) in buttons.into_iter().enumerate() {
+                let (fill, text) = if !ready {
+                    (theme::BG_HOVER, theme::MUTED)
+                } else if danger {
+                    (theme::DANGER.gamma_multiply(0.8), egui::Color32::WHITE)
+                } else if i == 0 {
+                    (theme::ACCENT, theme::ON_ACCENT)
+                } else {
+                    (theme::BG_HOVER, theme::TEXT)
+                };
+                let go = egui::Button::new(RichText::new(button).color(text).strong()).fill(fill);
+                if ui.add_enabled(ready, go).clicked() {
+                    answer = Some(Some(i));
+                }
             }
             if ui.button("Cancel").clicked() {
-                answer = Some(false);
+                answer = Some(None);
             }
         });
     });
     if modal.should_close() && answer.is_none() {
-        answer = Some(false);
+        answer = Some(None);
     }
     match answer? {
-        false => {
+        None => {
             *open = None;
             None
         }
-        true => match open.take()? {
+        Some(chosen) => match open.take()? {
+            Dialog::Choice { choices, .. } => choices.into_iter().nth(chosen).map(|c| c.2),
             Dialog::Confirm { op, .. } => Some(op),
             Dialog::Stash { message, untracked } => Some(Op::Stash { message, untracked }),
             Dialog::NewBranch {

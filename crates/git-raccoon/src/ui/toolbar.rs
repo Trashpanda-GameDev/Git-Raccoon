@@ -15,6 +15,18 @@ pub enum Action {
     Close,
     Refresh,
     Undo,
+    Fetch,
+    Pull,
+    Push,
+    CancelSync,
+}
+
+/// A fetch, pull or push in progress.
+pub struct Syncing {
+    /// "fetch", "pull" or "push".
+    pub verb: &'static str,
+    pub phase: Option<String>,
+    pub percent: Option<u8>,
 }
 
 pub struct OpenRepo<'a> {
@@ -24,6 +36,12 @@ pub struct OpenRepo<'a> {
     pub refreshing: bool,
     /// What undo would do, if anything.
     pub undo: Option<&'a str>,
+    /// The checked-out branch's upstream ("origin/main") and how far ahead
+    /// and behind it the branch is.
+    pub upstream: Option<(&'a str, usize, usize)>,
+    pub syncing: Option<Syncing>,
+    /// Another operation is running.
+    pub busy: bool,
 }
 
 pub fn show(
@@ -108,6 +126,11 @@ pub fn show(
                     action = Some(Action::Refresh);
                 }
             });
+            ui.add_space(6.0);
+            if let Some(a) = sync_buttons(ui, &repo) {
+                action = Some(a);
+            }
+            ui.add_space(6.0);
             // Says what it would undo, so there are no surprises.
             match repo.undo {
                 Some(what) => {
@@ -139,5 +162,93 @@ pub fn show(
             });
         }
     });
+    action
+}
+
+/// Fetch, pull and push; or, while one runs, its progress and Cancel.
+fn sync_buttons(ui: &mut egui::Ui, repo: &OpenRepo<'_>) -> Option<Action> {
+    let mut action = None;
+    if let Some(sync) = &repo.syncing {
+        ui.spinner();
+        let doing = match sync.verb {
+            "fetch" => "Fetching",
+            "pull" => "Pulling",
+            _ => "Pushing",
+        };
+        let detail = match (&sync.phase, sync.percent) {
+            (Some(phase), Some(p)) => format!("{doing}… {phase} {p}%"),
+            (Some(phase), None) => format!("{doing}… {phase}"),
+            _ => format!("{doing}…"),
+        };
+        ui.label(RichText::new(detail).size(12.0).color(theme::MUTED));
+        if let Some(p) = sync.percent {
+            ui.add(
+                egui::ProgressBar::new(f32::from(p) / 100.0)
+                    .desired_width(80.0)
+                    .desired_height(4.0),
+            );
+        }
+        if ui
+            .button(RichText::new("Cancel").size(12.0))
+            .on_hover_text("Stop it. Nothing is half-changed: Git only updates refs at the end.")
+            .clicked()
+        {
+            action = Some(Action::CancelSync);
+        }
+        return action;
+    }
+    let (ahead, behind) = repo.upstream.map_or((0, 0), |(_, a, b)| (a, b));
+    let count = |glyph: &str, n: usize| {
+        if n > 0 {
+            format!("  {glyph}{n}")
+        } else {
+            String::new()
+        }
+    };
+    let buttons = [
+        (
+            "Fetch",
+            icon::CLOUD_ARROW_DOWN,
+            String::new(),
+            "Fetch from all remotes: see new commits without changing your branches".to_string(),
+            Action::Fetch,
+        ),
+        (
+            "Pull",
+            icon::ARROW_FAT_LINE_DOWN,
+            count(icon::ARROW_DOWN, behind),
+            match repo.upstream {
+                Some((up, _, b)) => format!("Pull {b} new commits from {up} into this branch"),
+                None => "This branch has no upstream to pull from yet. Push it first.".into(),
+            },
+            Action::Pull,
+        ),
+        (
+            "Push",
+            icon::ARROW_FAT_LINE_UP,
+            count(icon::ARROW_UP, ahead),
+            match repo.upstream {
+                Some((up, a, _)) => format!("Push {a} commits to {up}"),
+                None => "Push this branch, setting its upstream on the remote".into(),
+            },
+            Action::Push,
+        ),
+    ];
+    for (name, glyph, extra, tip, act) in buttons {
+        let enabled = !repo.busy && (name != "Pull" || repo.upstream.is_some());
+        let button = ui.add_enabled(
+            enabled,
+            egui::Button::new(RichText::new(format!("{glyph}  {name}{extra}")).size(12.0)),
+        );
+        ui.ctx()
+            .accesskit_node_builder(button.id, |n| n.set_label(name));
+        if button
+            .on_hover_text(&tip)
+            .on_disabled_hover_text(&tip)
+            .clicked()
+        {
+            action = Some(act);
+        }
+    }
     action
 }

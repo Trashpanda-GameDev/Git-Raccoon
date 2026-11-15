@@ -143,6 +143,12 @@ impl App {
         }
     }
 
+    fn run(&mut self, ctx: &egui::Context, op: Op) {
+        if let Some(r) = &mut self.repo {
+            r.run(ctx, op);
+        }
+    }
+
     fn shortcuts(&mut self, ctx: &egui::Context) {
         let Some(repo) = &mut self.repo else { return };
         // An open dialog has the keyboard (Esc closes just the dialog).
@@ -225,6 +231,15 @@ impl eframe::App for App {
                     branch: r.history.branch(),
                     refreshing: r.is_refreshing(),
                     undo: r.undo.as_ref().map(|u| u.label.as_str()),
+                    upstream: r
+                        .head_upstream()
+                        .map(|u| (u.name.as_str(), u.ahead, u.behind)),
+                    syncing: r.sync_progress().map(|(verb, p)| toolbar::Syncing {
+                        verb,
+                        phase: p.as_ref().map(|p| p.phase.clone()),
+                        percent: p.and_then(|p| p.percent),
+                    }),
+                    busy: r.is_staging() || r.is_committing(),
                 });
                 toolbar::show(
                     ui,
@@ -244,6 +259,19 @@ impl eframe::App for App {
             Some(toolbar::Action::Open(p)) => self.open(&ctx, p),
             Some(toolbar::Action::Forget(p)) => self.settings.forget(&p),
             Some(toolbar::Action::Close) => self.close(&ctx),
+            Some(toolbar::Action::Fetch) => self.run(&ctx, Op::Fetch),
+            Some(toolbar::Action::Pull) => {
+                self.run(
+                    &ctx,
+                    Op::Pull(git_raccoon_core::sync::PullMode::FastForward),
+                );
+            }
+            Some(toolbar::Action::Push) => self.run(&ctx, Op::Push { force: false }),
+            Some(toolbar::Action::CancelSync) => {
+                if let Some(r) = &self.repo {
+                    r.cancel_sync();
+                }
+            }
             Some(toolbar::Action::Undo) => {
                 if let Some(r) = &mut self.repo {
                     r.undo(&ctx);

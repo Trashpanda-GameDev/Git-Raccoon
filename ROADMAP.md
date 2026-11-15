@@ -47,11 +47,11 @@ Everyday local work without leaving the app.
 
 Collaborate through remotes.
 
-- [ ] Fetch, pull and push, with progress and cancellation
-- [ ] Authentication through SSH agent, SSH keys and Git credential helpers
-- [ ] Ahead/behind counts on branches; set upstream on first push
+- [x] Fetch, pull and push, with progress and cancellation
+- [ ] Authentication through SSH agent, SSH keys and Git credential helpers (agent and credential helpers already work through `git`; still to do: asking for SSH key passphrases and passwords in the app)
+- [x] Ahead/behind counts on branches; set upstream on first push
 - [ ] Add, edit and remove remotes
-- [ ] Force-push only with lease, behind a confirmation
+- [x] Force-push only with lease, behind a confirmation
 - [ ] Clone and init a repository from the app
 
 ## v0.4: Rewrite (merge and history editing)

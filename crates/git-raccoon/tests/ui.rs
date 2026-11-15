@@ -1332,3 +1332,143 @@ fn undoes_the_last_action() {
     git(&sample, &["commit", "-q", "-m", "Committed in a terminal"]);
     wait_for(&mut h, "the undo dropped", |app| undo_label(app).is_none());
 }
+
+fn upstream_counts(app: &App) -> Option<(usize, usize)> {
+    app.repo()
+        .unwrap()
+        .head_upstream()
+        .map(|u| (u.ahead, u.behind))
+}
+
+#[test]
+fn fetches_pulls_and_pushes() {
+    let sample = Sample::build();
+    let base = std::env::temp_dir().join(format!("git-raccoon-remote-{}", rand_suffix()));
+    let (bare, other) = (base.join("remote.git"), base.join("other"));
+    std::fs::create_dir_all(&base).unwrap();
+    let run = |dir: &Path, args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    run(&base, &["init", "-q", "--bare", "remote.git"]);
+    let url = bare.to_str().unwrap().replace('\\', "/");
+    git(&sample, &["remote", "set-url", "origin", &url]);
+    git(&sample, &["push", "-q", "origin", "main"]);
+    run(&base, &["clone", "-q", "-b", "main", &url, "other"]);
+    for (k, v) in [
+        ("user.name", "Other Raccoon"),
+        ("user.email", "other@example.com"),
+        ("commit.gpgsign", "false"),
+    ] {
+        run(&other, &["config", k, v]);
+    }
+    let someone_else_commits = |file: &str| {
+        run(&other, &["pull", "-q", "--rebase"]);
+        std::fs::write(other.join(file), "theirs\n").unwrap();
+        run(&other, &["add", file]);
+        run(&other, &["commit", "-q", "-m", &format!("Add {file}")]);
+        run(&other, &["push", "-q", "origin", "HEAD"]);
+    };
+
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    assert_eq!(upstream_counts(h.state()), Some((0, 0)));
+
+    // Push a local commit.
+    git(
+        &sample,
+        &["commit", "-q", "--allow-empty", "-m", "Local work"],
+    );
+    wait_for(&mut h, "ahead by one", |app| {
+        upstream_counts(app) == Some((1, 0))
+    });
+    h.get_by_label("Push").click();
+    wait_for(&mut h, "the push", |app| {
+        upstream_counts(app) == Some((0, 0)) && !app.is_busy()
+    });
+
+    // Someone else pushes: fetch shows it, pull brings it in.
+    someone_else_commits("theirs.txt");
+    h.get_by_label("Fetch").click();
+    wait_for(&mut h, "behind by one", |app| {
+        upstream_counts(app) == Some((0, 1))
+    });
+    screenshot(&mut h, "21-behind");
+    h.get_by_label("Pull").click();
+    wait_for(&mut h, "the pull", |app| {
+        upstream_counts(app) == Some((0, 0)) && !app.is_busy()
+    });
+    assert_eq!(read(&sample, "theirs.txt").as_deref(), Some("theirs\n"));
+
+    // Both sides move on: the push is refused, and the app offers a way on.
+    someone_else_commits("more.txt");
+    git(
+        &sample,
+        &["commit", "-q", "--allow-empty", "-m", "More local work"],
+    );
+    wait_for(&mut h, "ahead", |app| upstream_counts(app) == Some((1, 0)));
+    h.get_by_label("Push").click();
+    wait_for(&mut h, "the question", |app| {
+        app.repo().unwrap().dialog.is_some()
+    });
+    h.get_by_label("The remote has commits you don't have");
+    screenshot(&mut h, "22-push-rejected");
+    h.get_by_label("Pull first").click();
+    wait_for(&mut h, "the next question", |app| {
+        app.repo().unwrap().dialog.is_some() && !app.is_busy()
+    });
+    h.get_by_label_contains("have both moved on");
+    h.get_by_label("Rebase").click();
+    wait_for(&mut h, "the rebase", |app| {
+        upstream_counts(app) == Some((1, 0)) && !app.is_busy()
+    });
+    assert_eq!(read(&sample, "more.txt").as_deref(), Some("theirs\n"));
+    h.get_by_label("Push").click();
+    wait_for(&mut h, "the push", |app| {
+        upstream_counts(app) == Some((0, 0)) && !app.is_busy()
+    });
+    assert_eq!(h.state().repo().unwrap().refresh_error, None);
+
+    // A remote that never answers can be cancelled.
+    git(
+        &sample,
+        &[
+            "config",
+            "remote.origin.uploadpack",
+            "sleep 60; git-upload-pack",
+        ],
+    );
+    h.get_by_label("Fetch").click();
+    // (Not wait_for: that also waits for the app to be idle.)
+    let start = Instant::now();
+    while h.state().repo().unwrap().sync_progress().is_none() {
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "the fetch didn't start"
+        );
+        h.step();
+    }
+    for _ in 0..5 {
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    screenshot(&mut h, "23-fetching");
+    h.get_by_label("Cancel").click();
+    wait_for(&mut h, "the cancel", |app| {
+        app.repo().unwrap().sync_progress().is_none()
+    });
+    assert_eq!(
+        h.state().repo().unwrap().refresh_error,
+        None,
+        "cancelling isn't an error"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}

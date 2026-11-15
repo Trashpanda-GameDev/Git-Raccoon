@@ -6,12 +6,14 @@ See [ROADMAP.md](ROADMAP.md) for what is planned.
 
 ## Layout
 
-- `crates/git-raccoon-core`: reading repositories: history and graph layout, commit details and diffs, branches and tags, search, and watching for changes. No UI code.
+- `crates/git-raccoon-core`: the Git logic: history and graph layout, commit details and diffs, staging, committing, branches, tags, stashes, undo, fetch/pull/push, search, and watching for changes. No UI code.
 - `crates/git-raccoon`: the desktop app.
 
 ## Running it
 
-You need [Rust](https://rustup.rs) (stable). Then, from the repository root:
+You need [Rust](https://rustup.rs) (stable) and [Git](https://git-scm.com). Git Raccoon reads repositories itself, but runs your own `git` to change them (commit, check out, fetch, push and so on), so your hooks, signing, SSH agent and credential helpers apply just as on the command line.
+
+Then, from the repository root:
 
 ```bash
 cargo run --release

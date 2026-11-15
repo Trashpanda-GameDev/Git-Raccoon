@@ -12,6 +12,7 @@ use git_raccoon_core::details::{self, CommitDetails, LineKind};
 use git_raccoon_core::refs::{self, Refs};
 use git_raccoon_core::repo::{GraphCommit, History};
 use git_raccoon_core::stage::{self, Pick};
+use git_raccoon_core::sync::{self, Progress, PullMode};
 use git_raccoon_core::watch::{Changes, RepoWatcher};
 use git_raccoon_core::working::{self, Side, WorkingStatus};
 use git_raccoon_core::{Error, branch, discard, stash, undo};
@@ -202,10 +203,34 @@ pub enum Op {
     },
     /// Several operations in order, stopping at the first failure.
     Then(Vec<Op>),
+    Fetch,
+    Pull(PullMode),
+    /// Push the checked-out branch; `force` only with lease.
+    Push {
+        force: bool,
+    },
+}
+
+/// Shared with a running fetch, pull or push: its progress, and the switch
+/// that cancels it.
+pub struct Control {
+    pub progress: std::sync::Mutex<Option<Progress>>,
+    pub cancel: AtomicBool,
+    ctx: egui::Context,
+}
+
+impl Control {
+    fn report(&self, p: Progress) {
+        if let Ok(mut slot) = self.progress.lock() {
+            *slot = Some(p);
+        }
+        self.ctx.request_repaint();
+    }
 }
 
 impl Op {
-    fn run(self, path: &str) -> Result<(), Error> {
+    fn run(self, path: &str, ctl: &Control) -> Result<(), Error> {
+        let report = &mut |p| ctl.report(p);
         match self {
             Op::StageFile(f) => stage::stage_file(path, &f),
             Op::UnstageFile(f) => stage::unstage_file(path, &f),
@@ -250,7 +275,7 @@ impl Op {
             Op::StashThen(op) => {
                 let what = op.verb();
                 stash::save(path, &format!("Stashed by Git Raccoon to {what}"), true)?;
-                op.run(path)
+                op.run(path, ctl)
             }
             Op::UndoCommit { expected, to } => undo::reset_soft(path, &expected, &to),
             Op::DeleteBranchAt { name, expected } => undo::delete_branch_at(path, &name, &expected),
@@ -265,7 +290,10 @@ impl Op {
                 undo::restore_ref(path, &format!("refs/tags/{name}"), &id)
             }
             Op::StashStore { id, message } => stash::store(path, &id, &message),
-            Op::Then(ops) => ops.into_iter().try_for_each(|op| op.run(path)),
+            Op::Then(ops) => ops.into_iter().try_for_each(|op| op.run(path, ctl)),
+            Op::Fetch => sync::fetch(path, report, &ctl.cancel),
+            Op::Pull(mode) => sync::pull(path, mode, report, &ctl.cancel),
+            Op::Push { force } => sync::push(path, force, report, &ctl.cancel),
         }
     }
 
@@ -302,6 +330,9 @@ impl Op {
             | Op::RestoreTag { .. }
             | Op::StashStore { .. }
             | Op::Then(_) => "undo",
+            Op::Fetch => "fetch",
+            Op::Pull(_) => "pull",
+            Op::Push { .. } => "push",
         }
     }
 
@@ -545,6 +576,7 @@ struct Running {
     op: Op,
     /// For an undo of a commit: the message to put back in the commit box.
     message: Option<String>,
+    control: Arc<Control>,
     task: Task<Result<Option<Undoable>, Error>>,
 }
 
@@ -583,6 +615,12 @@ pub enum Dialog {
     RenameBranch {
         old: String,
         name: String,
+    },
+    /// A question with several answers (and Cancel); `bool` marks a risky one.
+    Choice {
+        title: String,
+        body: String,
+        choices: Vec<(String, bool, Op)>,
     },
     /// Name a new tag at `target`; a message makes it annotated.
     NewTag {
@@ -845,15 +883,49 @@ impl RepoView {
     fn start(&mut self, ctx: &egui::Context, op: Op, message: Option<String>) {
         let path = self.path().to_string();
         let task_op = op.clone();
+        let control = Arc::new(Control {
+            progress: std::sync::Mutex::new(None),
+            cancel: AtomicBool::new(false),
+            ctx: ctx.clone(),
+        });
+        let ctl = control.clone();
         self.op = Some(Running {
             op,
             message,
+            control,
             task: Task::spawn(ctx, move || {
                 let before = Before::capture(&task_op, &path);
-                task_op.clone().run(&path)?;
+                task_op.clone().run(&path, &ctl)?;
                 Ok(undo_for(&task_op, before, &path))
             }),
         });
+    }
+
+    /// A running fetch, pull or push: what it is and how far it has got.
+    pub fn sync_progress(&self) -> Option<(&'static str, Option<Progress>)> {
+        let running = self.op.as_ref()?;
+        if !matches!(running.op, Op::Fetch | Op::Pull(_) | Op::Push { .. }) {
+            return None;
+        }
+        let progress = running.control.progress.lock().ok().and_then(|p| p.clone());
+        Some((running.op.verb(), progress))
+    }
+
+    /// Stops a running fetch, pull or push.
+    pub fn cancel_sync(&self) {
+        if let Some(running) = &self.op {
+            running.control.cancel.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// The checked-out branch's upstream, with ahead/behind counts.
+    pub fn head_upstream(&self) -> Option<&git_raccoon_core::refs::Upstream> {
+        self.refs
+            .local
+            .iter()
+            .find(|b| b.is_head)?
+            .upstream
+            .as_ref()
     }
 
     /// Undoes the last action, if it can be undone.
@@ -944,7 +1016,41 @@ impl RepoView {
     /// When Git refused an operation for a reason the user can act on,
     /// offers the way on. Returns whether it did.
     fn offer_way_on(&mut self, op: &Op, error: &Error) -> bool {
+        let upstream = self
+            .head_upstream()
+            .map_or_else(|| "the remote branch".to_string(), |u| u.name.clone());
         match (error, op) {
+            (Error::Cancelled, _) => true,
+            (Error::Rejected(_), Op::Push { force: false }) => {
+                self.dialog = Some(Dialog::Choice {
+                    title: "The remote has commits you don't have".into(),
+                    body: format!(
+                        "Someone pushed to {upstream} since you last pulled. Pull to combine their commits with yours, then push again.\n\nForce-pushing replaces the remote branch with yours, deleting their commits from it. It's only done if the remote is still as you last fetched it."
+                    ),
+                    choices: vec![
+                        ("Pull first".into(), false, Op::Pull(PullMode::FastForward)),
+                        ("Force push".into(), true, Op::Push { force: true }),
+                    ],
+                });
+                true
+            }
+            (Error::Rejected(text), Op::Push { force: true }) => {
+                self.refresh_error = Some(format!(
+                    "Could not force push: {upstream} has changed since you last fetched, so it wasn't overwritten. Fetch to see the new commits first.\n\n{text}"
+                ));
+                true
+            }
+            (Error::Diverged(_), Op::Pull(PullMode::FastForward)) => {
+                self.dialog = Some(Dialog::Choice {
+                    title: format!("Your branch and {upstream} have both moved on"),
+                    body: "Each has commits the other doesn't. Merge adds a merge commit joining them; rebase replays your commits on top of theirs, for a straight history.".into(),
+                    choices: vec![
+                        ("Merge".into(), false, Op::Pull(PullMode::Merge)),
+                        ("Rebase".into(), false, Op::Pull(PullMode::Rebase)),
+                    ],
+                });
+                true
+            }
             (Error::Dirty(_), op) if op.is_checkout() => {
                 self.dialog = Some(Dialog::Confirm {
                     title: "Your changes are in the way".into(),
@@ -1114,7 +1220,8 @@ impl RepoView {
             match result {
                 Ok(Some(undo)) => self.undo = Some(undo),
                 // Something changed that can't be undone: older undos would be out of order.
-                Ok(None) if op.changes_refs() => self.undo = None,
+                // (A fetch only moves remote branches, so local undos still hold.)
+                Ok(None) if op.changes_refs() && !matches!(op, Op::Fetch) => self.undo = None,
                 Ok(None) => {}
                 Err(e) => {
                     if !self.offer_way_on(&op, &e) {

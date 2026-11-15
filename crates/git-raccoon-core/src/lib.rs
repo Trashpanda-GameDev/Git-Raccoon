@@ -15,6 +15,7 @@ pub mod repo;
 pub mod search;
 pub mod stage;
 pub mod stash;
+pub mod sync;
 #[cfg(test)]
 mod testutil;
 pub mod undo;

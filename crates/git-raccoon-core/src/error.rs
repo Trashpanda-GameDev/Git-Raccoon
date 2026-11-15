@@ -22,6 +22,15 @@ pub enum Error {
     /// A `git` command failed; the text is what it printed.
     #[error("{0}")]
     Command(String),
+    /// A push was refused because the remote has commits we don't (Git's message).
+    #[error("{0}")]
+    Rejected(String),
+    /// A pull can't fast-forward: both sides have new commits (Git's message).
+    #[error("{0}")]
+    Diverged(String),
+    /// The user stopped it.
+    #[error("cancelled")]
+    Cancelled,
 }
 
 impl Error {
