@@ -18,7 +18,7 @@ use git_raccoon_core::stage::{self, Pick};
 use git_raccoon_core::sync::{self, Progress, PullMode};
 use git_raccoon_core::watch::{Changes, RepoWatcher};
 use git_raccoon_core::working::{self, Side, WorkingStatus};
-use git_raccoon_core::{Error, branch, conflict, discard, remote, stash, undo};
+use git_raccoon_core::{Error, branch, conflict, discard, file_history, remote, stash, undo};
 
 use crate::highlight::RenderedDiff;
 use crate::images::ImagePair;
@@ -856,6 +856,31 @@ impl Planner {
     }
 }
 
+/// Which view of a file's past is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileMode {
+    History,
+    Blame,
+}
+
+/// A file's history or blame, shown instead of the graph.
+pub struct FileView {
+    pub file: String,
+    /// The commit whose version is blamed; `None` for the working copy.
+    pub at: Option<String>,
+    pub mode: FileMode,
+    pub history: Option<Result<Arc<Vec<file_history::Change>>, String>>,
+    pub blame: Option<Result<Arc<file_history::Blame>, String>>,
+    history_task: Option<Task<Result<Vec<file_history::Change>, String>>>,
+    blame_task: Option<Task<Result<file_history::Blame, String>>>,
+}
+
+impl FileView {
+    pub fn is_loading(&self) -> bool {
+        self.history_task.is_some() || self.blame_task.is_some()
+    }
+}
+
 /// A conflicted file open for resolving.
 pub struct ConflictFile {
     pub file: String,
@@ -953,6 +978,8 @@ pub struct RepoView {
     pub undo: Option<Undoable>,
     /// The conflicted file being resolved, if one is open.
     pub conflict: Option<ConflictFile>,
+    /// A file's history or blame, if open.
+    pub file_view: Option<FileView>,
     /// An interactive rebase being planned (shown instead of the history),
     /// with the commits' original order.
     pub planner: Option<(Planner, Vec<String>)>,
@@ -1031,6 +1058,7 @@ impl RepoView {
             undo: None,
             conflict: None,
             planner: None,
+            file_view: None,
             refresh_started: std::time::Instant::now(),
             diff: Keyed::default(),
             images: Keyed::default(),
@@ -1296,6 +1324,71 @@ impl RepoView {
             danger: true,
             op: Op::DeleteBranch { name, force: false },
         });
+    }
+
+    /// Shows the history or blame of `file` (as of commit `at`, or the
+    /// working copy), loading what's needed in the background.
+    pub fn show_file(
+        &mut self,
+        ctx: &egui::Context,
+        file: String,
+        at: Option<String>,
+        mode: FileMode,
+    ) {
+        let same = self
+            .file_view
+            .as_ref()
+            .is_some_and(|v| v.file == file && v.at == at);
+        if !same {
+            self.file_view = Some(FileView {
+                file,
+                at,
+                mode,
+                history: None,
+                blame: None,
+                history_task: None,
+                blame_task: None,
+            });
+        }
+        self.set_file_mode(ctx, mode);
+    }
+
+    /// Switches the open file view between history and blame.
+    pub fn set_file_mode(&mut self, ctx: &egui::Context, mode: FileMode) {
+        let path = self.path().to_string();
+        let Some(view) = &mut self.file_view else {
+            return;
+        };
+        view.mode = mode;
+        let file = view.file.clone();
+        match mode {
+            FileMode::History if view.history.is_none() && view.history_task.is_none() => {
+                view.history_task = Some(Task::spawn(ctx, move || {
+                    file_history::history(&path, &file).map_err(|e| e.to_string())
+                }));
+            }
+            FileMode::Blame if view.blame.is_none() && view.blame_task.is_none() => {
+                let at = view.at.clone();
+                view.blame_task = Some(Task::spawn(ctx, move || {
+                    file_history::blame(&path, &file, at.as_deref()).map_err(|e| e.to_string())
+                }));
+            }
+            _ => {}
+        }
+    }
+
+    fn poll_file_view(&mut self) {
+        let Some(view) = &mut self.file_view else {
+            return;
+        };
+        if let Some(r) = view.history_task.as_ref().and_then(Task::poll) {
+            view.history = Some(r.map(Arc::new));
+            view.history_task = None;
+        }
+        if let Some(r) = view.blame_task.as_ref().and_then(Task::poll) {
+            view.blame = Some(r.map(Arc::new));
+            view.blame_task = None;
+        }
     }
 
     /// Opens a conflicted file for resolving.
@@ -1738,6 +1831,7 @@ impl RepoView {
 
     /// Polls background work; call once per frame.
     pub fn poll(&mut self, ctx: &egui::Context) {
+        self.poll_file_view();
         self.details.poll();
         self.diff.poll();
         self.images.poll();

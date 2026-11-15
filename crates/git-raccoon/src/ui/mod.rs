@@ -6,6 +6,7 @@ pub mod conflict;
 pub mod details;
 pub mod dialog;
 pub mod diff;
+pub mod file_view;
 pub mod history;
 pub mod palette;
 pub mod rebase;

@@ -2037,3 +2037,103 @@ fn selected_summary_of(app: &App) -> Option<String> {
         .first()
         .map(|c| c.summary.clone())
 }
+
+#[test]
+fn shows_a_files_history_and_blame() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+
+    // From a commit's diff of the renamed loader.
+    h.get_by_label("Redraw icon and rename loader").click();
+    settle(&mut h);
+    h.get_by_label_contains("src/repo_loader.rs").click();
+    settle(&mut h);
+    h.get_by_label("History").click();
+    wait_for(&mut h, "the history", |app| {
+        app.repo()
+            .unwrap()
+            .file_view
+            .as_ref()
+            .is_some_and(|v| v.history.is_some())
+    });
+    let history: Vec<String> = h
+        .state()
+        .repo()
+        .unwrap()
+        .file_view
+        .as_ref()
+        .unwrap()
+        .history
+        .as_ref()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .iter()
+        .map(|c| c.summary.clone())
+        .collect();
+    assert_eq!(
+        history,
+        [
+            "Redraw icon and rename loader",
+            "Reject bare repositories when loading",
+            "Add repository loader"
+        ],
+        "follows the rename"
+    );
+
+    // An older entry shows its change to the file, by its old name.
+    h.get_by_label("Add repository loader").click();
+    settle(&mut h);
+    assert_eq!(
+        selected_summary(&h).as_deref(),
+        Some("Add repository loader")
+    );
+    assert_eq!(
+        h.state().repo().unwrap().active_file.as_deref(),
+        Some("src/loader.rs")
+    );
+    screenshot(&mut h, "33-file-history");
+
+    // Blame: who last changed each line.
+    h.get_by_label("Blame").click();
+    wait_for(&mut h, "the blame", |app| {
+        app.repo()
+            .unwrap()
+            .file_view
+            .as_ref()
+            .is_some_and(|v| v.blame.is_some())
+    });
+    let blame = h
+        .state()
+        .repo()
+        .unwrap()
+        .file_view
+        .as_ref()
+        .unwrap()
+        .blame
+        .clone()
+        .unwrap()
+        .unwrap();
+    let authors: std::collections::HashSet<&str> =
+        blame.commits.iter().map(|c| c.summary.as_str()).collect();
+    assert!(
+        authors.contains("Reject bare repositories when loading"),
+        "{authors:?}"
+    );
+    screenshot(&mut h, "34-blame");
+    h.get_all_by_label_contains("Reject bare repositories when loading")
+        .find(|n| {
+            n.accesskit_node()
+                .label()
+                .is_some_and(|l| l.starts_with("Commit "))
+        })
+        .unwrap()
+        .click();
+    settle(&mut h);
+    assert!(h.state().repo().unwrap().file_view.is_none());
+    assert_eq!(
+        selected_summary(&h).as_deref(),
+        Some("Reject bare repositories when loading")
+    );
+}

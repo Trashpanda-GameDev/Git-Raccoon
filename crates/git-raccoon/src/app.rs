@@ -14,7 +14,8 @@ use git_raccoon_core::create;
 use git_raccoon_core::sync::Progress;
 
 use crate::commands::{self, Command, Entry};
-use crate::ui::{clone, conflict, palette, rebase};
+use crate::repo_view::FileMode;
+use crate::ui::{clone, conflict, file_view, palette, rebase};
 use crate::ui::{
     details, dialog, diff, history, search_bar, sidebar, toolbar, welcome, widgets, working,
 };
@@ -365,6 +366,9 @@ impl App {
             | Command::WriteCommit
             | Command::AddRemote
             | Command::GoTo { .. } => true,
+            Command::FileHistory | Command::Blame => {
+                repo.diff_key().is_some() || repo.file_view.is_some()
+            }
             Command::Undo => repo.undo.is_some() && !busy,
             Command::Fetch => !busy,
             Command::Pull => !busy && repo.head_upstream().is_some(),
@@ -426,6 +430,8 @@ impl App {
         add(Command::NewBranch, format!("Create branch at {head}…"));
         add(Command::NewTag, format!("Create tag at {head}…"));
         add(Command::AddRemote, "Add remote…".into());
+        add(Command::FileHistory, "History of this file".into());
+        add(Command::Blame, "Blame this file".into());
         add(Command::Find, "Search commits".into());
         add(Command::Refresh, "Refresh".into());
         add(Command::ToggleSidebar, "Show or hide the sidebar".into());
@@ -547,6 +553,22 @@ impl App {
                     Command::CheckoutRemote(name) => repo.run(ctx, Op::CheckoutRemote(name)),
                     Command::Merge(name) => repo.ask_merge(name, None),
                     Command::Rebase(name) => repo.confirm_rebase(name),
+                    Command::FileHistory | Command::Blame => {
+                        let mode = if command == Command::Blame {
+                            FileMode::Blame
+                        } else {
+                            FileMode::History
+                        };
+                        if repo.file_view.is_some() {
+                            repo.set_file_mode(ctx, mode);
+                        } else if let Some((source, file)) = repo.diff_key() {
+                            let at = match source {
+                                Source::Commit(id) => Some(id),
+                                Source::Working(_) => None,
+                            };
+                            repo.show_file(ctx, file, at, mode);
+                        }
+                    }
                     Command::GoTo { id, .. } => {
                         repo.planner = None;
                         repo.select(&id);
@@ -615,7 +637,9 @@ impl App {
         }
         let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
         if escape {
-            if repo.planner.is_some() {
+            if repo.file_view.is_some() {
+                repo.file_view = None;
+            } else if repo.planner.is_some() {
                 repo.planner = None;
             } else if repo.conflict.is_some() {
                 repo.conflict = None;
@@ -626,7 +650,11 @@ impl App {
             }
             return;
         }
-        if repo.active_file.is_some() || repo.planner.is_some() || repo.conflict.is_some() {
+        if repo.active_file.is_some()
+            || repo.planner.is_some()
+            || repo.conflict.is_some()
+            || repo.file_view.is_some()
+        {
             return;
         }
         let step = ctx.input(|i| {
@@ -952,6 +980,44 @@ impl App {
             .frame(Frame::new().fill(theme::BG))
             .show(ui, |ui| {
                 let busy = repo.op_running();
+                if let Some(view) = &repo.file_view {
+                    let selected = repo.selected.as_ref().map(|s| s.id.clone());
+                    let action = file_view::show(ui, view, selected.as_deref(), now);
+                    let history = view.mode == FileMode::History;
+                    // History: the picked commit's change to the file, beside the list.
+                    if history && let Some(key) = repo.diff_key() {
+                        let shown = diff::show(
+                            ui,
+                            &key.1,
+                            None,
+                            repo.diff.get(&key),
+                            repo.diff.is_loading(),
+                            None,
+                            self.settings.split_diff,
+                            None,
+                            false,
+                        );
+                        match shown {
+                            Some(diff::Action::SetSplit(s)) => self.settings.split_diff = s,
+                            Some(diff::Action::Close) => repo.active_file = None,
+                            _ => {}
+                        }
+                    }
+                    match action {
+                        Some(file_view::Action::Close) => repo.file_view = None,
+                        Some(file_view::Action::Mode(m)) => repo.set_file_mode(&ctx, m),
+                        Some(file_view::Action::Pick { id, path }) => {
+                            repo.select(&id);
+                            repo.active_file = Some(path);
+                        }
+                        Some(file_view::Action::GoTo(id)) => {
+                            repo.file_view = None;
+                            repo.select(&id);
+                        }
+                        None => {}
+                    }
+                    return;
+                }
                 if let Some((planner, original)) = &mut repo.planner {
                     match rebase::show(ui, planner, original, busy) {
                         Some(rebase::Action::Start) => repo.start_planned_rebase(&ctx),
@@ -1010,9 +1076,22 @@ impl App {
                         images,
                         self.settings.split_diff,
                         staging.as_ref(),
+                        true,
                     );
                     match action {
                         Some(diff::Action::Close) => repo.active_file = None,
+                        Some(diff::Action::History | diff::Action::Blame) => {
+                            let mode = if matches!(action, Some(diff::Action::History)) {
+                                FileMode::History
+                            } else {
+                                FileMode::Blame
+                            };
+                            let at = match &key.0 {
+                                Source::Commit(id) => Some(id.clone()),
+                                Source::Working(_) => None,
+                            };
+                            repo.show_file(&ctx, file.clone(), at, mode);
+                        }
                         Some(diff::Action::SetSplit(s)) => self.settings.split_diff = s,
                         Some(diff::Action::StageHunk(h)) => repo.stage_hunk(&ctx, h),
                         Some(diff::Action::ToggleLine { hunk, line, extend }) => {

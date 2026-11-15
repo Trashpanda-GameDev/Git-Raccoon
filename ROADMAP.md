@@ -69,7 +69,7 @@ The operations people open a GUI for.
 
 - [ ] Multiple repos in tabs
 - [x] Command palette and keyboard shortcuts for every action (every action is in the palette; the frequent ones have shortcuts)
-- [ ] File history and blame
+- [x] File history and blame
 - [ ] Light and dark themes; settings screen
 - [ ] Submodules, worktrees and Git LFS awareness
 - [ ] Performance target: the graph stays smooth on a repo with 1M+ commits

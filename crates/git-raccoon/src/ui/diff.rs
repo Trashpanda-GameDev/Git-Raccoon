@@ -21,6 +21,9 @@ const IMAGE_BOX: f32 = 220.0;
 
 pub enum Action {
     Close,
+    /// Show the file's history, or its blame.
+    History,
+    Blame,
     SetSplit(bool),
     /// Stage (or unstage) a whole hunk.
     StageHunk(usize),
@@ -64,6 +67,8 @@ pub fn show(
     images: Option<&Result<Arc<ImagePair>, String>>,
     split: bool,
     staging: Option<&Staging<'_>>,
+    // Whether to offer the file's History and Blame.
+    past: bool,
 ) -> Option<Action> {
     let mut action = None;
     let ready = diff.and_then(|d| d.as_ref().ok());
@@ -95,6 +100,29 @@ pub fn show(
                         action = Some(Action::Close);
                     }
                     ui.add_space(4.0);
+                    if past {
+                        let buttons = [
+                            (
+                                icon::USER_LIST,
+                                "Blame",
+                                "Who last changed each line",
+                                Action::Blame,
+                            ),
+                            (
+                                icon::CLOCK_COUNTER_CLOCKWISE,
+                                "History",
+                                "Every commit that changed this file",
+                                Action::History,
+                            ),
+                        ];
+                        for (glyph, name, tip, act) in buttons {
+                            let b = ui.button(RichText::new(format!("{glyph}  {name}")).size(12.0));
+                            ui.ctx().accesskit_node_builder(b.id, |n| n.set_label(name));
+                            if b.on_hover_text(tip).clicked() {
+                                action = Some(act);
+                            }
+                        }
+                    }
                     if let Some(st) = staging
                         && !st.picked.is_empty()
                     {

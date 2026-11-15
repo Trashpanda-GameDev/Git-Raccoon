@@ -30,6 +30,9 @@ pub enum Command {
     AddRemote,
     Continue,
     Abort,
+    /// The open file's history or blame.
+    FileHistory,
+    Blame,
     /// For one branch.
     Checkout(String),
     CheckoutRemote(String),
@@ -116,6 +119,8 @@ pub const SHORTCUTS: &[(Command, Option<KeyboardShortcut>)] = &[
         Some(KeyboardShortcut::new(CTRL_SHIFT, Key::T)),
     ),
     (Command::AddRemote, None),
+    (Command::FileHistory, None),
+    (Command::Blame, None),
     (Command::Continue, None),
     (Command::Abort, None),
 ];

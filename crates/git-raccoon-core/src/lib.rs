@@ -12,6 +12,7 @@ pub mod create;
 pub mod details;
 pub mod discard;
 mod error;
+pub mod file_history;
 pub mod graph;
 pub mod interactive;
 pub mod merge;
