@@ -42,6 +42,8 @@ pub struct Settings {
     pub last_repo: Option<String>,
     pub split_diff: bool,
     pub hide_sidebar: bool,
+    /// Where the last clone went; new clones start there.
+    pub clone_dir: Option<String>,
 }
 
 impl Settings {

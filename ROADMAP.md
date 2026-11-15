@@ -52,7 +52,7 @@ Collaborate through remotes.
 - [x] Ahead/behind counts on branches; set upstream on first push
 - [x] Add, edit and remove remotes
 - [x] Force-push only with lease, behind a confirmation
-- [ ] Clone and init a repository from the app
+- [x] Clone and init a repository from the app
 
 ## v0.4: Rewrite (merge and history editing)
 

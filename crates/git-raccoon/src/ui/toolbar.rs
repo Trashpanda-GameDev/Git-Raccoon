@@ -10,6 +10,8 @@ use crate::ui::{welcome, widgets};
 pub enum Action {
     ToggleSidebar,
     Browse,
+    Clone,
+    Init,
     Open(String),
     Forget(String),
     Close,
@@ -70,6 +72,20 @@ pub fn show(
                     .clicked()
                 {
                     action = Some(Action::Browse);
+                    ui.close();
+                }
+                if ui
+                    .button(format!("{}  Clone repository…", icon::DOWNLOAD_SIMPLE))
+                    .clicked()
+                {
+                    action = Some(Action::Clone);
+                    ui.close();
+                }
+                if ui
+                    .button(format!("{}  New repository…", icon::FOLDER_PLUS))
+                    .clicked()
+                {
+                    action = Some(Action::Init);
                     ui.close();
                 }
                 if ui

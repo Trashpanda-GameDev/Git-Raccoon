@@ -47,7 +47,8 @@ pub struct GraphPage {
     pub total: usize,
     /// Number of lanes the whole graph needs.
     pub width: usize,
-    /// Checked-out branch name, or `None` when HEAD is detached or unborn.
+    /// Checked-out branch name (even before its first commit), or `None`
+    /// when HEAD is detached.
     pub branch: Option<String>,
     /// Absolute path of the working directory (or git dir if bare).
     pub path: String,
@@ -74,10 +75,14 @@ impl History {
     pub fn load(path: &str, snapshot: u64) -> Result<History> {
         let repo = Repository::discover(path)?;
         let head = repo.head().ok();
-        let head_branch = head
-            .as_ref()
-            .filter(|h| h.is_branch())
-            .and_then(|h| h.name().map(String::from));
+        let head_branch = match &head {
+            Some(h) => h.is_branch().then(|| h.name().map(String::from)).flatten(),
+            // No commits yet: HEAD still names the branch they'll go on.
+            None => repo
+                .find_reference("HEAD")
+                .ok()
+                .and_then(|r| r.symbolic_target().map(String::from)),
+        };
 
         let mut walk = repo.revwalk()?;
         walk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
@@ -159,7 +164,8 @@ impl History {
         &self.path
     }
 
-    /// Checked-out branch name, or `None` when HEAD is detached or unborn.
+    /// Checked-out branch name (even before its first commit), or `None`
+    /// when HEAD is detached.
     /// The row of the commit HEAD points at.
     pub fn head_row(&self) -> Option<usize> {
         self.head.and_then(|id| self.index.get(&id).copied())
@@ -257,6 +263,15 @@ mod tests {
         assert_eq!(by_id(feature).refs[0].name, "feature");
         assert!(!by_id(feature).refs[0].is_head);
         assert_eq!(by_id(base).refs[0].kind, RefKind::Tag);
+    }
+
+    #[test]
+    fn names_the_branch_of_an_empty_repository() {
+        let t = TempRepo::new();
+        t.repo.set_head("refs/heads/trunk").unwrap();
+        let h = History::load(t.path(), 1).unwrap();
+        assert_eq!(h.total(), 0);
+        assert_eq!(h.branch(), Some("trunk"));
     }
 
     #[test]

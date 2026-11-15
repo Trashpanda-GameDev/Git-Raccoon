@@ -8,6 +8,8 @@ use crate::ui::widgets;
 
 pub enum Action {
     Browse,
+    Clone,
+    Init,
     Open(String),
     Forget(String),
 }
@@ -30,6 +32,22 @@ pub fn show(
         if widgets::primary_button(ui, "Open a repository…").clicked() {
             action = Some(Action::Browse);
         }
+        ui.add_space(4.0);
+        // Centred pair of secondary actions.
+        let w = 300.0;
+        ui.allocate_ui_with_layout(
+            egui::vec2(w, 28.0),
+            Layout::left_to_right(Align::Center),
+            |ui| {
+                ui.add_space((w - 270.0) / 2.0);
+                if ui.button("Clone a repository…").clicked() {
+                    action = Some(Action::Clone);
+                }
+                if ui.button("New repository…").clicked() {
+                    action = Some(Action::Init);
+                }
+            },
+        );
         if recent.is_empty() {
             return;
         }

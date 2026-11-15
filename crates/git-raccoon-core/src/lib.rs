@@ -7,6 +7,7 @@ pub mod askpass;
 pub mod branch;
 mod cli;
 pub mod commit;
+pub mod create;
 pub mod details;
 pub mod discard;
 mod error;

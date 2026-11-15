@@ -6,6 +6,14 @@ use crate::repo_view::{self, Dialog, Loaded, Op, RepoView, Source};
 use crate::settings::{self, Settings};
 use crate::task::Task;
 use crate::theme;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
+use git_raccoon_core::create;
+use git_raccoon_core::sync::Progress;
+
+use crate::ui::clone;
 use crate::ui::{
     details, dialog, diff, history, search_bar, sidebar, toolbar, welcome, widgets, working,
 };
@@ -23,6 +31,16 @@ pub struct App {
     askpass: Option<git_raccoon_core::askpass::Server>,
     /// The question being shown.
     prompt: Option<crate::ui::askpass::Prompt>,
+    /// The clone dialog, and a clone in progress.
+    clone_form: Option<clone::Form>,
+    cloning: Option<Cloning>,
+}
+
+/// A clone running in the background.
+struct Cloning {
+    progress: Arc<Mutex<Option<Progress>>>,
+    cancel: Arc<AtomicBool>,
+    task: Task<Result<PathBuf, git_raccoon_core::Error>>,
 }
 
 fn logo(ctx: &egui::Context) -> egui::TextureHandle {
@@ -67,6 +85,119 @@ impl App {
             scroll: history::Scroll::default(),
             askpass: None,
             prompt: None,
+            clone_form: None,
+            cloning: None,
+        }
+    }
+
+    /// Opens the clone dialog.
+    pub fn show_clone(&mut self) {
+        let parent = self
+            .settings
+            .clone_dir
+            .clone()
+            .or_else(|| {
+                std::env::var("USERPROFILE")
+                    .or_else(|_| std::env::var("HOME"))
+                    .ok()
+            })
+            .unwrap_or_default();
+        self.clone_form = Some(clone::Form {
+            parent,
+            ..clone::Form::default()
+        });
+    }
+
+    pub fn is_cloning(&self) -> bool {
+        self.cloning.is_some()
+    }
+
+    fn start_clone(&mut self, ctx: &egui::Context) {
+        let Some(form) = &mut self.clone_form else {
+            return;
+        };
+        form.error = None;
+        let (url, dest) = (form.url.trim().to_string(), form.dest());
+        self.settings.clone_dir = Some(form.parent.trim().to_string());
+        let progress = Arc::new(Mutex::new(None));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (p, c, repaint) = (progress.clone(), cancel.clone(), ctx.clone());
+        self.cloning = Some(Cloning {
+            progress,
+            cancel,
+            task: Task::spawn(ctx, move || {
+                let mut report = |update| {
+                    if let Ok(mut slot) = p.lock() {
+                        *slot = Some(update);
+                    }
+                    repaint.request_repaint();
+                };
+                create::clone(&url, &dest, &mut report, &c)
+            }),
+        });
+    }
+
+    fn poll_clone(&mut self, ctx: &egui::Context) {
+        let Some(result) = self.cloning.as_ref().and_then(|c| c.task.poll()) else {
+            return;
+        };
+        self.cloning = None;
+        match result {
+            Ok(dest) => {
+                self.clone_form = None;
+                self.open(ctx, dest.to_string_lossy());
+            }
+            Err(git_raccoon_core::Error::Cancelled) => {}
+            Err(e) => {
+                if let Some(form) = &mut self.clone_form {
+                    form.error = Some(format!("Could not clone:\n{e}"));
+                }
+            }
+        }
+    }
+
+    fn clone_dialog(&mut self, ctx: &egui::Context) {
+        let Some(form) = &mut self.clone_form else {
+            return;
+        };
+        let progress = self
+            .cloning
+            .as_ref()
+            .map(|c| c.progress.lock().ok().and_then(|p| p.clone()));
+        match clone::show(ctx, form, progress) {
+            Some(clone::Action::Clone) => self.start_clone(ctx),
+            Some(clone::Action::Browse) => {
+                if let Some(dir) = rfd::FileDialog::new()
+                    .set_title("Where to clone to")
+                    .pick_folder()
+                {
+                    form.parent = dir.to_string_lossy().into_owned();
+                }
+            }
+            Some(clone::Action::Cancel) => self.clone_form = None,
+            Some(clone::Action::Stop) => {
+                if let Some(c) = &self.cloning {
+                    c.cancel.store(true, Ordering::Relaxed);
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// Starts a repository in `dir` (or just opens it, if it is one) and opens it.
+    pub fn new_repository(&mut self, ctx: &egui::Context, dir: &std::path::Path) {
+        match create::init(dir) {
+            Ok(()) => self.open(ctx, dir.to_string_lossy()),
+            Err(e) => self.error = Some(format!("Could not create the repository:\n{e}")),
+        }
+    }
+
+    fn pick_new_repository(&mut self, ctx: &egui::Context) {
+        if let Some(dir) = rfd::FileDialog::new()
+            .set_title("Choose a folder for the new repository")
+            .pick_folder()
+        {
+            self.new_repository(ctx, &dir);
         }
     }
 
@@ -100,7 +231,8 @@ impl App {
         let git_running = self
             .repo
             .as_ref()
-            .is_some_and(|r| r.is_staging() || r.is_committing());
+            .is_some_and(|r| r.is_staging() || r.is_committing())
+            || self.cloning.is_some();
         if !git_running && let Some(prompt) = self.prompt.take() {
             prompt.request.answer(None);
         }
@@ -141,6 +273,7 @@ impl App {
     /// Whether anything is still loading (for tests waiting on results).
     pub fn is_busy(&self) -> bool {
         self.opening.is_some()
+            || self.cloning.is_some()
             || self.repo.as_ref().is_some_and(|r| {
                 r.is_refreshing()
                     || r.is_loading_selection()
@@ -255,21 +388,9 @@ impl App {
             repo.step(step);
         }
     }
-}
 
-impl eframe::App for App {
-    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.poll_opening(ctx);
-        if let Some(repo) = &mut self.repo {
-            repo.poll(ctx);
-            if let Some(e) = repo.refresh_error.take() {
-                self.error = Some(e);
-            }
-        }
-        self.shortcuts(ctx);
-    }
-
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    /// The window's panels: toolbar, sidebar, panes and history.
+    fn panels(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         let now = settings::now();
 
@@ -312,6 +433,8 @@ impl eframe::App for App {
                 self.settings.hide_sidebar = !self.settings.hide_sidebar
             }
             Some(toolbar::Action::Browse) => self.browse(&ctx),
+            Some(toolbar::Action::Clone) => self.show_clone(),
+            Some(toolbar::Action::Init) => self.pick_new_repository(&ctx),
             Some(toolbar::Action::Open(p)) => self.open(&ctx, p),
             Some(toolbar::Action::Forget(p)) => self.settings.forget(&p),
             Some(toolbar::Action::Close) => self.close(&ctx),
@@ -370,6 +493,8 @@ impl eframe::App for App {
                     }
                     match welcome::show(ui, &self.logo, &self.settings.recent, now) {
                         Some(welcome::Action::Browse) => self.browse(&ctx),
+                        Some(welcome::Action::Clone) => self.show_clone(),
+                        Some(welcome::Action::Init) => self.pick_new_repository(&ctx),
                         Some(welcome::Action::Open(p)) => self.open(&ctx, p),
                         Some(welcome::Action::Forget(p)) => self.settings.forget(&p),
                         None => {}
@@ -572,6 +697,27 @@ impl eframe::App for App {
         if let Some(op) = dialog::show(&ctx, &mut repo.dialog, &repo.refs) {
             repo.run(&ctx, op);
         }
+    }
+}
+
+impl eframe::App for App {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.poll_opening(ctx);
+        self.poll_clone(ctx);
+        if let Some(repo) = &mut self.repo {
+            repo.poll(ctx);
+            if let Some(e) = repo.refresh_error.take() {
+                self.error = Some(e);
+            }
+        }
+        self.shortcuts(ctx);
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        self.panels(ui);
+        // Above everything: the clone dialog, then Git's questions.
+        self.clone_dialog(&ctx);
         self.questions(&ctx);
     }
 

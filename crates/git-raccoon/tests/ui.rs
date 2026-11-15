@@ -723,10 +723,9 @@ fn stages_files_hunks_and_lines() {
     h.run_ok();
     assert_eq!(h.state().repo().unwrap().picked.len(), 1);
     screenshot(&mut h, "10-pick-line");
-    // Move off the gutter first: on a slow run its tooltip can cover the button.
-    h.get_by_label("Stage 1 line").hover();
-    h.run_ok();
-    h.get_by_label("Stage 1 line").click();
+    // Clicked through accessibility rather than the pointer: under heavy
+    // load with screenshots on, a pointer click here was sometimes lost.
+    h.get_by_label("Stage 1 line").click_accesskit();
     wait_for(&mut h, "the line staged", |app| {
         app.repo().unwrap().picked.is_empty() && !app.is_busy()
     });
@@ -1531,4 +1530,71 @@ fn adds_edits_and_removes_remotes() {
     });
     assert_eq!(remote_names(h.state()), [("origin".to_string(), 1)]);
     let _ = std::fs::remove_dir_all(&bare);
+}
+
+#[test]
+fn clones_and_starts_repositories() {
+    let sample = Sample::build();
+    let base = std::env::temp_dir().join(format!("git-raccoon-clones-{}", rand_suffix()));
+    std::fs::create_dir_all(&base).unwrap();
+    let parent = base.to_str().unwrap().replace('\\', "/");
+    let mut h = harness(Settings::default());
+    h.run_ok();
+
+    // Clone the sample from the welcome screen.
+    h.get_by_label("Clone a repository…").click();
+    h.run_ok();
+    type_into(&mut h, "Repository URL", sample.path());
+    h.get_by_label("Clone folder").click();
+    h.run_ok();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+    h.get_by_label("Clone folder").type_text(&parent);
+    h.run_ok();
+    let name = Path::new(sample.path())
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        h.get_by_label("Clone name").value().as_deref(),
+        Some(name.as_str()),
+        "named after the URL"
+    );
+    screenshot(&mut h, "26-clone");
+    h.get_by_label("Clone").click();
+    wait_for(&mut h, "the clone to open", |app| app.repo().is_some());
+    let repo = h.state().repo().unwrap();
+    assert_eq!(
+        Path::new(repo.path()).canonicalize().unwrap(),
+        base.join(&name).canonicalize().unwrap()
+    );
+    assert!(repo.history.total() > 5);
+    assert_eq!(
+        h.state().settings().clone_dir.as_deref(),
+        Some(parent.as_str()),
+        "remembered"
+    );
+
+    // Cloning into a folder that's in use isn't offered.
+    h.get_by_label_contains("git-raccoon").click(); // the repository menu
+    h.run_ok();
+    h.get_by_label_contains("Clone repository").click();
+    h.run_ok();
+    type_into(&mut h, "Repository URL", sample.path());
+    h.get_by_label_contains("already exists and isn't empty");
+    h.get_by_label("Cancel").click();
+    h.run_ok();
+
+    // A new, empty repository opens too.
+    let fresh = base.join("fresh");
+    let ctx = h.ctx.clone();
+    h.state_mut().new_repository(&ctx, &fresh);
+    wait_for(&mut h, "the new repository", |app| {
+        app.repo().is_some_and(|r| r.path().contains("fresh"))
+    });
+    assert_eq!(h.state().error(), None);
+    assert_eq!(h.state().repo().unwrap().history.total(), 0);
+    screenshot(&mut h, "27-new-repository");
+    let _ = std::fs::remove_dir_all(&base);
 }

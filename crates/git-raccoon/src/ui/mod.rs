@@ -1,6 +1,7 @@
 //! The views that make up the window.
 
 pub mod askpass;
+pub mod clone;
 pub mod details;
 pub mod dialog;
 pub mod diff;
