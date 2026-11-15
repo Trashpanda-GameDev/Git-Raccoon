@@ -2413,7 +2413,22 @@ fn shows_submodules_worktrees_and_lfs() {
     h.get_by_label("Worktree folder")
         .type_text(&folder.to_string_lossy());
     type_into(&mut h, "Worktree branch", "side-work");
-    h.get_by_label("Create worktree").click();
+    // What was typed is what's asked for (and the button is enabled).
+    match h.state().repo().unwrap().dialog.as_ref() {
+        Some(git_raccoon::repo_view::Dialog::Worktree {
+            folder: f,
+            branch,
+            new,
+        }) => {
+            assert_eq!(
+                (f.as_str(), branch.as_str(), *new),
+                (&*folder.to_string_lossy(), "side-work", true)
+            );
+        }
+        _ => panic!("the worktree dialog isn't open"),
+    }
+    // Through accessibility: a pointer click here was lost on a slow CI machine.
+    h.get_by_label("Create worktree").click_accesskit();
     wait_for(&mut h, "the worktree", |app| extras_state(app).0 == 2);
     assert!(folder.join("README.md").exists());
     let name = folder.file_name().unwrap().to_string_lossy().to_string();

@@ -18,6 +18,13 @@ impl TempRepo {
         let dir = std::env::temp_dir().join(format!("git-raccoon-test-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let repo = Repository::init(&dir).unwrap();
+        // Files exactly as written, whatever the machine's settings (Git for
+        // Windows turns on line-ending conversion by default). Tests of that
+        // conversion turn it on themselves.
+        repo.config()
+            .unwrap()
+            .set_bool("core.autocrlf", false)
+            .unwrap();
         TempRepo { dir, repo }
     }
 

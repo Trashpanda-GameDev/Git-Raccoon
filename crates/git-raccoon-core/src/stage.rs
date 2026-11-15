@@ -120,7 +120,7 @@ pub fn stage_lines(path: &str, file: &str, pick: &Pick, expected: &[String]) -> 
     let repo = open(path)?;
     let diff = checked_diff(path, Side::Unstaged, file, expected)?;
     let old = index_content(&repo, file)?;
-    let new = std::fs::read(repo.workdir().expect("not bare").join(file)).ok();
+    let new = cleaned_worktree_content(&repo, file);
     let content = rebuild(
         old.as_deref().unwrap_or_default(),
         new.as_deref().unwrap_or_default(),
@@ -253,6 +253,21 @@ fn rebuild(
     }
     copy_until(&mut out, &mut next_old, old_lines.len() + 1, &mut push);
     out
+}
+
+/// The file on disk as `git add` would store it: with Git's filters (such
+/// as `core.autocrlf` turning CRLF into LF) applied, so picked lines match
+/// the lines kept from the index. `None` if it's gone.
+fn cleaned_worktree_content(repo: &Repository, file: &str) -> Option<Vec<u8>> {
+    let full = repo.workdir()?.join(file);
+    if !full.exists() {
+        return None;
+    }
+    // Writes a loose blob (harmless; `git gc` tidies unused ones away).
+    match repo.blob_path(&full).and_then(|id| repo.find_blob(id)) {
+        Ok(blob) => Some(blob.content().to_vec()),
+        Err(_) => std::fs::read(&full).ok(),
+    }
 }
 
 fn index_content(repo: &Repository, file: &str) -> Result<Option<Vec<u8>>> {
@@ -538,6 +553,30 @@ mod tests {
             std::fs::read_to_string(t.dir.join("f.txt")).unwrap(),
             "a\nB\nc\nd\n"
         );
+    }
+
+    #[test]
+    fn stages_lines_consistently_with_autocrlf() {
+        // As on Windows by default: LF in the repository, CRLF on disk.
+        let t = TempRepo::new();
+        t.repo
+            .config()
+            .unwrap()
+            .set_bool("core.autocrlf", true)
+            .unwrap();
+        t.write("w.txt", "one\r\ntwo\r\nthree\r\n");
+        t.commit_all("first");
+        assert_eq!(
+            staged_text(&t, "w.txt"),
+            "one\ntwo\nthree\n",
+            "stored with LF"
+        );
+        t.write("w.txt", "ONE\r\ntwo\r\nTHREE\r\n");
+        let d = headers(&t, Side::Unstaged, "w.txt");
+        stage_lines(t.path(), "w.txt", &Pick::Hunk(0), &d).unwrap();
+        let staged = staged_text(&t, "w.txt");
+        assert!(!staged.contains('\r'), "no mixed endings: {staged:?}");
+        assert!(staged.starts_with("ONE\ntwo\n"), "{staged:?}");
     }
 
     #[test]

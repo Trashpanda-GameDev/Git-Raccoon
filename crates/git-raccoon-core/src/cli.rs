@@ -116,8 +116,13 @@ pub fn run_env(
             .stderr(Stdio::piped()),
     )?;
     if let (Some(text), Some(mut pipe)) = (stdin, child.stdin.take()) {
-        pipe.write_all(text.as_bytes())
-            .map_err(|e| Error::Command(format!("could not send input to git: {e}")))?;
+        // Git may finish before reading it all (a hook refusing a commit,
+        // say): then what it printed is the news, not the closed pipe.
+        if let Err(e) = pipe.write_all(text.as_bytes())
+            && e.kind() != std::io::ErrorKind::BrokenPipe
+        {
+            return Err(Error::Command(format!("could not send input to git: {e}")));
+        }
     }
     let output = child
         .wait_with_output()
