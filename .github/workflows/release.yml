@@ -1,9 +1,9 @@
 name: Release
 
-# Pushing a tag like v0.5.0 builds the Windows installer and publishes it,
-# with its update packages, to the public releases repository. Running the
-# workflow by hand (Actions > Release > Run workflow) only builds it, as a
-# downloadable artifact, to try before releasing.
+# Pushing a tag like v0.5.0 builds the installers (Windows, macOS, Linux)
+# and publishes them, with their update packages, to the public releases
+# repository. Running the workflow by hand (Actions > Release > Run
+# workflow) only builds them, as downloadable artifacts, to try first.
 on:
   push:
     tags: ["v*"]
@@ -14,17 +14,15 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  windows:
-    name: Windows installer
-    runs-on: windows-latest
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Version (from Cargo.toml; a tag must match it)
+      - name: From Cargo.toml (a tag must match it)
         id: version
-        shell: bash
         run: |
           version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -33,51 +31,157 @@ jobs:
             exit 1
           fi
 
+  windows:
+    name: Windows installer
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - run: cargo build --release -p git-raccoon
-
       - name: Files to install
         shell: bash
-        run: |
-          mkdir publish
-          cp target/release/git-raccoon.exe publish/
-
+        run: mkdir publish && cp target/release/git-raccoon.exe publish/
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 9.0.x
-      - name: Velopack's packaging tool
-        run: dotnet tool install -g vpk
-
+      - run: dotnet tool install -g vpk
       - name: The previous release (so updates can be small deltas)
         if: startsWith(github.ref, 'refs/tags/')
         continue-on-error: true # the first release has nothing before it
-        run: vpk download github --repoUrl ${{ env.RELEASES_REPO }} --outputDir releases
-
+        run: vpk download github --repoUrl ${{ env.RELEASES_REPO }} --channel win --outputDir releases
       - name: Package
         run: >
           vpk pack
           --packId GitRaccoon
-          --packVersion ${{ steps.version.outputs.version }}
+          --packVersion ${{ needs.version.outputs.version }}
           --runtime win-x64
           --packDir publish
           --mainExe git-raccoon.exe
           --packTitle "Git Raccoon"
           --packAuthors Trashpanda-GameDev
           --icon crates/git-raccoon/assets/icon.ico
+          --splashImage crates/git-raccoon/assets/splash.png
+          --channel win
           --outputDir releases
-
-      - name: Keep the installer
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: git-raccoon-${{ steps.version.outputs.version }}-windows
+          name: releases-win
           path: releases
 
-      - name: Publish to the releases repository
+  macos:
+    name: macOS app (Apple Silicon)
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p git-raccoon
+      - name: Files to install, and the icon in Apple's format
+        run: |
+          mkdir publish && cp target/release/git-raccoon publish/
+          mkdir icon.iconset
+          for size in 16 32 128 256 512; do
+            sips -z $size $size crates/git-raccoon/assets/icon.png --out icon.iconset/icon_${size}x${size}.png
+            double=$((size * 2))
+            sips -z $double $double crates/git-raccoon/assets/icon.png --out icon.iconset/icon_${size}x${size}@2x.png
+          done
+          iconutil -c icns icon.iconset -o icon.icns
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+      - run: dotnet tool install -g vpk
+      - name: The previous release (so updates can be small deltas)
         if: startsWith(github.ref, 'refs/tags/')
+        continue-on-error: true
+        run: vpk download github --repoUrl ${{ env.RELEASES_REPO }} --channel osx --outputDir releases
+      - name: Package
         run: >
-          vpk upload github
-          --repoUrl ${{ env.RELEASES_REPO }}
-          --token ${{ secrets.RELEASES_TOKEN }}
-          --publish
-          --releaseName "Git Raccoon ${{ steps.version.outputs.version }}"
-          --tag v${{ steps.version.outputs.version }}
+          vpk pack
+          --packId GitRaccoon
+          --packVersion ${{ needs.version.outputs.version }}
+          --runtime osx-arm64
+          --packDir publish
+          --mainExe git-raccoon
+          --packTitle "Git Raccoon"
+          --packAuthors Trashpanda-GameDev
+          --bundleId io.github.trashpanda-gamedev.git-raccoon
+          --icon icon.icns
+          --channel osx
           --outputDir releases
+      - uses: actions/upload-artifact@v4
+        with:
+          name: releases-osx
+          path: releases
+
+  linux:
+    name: Linux AppImage
+    needs: version
+    # The oldest supported Ubuntu, so the AppImage runs on older systems too.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libssl-dev \
+            libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev \
+            libxrandr-dev libxi-dev libfuse2
+      - run: cargo build --release -p git-raccoon
+      - name: Files to install
+        run: mkdir publish && cp target/release/git-raccoon publish/
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+      - run: dotnet tool install -g vpk
+      - name: The previous release (so updates can be small deltas)
+        if: startsWith(github.ref, 'refs/tags/')
+        continue-on-error: true
+        run: vpk download github --repoUrl ${{ env.RELEASES_REPO }} --channel linux --outputDir releases
+      - name: Package
+        run: >
+          vpk pack
+          --packId GitRaccoon
+          --packVersion ${{ needs.version.outputs.version }}
+          --runtime linux-x64
+          --packDir publish
+          --mainExe git-raccoon
+          --packTitle "Git Raccoon"
+          --packAuthors Trashpanda-GameDev
+          --icon crates/git-raccoon/assets/icon.png
+          --categories Development
+          --channel linux
+          --outputDir releases
+      - uses: actions/upload-artifact@v4
+        with:
+          name: releases-linux
+          path: releases
+
+  publish:
+    name: Publish to the releases repository
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [version, windows, macos, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+      - run: dotnet tool install -g vpk
+      # One release with every platform: a draft until the last is in.
+      - name: Upload
+        env:
+          TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          for channel in win osx linux; do
+            publish=""
+            if [ "$channel" = linux ]; then publish="--publish"; fi
+            vpk upload github --repoUrl "$RELEASES_REPO" --token "$TOKEN" \
+              --channel "$channel" --outputDir "releases-$channel" \
+              --releaseName "Git Raccoon $VERSION" --tag "v$VERSION" --merge $publish
+          done
