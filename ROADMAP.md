@@ -83,7 +83,7 @@ The operations people open a GUI for.
 - [x] User guide ([docs/guide.md](docs/guide.md))
 - [x] Project website ([site/](site/), on GitHub Pages)
 - [x] App icon
-- [ ] Branding: installer artwork
+- [x] Branding: installer artwork and a share card ([scripts/make-artwork.py](scripts/make-artwork.py))
 
 ## Later (ideas, not commitments)
 

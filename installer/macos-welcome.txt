@@ -1,0 +1,5 @@
+Welcome to Git Raccoon, a fast, friendly Git client.
+
+This installs Git Raccoon in your Applications folder. It keeps itself up to date: when a new version is ready, the toolbar offers to restart into it.
+
+Git Raccoon needs Git. If it isn't installed yet, macOS offers to install it (with the Command Line Tools) the first time it's needed, or get it from git-scm.com.

@@ -4,12 +4,13 @@ name: Release
 # publishes them, with their update packages, as a GitHub release of this
 # repository, tagged v<the version in Cargo.toml>. Either push that tag, or
 # push the commit to the `release` branch (the release then creates the
-# tag). Running the workflow by hand (Actions > Release > Run workflow)
-# only builds them, as downloadable artifacts, to try first.
+# tag). Running the workflow by hand (Actions > Release > Run workflow),
+# or pushing to the `try-release` branch, only builds them, as
+# downloadable artifacts, to try first.
 on:
   push:
     tags: ["v*"]
-    branches: [release]
+    branches: [release, try-release]
   workflow_dispatch:
 
 env:
@@ -136,6 +137,9 @@ jobs:
             sips -z $double $double crates/git-raccoon/assets/icon.png --out icon.iconset/icon_${size}x${size}@2x.png
           done
           iconutil -c icns icon.iconset -o icon.icns
+          # The installer's license page: both licenses.
+          { echo "Git Raccoon is licensed under either of the MIT license or the Apache License, Version 2.0, at your option."
+            echo; echo "---"; echo; cat LICENSE-MIT; echo; echo "---"; echo; cat LICENSE-APACHE; } > license.md
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 9.0.x
@@ -156,6 +160,9 @@ jobs:
           --packAuthors Trashpanda-GameDev
           --bundleId io.github.trashpanda-gamedev.git-raccoon
           --icon icon.icns
+          --instWelcome installer/macos-welcome.txt
+          --instLicense license.md
+          --instConclusion installer/macos-conclusion.txt
           --channel osx
           --outputDir releases
       - uses: actions/upload-artifact@v4

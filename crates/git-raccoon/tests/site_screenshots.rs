@@ -324,7 +324,26 @@ fn website_screenshots() {
     h.key_press(Key::Escape);
     settle(&mut h);
 
-    // Working changes: stage some lines of an edit.
+    drop(h);
+
+    // The same view in other themes (before the edits below).
+    for (theme, name) in [
+        (ThemeChoice::Raccoon, "raccoon"),
+        (ThemeChoice::Light, "light"),
+        (ThemeChoice::Pastel, "pastel"),
+        (ThemeChoice::Abyss, "abyss"),
+        (ThemeChoice::Forest, "forest"),
+        (ThemeChoice::Paper, "paper"),
+    ] {
+        let mut h = harness(theme);
+        open(&mut h, &demo.dir);
+        click(&mut h, INDEX_COMMIT);
+        small_shot(&mut h, &format!("theme-{name}"));
+    }
+
+    // Working changes, back in the dark theme: stage some lines of an edit.
+    let mut h = harness(ThemeChoice::Dark);
+    open(&mut h, &demo.dir);
     demo.write("src/cache.rs", CACHE_2);
     demo.write(
         "CHANGELOG.md",
@@ -342,22 +361,6 @@ fn website_screenshots() {
     click(&mut h, "Working changes");
     click(&mut h, "src/cache.rs");
     shot(&mut h, "staging");
-    drop(h);
-
-    // The same view in other themes.
-    for (theme, name) in [
-        (ThemeChoice::Raccoon, "raccoon"),
-        (ThemeChoice::Light, "light"),
-        (ThemeChoice::Pastel, "pastel"),
-        (ThemeChoice::Abyss, "abyss"),
-        (ThemeChoice::Forest, "forest"),
-        (ThemeChoice::Paper, "paper"),
-    ] {
-        let mut h = harness(theme);
-        open(&mut h, &demo.dir);
-        click(&mut h, INDEX_COMMIT);
-        small_shot(&mut h, &format!("theme-{name}"));
-    }
 }
 
 const CARGO: &str = r#"[package]

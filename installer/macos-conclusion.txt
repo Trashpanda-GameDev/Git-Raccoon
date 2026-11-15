@@ -1,0 +1,5 @@
+Git Raccoon is installed.
+
+The first time, right-click Git Raccoon in Applications and choose Open (or allow it in System Settings > Privacy & Security): it isn't signed by Apple yet.
+
+The user guide: https://trashpanda-gamedev.github.io/Git-Raccoon/guide.html

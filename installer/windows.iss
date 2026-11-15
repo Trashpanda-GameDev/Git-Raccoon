@@ -35,6 +35,9 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
 SetupIconFile=..\crates\git-raccoon\assets\icon.ico
+; From scripts/make-artwork.py, one per display scale (100% to 250%).
+WizardImageFile=art\wizard-1.bmp,art\wizard-2.bmp,art\wizard-3.bmp,art\wizard-4.bmp,art\wizard-5.bmp,art\wizard-6.bmp,art\wizard-7.bmp
+WizardSmallImageFile=art\wizard-small-1.bmp,art\wizard-small-2.bmp,art\wizard-small-3.bmp,art\wizard-small-4.bmp,art\wizard-small-5.bmp,art\wizard-small-6.bmp,art\wizard-small-7.bmp
 OutputDir=..\installer-out
 OutputBaseFilename=GitRaccoon-win-Setup
 Compression=none

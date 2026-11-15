@@ -13,6 +13,7 @@ See the [user guide](docs/guide.md) for how to use it, and [ROADMAP.md](ROADMAP.
 - `crates/git-raccoon-core`: the Git logic: history and graph layout, commit details and diffs, staging, committing, branches, tags, stashes, undo, fetch/pull/push, search, and watching for changes. No UI code.
 - `crates/git-raccoon`: the desktop app.
 - `site/`: the website. `python3 scripts/build-site.py` builds it into `_site/` (with the user guide), and the Website workflow publishes it on GitHub Pages when it changes. Its screenshots come from the app: `cargo test -p git-raccoon --test site_screenshots -- --ignored`.
+- `installer/`: the Windows installer that asks where to install (an Inno Setup script), the macOS installer's welcome and closing pages, and the installers' artwork, drawn from the app icon by `python3 scripts/make-artwork.py`.
 
 ## Running it
 
