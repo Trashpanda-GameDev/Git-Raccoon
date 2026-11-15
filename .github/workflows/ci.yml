@@ -67,12 +67,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Git identity for tests that commit
         run: |
           git config --global user.name "CI"
           git config --global user.email "ci@example.com"
           git config --global init.defaultBranch main
+      # Lints here too: some code (the title bar's colours) is Windows-only.
+      - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo build --release --workspace
       - run: cargo test -p git-raccoon-core
       - run: cargo test -p git-raccoon --lib

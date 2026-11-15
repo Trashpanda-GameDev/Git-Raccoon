@@ -19,6 +19,11 @@ two-face = { version = "0.5", default-features = false, features = ["syntect-def
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 velopack = "1.2.161"
 
+# Colouring the title bar to match the theme, on Windows 11.
+[target.'cfg(windows)'.dependencies]
+raw-window-handle = "0.6"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
+
 [dev-dependencies]
 egui_kittest = { version = "0.36", features = ["eframe", "snapshot", "wgpu"] }
 egui = "0.36"

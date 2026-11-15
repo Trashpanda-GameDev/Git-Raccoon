@@ -1467,11 +1467,13 @@ dependencies = [
  "git-raccoon-core",
  "git2",
  "image",
+ "raw-window-handle",
  "rfd",
  "serde",
  "syntect",
  "two-face",
  "velopack",
+ "windows-sys 0.61.2",
  "winresource",
 ]
 

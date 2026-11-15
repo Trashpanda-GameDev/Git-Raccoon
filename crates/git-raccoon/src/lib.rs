@@ -11,6 +11,7 @@ mod search;
 pub mod settings;
 mod task;
 mod theme;
+mod title_bar;
 mod ui;
 pub mod updates;
 

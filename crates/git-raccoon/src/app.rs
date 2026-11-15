@@ -48,6 +48,8 @@ pub struct App {
     settings_open: bool,
     /// The look and zoom last applied.
     applied: Option<(theme::Look, f32)>,
+    /// The title bar's colours need setting (the look changed).
+    title_bar_stale: bool,
     updater: crate::updates::Updater,
     /// Restart into the downloaded update once settings are saved.
     restart_to_update: bool,
@@ -130,6 +132,7 @@ impl App {
             palette: None,
             settings_open: false,
             applied: None,
+            title_bar_stale: true,
             updater: crate::updates::Updater::new(),
             restart_to_update: false,
             crash_reports: Vec::new(),
@@ -275,6 +278,9 @@ impl App {
         self.applied = Some((look, zoom));
         if theme_changed {
             theme::set(ctx, look);
+            let light = (self.settings.theme != ThemeChoice::System).then(|| look.is_light());
+            crate::title_bar::follow(ctx, light);
+            self.title_bar_stale = true;
             // Diffs carry their colours: draw them again.
             if let Some(repo) = &mut self.repo {
                 repo.diff.clear();
@@ -468,15 +474,9 @@ impl App {
         self.update_title(ctx);
     }
 
+    /// The window is always just "Git Raccoon": the tabs say which repository.
     fn update_title(&self, ctx: &egui::Context) {
-        let title = match &self.repo {
-            Some(r) => format!(
-                "{} — Git Raccoon",
-                settings::repo_name(r.path().trim_end_matches(['/', '\\']))
-            ),
-            None => "Git Raccoon".to_string(),
-        };
-        ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title("Git Raccoon".into()));
     }
 
     /// Every open repository, the active one first.
@@ -1519,6 +1519,10 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        // The title bar matches the tab bar beneath it.
+        if std::mem::take(&mut self.title_bar_stale) {
+            crate::title_bar::colour(frame, theme::bg(), theme::text(), theme::border());
+        }
         // Restarting into an update ends the process at once: save first.
         if std::mem::take(&mut self.restart_to_update) {
             if let Some(storage) = frame.storage_mut() {
