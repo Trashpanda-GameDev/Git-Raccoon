@@ -813,6 +813,7 @@ impl App {
                         repo.active_file = None;
                         repo.planner = None;
                         repo.conflict = None;
+                        repo.search.open = true;
                         ctx.memory_mut(|m| m.request_focus(search_bar::input_id()));
                     }
                     Command::Undo => repo.undo(ctx),
@@ -1457,17 +1458,20 @@ impl App {
                     }
                     return;
                 }
-                Frame::new()
-                    .inner_margin(Margin::symmetric(12, 0))
-                    .show(ui, |ui| {
-                        ui.set_height(36.0);
-                        search_bar::show(ui, repo);
-                    });
-                ui.painter().hline(
-                    ui.max_rect().x_range(),
-                    ui.cursor().top(),
-                    egui::Stroke::new(1.0, theme::border()),
-                );
+                // The search bar, while searching (Ctrl+F).
+                if repo.search.open {
+                    Frame::new()
+                        .inner_margin(Margin::symmetric(12, 0))
+                        .show(ui, |ui| {
+                            ui.set_height(36.0);
+                            search_bar::show(ui, repo);
+                        });
+                    ui.painter().hline(
+                        ui.max_rect().x_range(),
+                        ui.cursor().top(),
+                        egui::Stroke::new(1.0, theme::border()),
+                    );
+                }
                 match history::show(ui, repo, &mut self.scroll, now) {
                     Some(history::Click::Row(row)) => {
                         repo.select_index(row);

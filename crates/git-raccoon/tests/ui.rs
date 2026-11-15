@@ -399,6 +399,8 @@ fn searches_the_whole_history() {
     let mut h = harness(Settings::default());
     open(&mut h, sample.path());
 
+    // Hidden until Ctrl+F.
+    assert!(h.query_by_label("Search commits").is_none());
     h.key_press_modifiers(egui::Modifiers::COMMAND, Key::F);
     h.run_ok();
     h.get_by_label("Search commits").type_text("lanes");
@@ -432,6 +434,20 @@ fn searches_the_whole_history() {
         3,
         "graph.rs: two commits and the merge"
     );
+
+    // Esc closes it, and the search with it.
+    h.get_by_label("Search commits").click();
+    h.run_ok();
+    h.key_press(Key::Escape);
+    h.run_ok();
+    assert!(h.query_by_label("Search commits").is_none());
+    assert!(h.state().repo().unwrap().search_rows().is_empty());
+    // So does its close button.
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::F);
+    h.run_ok();
+    h.get_by_label("Close search (Esc)").click();
+    h.run_ok();
+    assert!(h.query_by_label("Search commits").is_none());
 }
 
 #[test]

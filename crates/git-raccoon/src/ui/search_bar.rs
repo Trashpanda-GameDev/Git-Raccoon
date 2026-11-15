@@ -25,7 +25,7 @@ pub fn show(ui: &mut egui::Ui, repo: &mut RepoView) {
                 .size(15.0),
         );
         let hint = match search.field {
-            SearchField::Text => "Search messages, authors, SHAs…  (Ctrl+F)",
+            SearchField::Text => "Search messages, authors, SHAs…",
             SearchField::Path => "Search changed file paths…",
         };
         let status_width = 190.0;
@@ -50,7 +50,7 @@ pub fn show(ui: &mut egui::Ui, repo: &mut RepoView) {
                 )
             });
             if escape {
-                search.clear();
+                search.close();
                 response.surrender_focus();
             } else if enter {
                 step = Some(!shift);
@@ -93,10 +93,8 @@ pub fn show(ui: &mut egui::Ui, repo: &mut RepoView) {
         }
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if search.is_active()
-                && widgets::icon_button(ui, icon::X, "Clear search (Esc)").clicked()
-            {
-                search.clear();
+            if widgets::icon_button(ui, icon::X, "Close search (Esc)").clicked() {
+                search.close();
             }
             ui.add_enabled_ui(!search.rows.is_empty(), |ui| {
                 if widgets::icon_button(ui, icon::ARROW_DOWN, "Next match (Enter)").clicked() {

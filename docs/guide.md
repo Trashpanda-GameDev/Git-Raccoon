@@ -45,7 +45,7 @@ Your open repositories come back the next time you start Git Raccoon.
 - **The sidebar** (left) lists local branches (with how far ahead or behind their upstream they are), remotes and their branches, tags, stashes, worktrees and submodules. Click one to jump to its commit. The filter box at the top narrows the lists.
 - **The details pane** (right) shows the selected commit: its message, author, date, parents and changed files. Click a file to see its diff.
 - **Diffs** show unified or side by side, with syntax highlighting, the changed words marked, and images previewed.
-- **Search** (Ctrl+F) finds commits by message, author or SHA, or by the files they touch.
+- **Search:** press Ctrl+F for the search bar, to find commits by message, author or SHA, or by the files they touch. Enter and Shift+Enter go through the matches; Esc closes it.
 
 The toolbar has the repository menu, the current branch, Fetch, Pull and Push, Undo, the command palette and settings.
 

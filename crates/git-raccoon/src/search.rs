@@ -22,6 +22,8 @@ enum Update {
 }
 
 pub struct Search {
+    /// Whether the search bar is showing (Ctrl+F opens it, Esc closes it).
+    pub open: bool,
     pub query: String,
     pub field: SearchField,
     /// Matching rows found so far, in history order.
@@ -45,6 +47,7 @@ pub struct Search {
 impl Default for Search {
     fn default() -> Self {
         Search {
+            open: false,
             query: String::new(),
             field: SearchField::Text,
             rows: Vec::new(),
@@ -90,6 +93,12 @@ impl Search {
             self.changed(&ctx, history);
             self.changed_at = Some(Instant::now() - DEBOUNCE);
         }
+    }
+
+    /// Clears the search and hides the bar.
+    pub fn close(&mut self) {
+        self.clear();
+        self.open = false;
     }
 
     pub fn clear(&mut self) {
