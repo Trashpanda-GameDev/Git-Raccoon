@@ -409,6 +409,8 @@ impl eframe::App for App {
                 Some(sidebar::Action::Rename(name)) => repo.rename_branch(name),
                 Some(sidebar::Action::DeleteBranch(name)) => repo.confirm_delete_branch(name),
                 Some(sidebar::Action::DeleteTag(name)) => repo.confirm_delete_tag(name),
+                Some(sidebar::Action::EditRemote(name)) => repo.edit_remote(name),
+                Some(sidebar::Action::RemoveRemote(name)) => repo.confirm_remove_remote(name),
                 None => {}
             }
         }

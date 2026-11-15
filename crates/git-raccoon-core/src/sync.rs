@@ -84,6 +84,22 @@ fn run(
     })
 }
 
+/// Fetches from one remote, pruning remote branches deleted there.
+pub fn fetch_remote(
+    path: &str,
+    remote: &str,
+    on: &mut dyn FnMut(Progress),
+    cancel: &AtomicBool,
+) -> Result<()> {
+    run(
+        path,
+        &["fetch", "--prune", "--progress", remote],
+        on,
+        cancel,
+    )
+    .map(drop)
+}
+
 /// Fetches from every remote, pruning remote branches deleted there.
 pub fn fetch(path: &str, on: &mut dyn FnMut(Progress), cancel: &AtomicBool) -> Result<()> {
     run(

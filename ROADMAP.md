@@ -50,7 +50,7 @@ Collaborate through remotes.
 - [x] Fetch, pull and push, with progress and cancellation
 - [x] Authentication through SSH agent, SSH keys and Git credential helpers, with passwords, key passphrases and new host keys asked in the app
 - [x] Ahead/behind counts on branches; set upstream on first push
-- [ ] Add, edit and remove remotes
+- [x] Add, edit and remove remotes
 - [x] Force-push only with lease, behind a confirmation
 - [ ] Clone and init a repository from the app
 

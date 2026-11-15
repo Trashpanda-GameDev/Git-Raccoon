@@ -154,7 +154,7 @@ fn folder_row(
     name: &str,
     open: bool,
     tooltip: &str,
-) -> bool {
+) -> egui::Response {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW), Sense::click());
     response
@@ -191,11 +191,11 @@ fn folder_row(
         theme::body(13.0),
         theme::TEXT,
     );
-    let clicked = response.clicked();
-    if !tooltip.is_empty() {
-        response.on_hover_text(tooltip);
+    if tooltip.is_empty() {
+        response
+    } else {
+        response.on_hover_text(tooltip)
     }
-    clicked
 }
 
 /// A section heading. Returns (toggled, add clicked); the add button is
@@ -290,7 +290,7 @@ fn tree<T>(
             } => {
                 let key = format!("{prefix}/{path}");
                 let open = c.is_open(&key);
-                if folder_row(ui, depth, icon::FOLDER_SIMPLE, name, open, "") {
+                if folder_row(ui, depth, icon::FOLDER_SIMPLE, name, open, "").clicked() {
                     c.toggle(&key);
                 }
                 if open {
@@ -320,6 +320,9 @@ pub enum Action {
     Rename(String),
     DeleteBranch(String),
     DeleteTag(String),
+    /// Add a remote (`None`) or edit one.
+    EditRemote(Option<String>),
+    RemoveRemote(String),
 }
 
 /// Adds the items of a context menu; the chosen one becomes the action.
@@ -503,8 +506,12 @@ pub fn show(
             // Remotes.
             let count = remotes.iter().map(|r| r.2.len()).sum();
             let open = c.is_open("remotes");
-            if section_header(ui, "Remote", count, open, None).0 {
+            let (toggled, add) = section_header(ui, "Remote", count, open, Some("Add remote"));
+            if toggled {
                 c.toggle("remotes");
+            }
+            if add {
+                c.action = Some(Action::EditRemote(None));
             }
             if open {
                 if remotes.is_empty() {
@@ -513,9 +520,17 @@ pub fn show(
                 for (name, url, branches) in &remotes {
                     let key = format!("remote:{name}");
                     let open = c.is_open(&key);
-                    if folder_row(ui, 0, icon::CLOUD, name, open, url.unwrap_or(name)) {
+                    let response = folder_row(ui, 0, icon::CLOUD, name, open, url.unwrap_or(name));
+                    if response.clicked() {
                         c.toggle(&key);
                     }
+                    response.context_menu(|ui| {
+                        let items = vec![
+                            ("Edit…", true, Action::EditRemote(Some((*name).to_string()))),
+                            ("Remove…", true, Action::RemoveRemote((*name).to_string())),
+                        ];
+                        menu(ui, &mut c.action, items);
+                    });
                     if open {
                         let nodes = build_tree(branches.iter().copied(), |b: &RemoteBranch| {
                             b.name.as_str()

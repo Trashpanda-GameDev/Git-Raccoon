@@ -21,6 +21,40 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
                 heading(ui, title, Some(body));
                 (String::new(), false, true)
             }
+            Dialog::Remote {
+                original,
+                name,
+                url,
+            } => {
+                let adding = original.is_none();
+                heading(
+                    ui,
+                    &original
+                        .as_ref()
+                        .map_or_else(|| "Add remote".to_string(), |o| format!("Edit remote {o}")),
+                    adding.then_some("It's fetched once added, so its branches show up."),
+                );
+                let problem = remote_problem(name, refs, original.as_deref());
+                let mut enter = field(ui, name, "Name, e.g. upstream", "Remote name", problem);
+                ui.add_space(4.0);
+                let url_field = ui.add(
+                    egui::TextEdit::singleline(url)
+                        .hint_text("URL, e.g. https://github.com/owner/repo.git")
+                        .desired_width(f32::INFINITY),
+                );
+                ui.ctx()
+                    .accesskit_node_builder(url_field.id, |n| n.set_label("Remote URL"));
+                enter |= url_field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let ready = problem.is_none() && !url.trim().is_empty();
+                if enter && ready {
+                    answer = Some(Some(0));
+                }
+                (
+                    if adding { "Add and fetch" } else { "Save" }.into(),
+                    false,
+                    ready,
+                )
+            }
             Dialog::Confirm {
                 title,
                 body,
@@ -148,6 +182,40 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
         }
         Some(chosen) => match open.take()? {
             Dialog::Choice { choices, .. } => choices.into_iter().nth(chosen).map(|c| c.2),
+            Dialog::Remote {
+                original,
+                name,
+                url,
+            } => {
+                let (name, url) = (name.trim().to_string(), url.trim().to_string());
+                match original {
+                    None => Some(Op::Then(vec![
+                        Op::AddRemote {
+                            name: name.clone(),
+                            url,
+                        },
+                        Op::FetchRemote(name),
+                    ])),
+                    Some(old) => {
+                        let current = refs
+                            .remotes
+                            .iter()
+                            .find(|r| r.name == old)
+                            .and_then(|r| r.url.clone());
+                        let mut ops = Vec::new();
+                        if name != old {
+                            ops.push(Op::RenameRemote {
+                                old,
+                                new: name.clone(),
+                            });
+                        }
+                        if current.as_deref() != Some(url.as_str()) {
+                            ops.push(Op::SetRemoteUrl { name, url });
+                        }
+                        (!ops.is_empty()).then_some(Op::Then(ops))
+                    }
+                }
+            }
             Dialog::Confirm { op, .. } => Some(op),
             Dialog::Stash { message, untracked } => Some(Op::Stash { message, untracked }),
             Dialog::NewBranch {
@@ -234,6 +302,19 @@ fn tag_problem(name: &str, refs: &Refs) -> Option<&'static str> {
         Some("Not a valid tag name. Avoid spaces, \"..\" and ~ ^ : ? * [ \\")
     } else if refs.tags.iter().any(|t| t.name == name) {
         Some("A tag with this name already exists.")
+    } else {
+        None
+    }
+}
+
+fn remote_problem(name: &str, refs: &Refs, editing: Option<&str>) -> Option<&'static str> {
+    let name = name.trim();
+    if name.is_empty() {
+        Some("")
+    } else if !git_raccoon_core::remote::is_valid_name(name) {
+        Some("Not a valid remote name. Avoid spaces and ~ ^ : ? * [ \\")
+    } else if editing != Some(name) && refs.remotes.iter().any(|r| r.name == name) {
+        Some("A remote with this name already exists.")
     } else {
         None
     }

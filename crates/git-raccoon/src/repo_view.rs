@@ -15,7 +15,7 @@ use git_raccoon_core::stage::{self, Pick};
 use git_raccoon_core::sync::{self, Progress, PullMode};
 use git_raccoon_core::watch::{Changes, RepoWatcher};
 use git_raccoon_core::working::{self, Side, WorkingStatus};
-use git_raccoon_core::{Error, branch, discard, stash, undo};
+use git_raccoon_core::{Error, branch, discard, remote, stash, undo};
 
 use crate::highlight::RenderedDiff;
 use crate::images::ImagePair;
@@ -204,11 +204,26 @@ pub enum Op {
     /// Several operations in order, stopping at the first failure.
     Then(Vec<Op>),
     Fetch,
+    /// Fetch one remote.
+    FetchRemote(String),
     Pull(PullMode),
     /// Push the checked-out branch; `force` only with lease.
     Push {
         force: bool,
     },
+    AddRemote {
+        name: String,
+        url: String,
+    },
+    RenameRemote {
+        old: String,
+        new: String,
+    },
+    SetRemoteUrl {
+        name: String,
+        url: String,
+    },
+    RemoveRemote(String),
 }
 
 /// Shared with a running fetch, pull or push: its progress, and the switch
@@ -292,8 +307,13 @@ impl Op {
             Op::StashStore { id, message } => stash::store(path, &id, &message),
             Op::Then(ops) => ops.into_iter().try_for_each(|op| op.run(path, ctl)),
             Op::Fetch => sync::fetch(path, report, &ctl.cancel),
+            Op::FetchRemote(name) => sync::fetch_remote(path, &name, report, &ctl.cancel),
             Op::Pull(mode) => sync::pull(path, mode, report, &ctl.cancel),
             Op::Push { force } => sync::push(path, force, report, &ctl.cancel),
+            Op::AddRemote { name, url } => remote::add(path, &name, &url),
+            Op::RenameRemote { old, new } => remote::rename(path, &old, &new),
+            Op::SetRemoteUrl { name, url } => remote::set_url(path, &name, &url),
+            Op::RemoveRemote(name) => remote::remove(path, &name),
         }
     }
 
@@ -328,11 +348,15 @@ impl Op {
             | Op::DeleteBranchAt { .. }
             | Op::RestoreBranch { .. }
             | Op::RestoreTag { .. }
-            | Op::StashStore { .. }
-            | Op::Then(_) => "undo",
-            Op::Fetch => "fetch",
+            | Op::StashStore { .. } => "undo",
+            // Named after its first step ("add the remote", then fetch).
+            Op::Then(ops) => ops.first().map_or("undo", Op::verb),
+            Op::Fetch | Op::FetchRemote(_) => "fetch",
             Op::Pull(_) => "pull",
             Op::Push { .. } => "push",
+            Op::AddRemote { .. } => "add the remote",
+            Op::RenameRemote { .. } | Op::SetRemoteUrl { .. } => "change the remote",
+            Op::RemoveRemote(_) => "remove the remote",
         }
     }
 
@@ -615,6 +639,12 @@ pub enum Dialog {
     RenameBranch {
         old: String,
         name: String,
+    },
+    /// Add a remote (`original` is `None`) or edit one.
+    Remote {
+        original: Option<String>,
+        name: String,
+        url: String,
     },
     /// A question with several answers (and Cancel); `bool` marks a risky one.
     Choice {
@@ -904,7 +934,10 @@ impl RepoView {
     /// A running fetch, pull or push: what it is and how far it has got.
     pub fn sync_progress(&self) -> Option<(&'static str, Option<Progress>)> {
         let running = self.op.as_ref()?;
-        if !matches!(running.op, Op::Fetch | Op::Pull(_) | Op::Push { .. }) {
+        if !matches!(
+            running.op,
+            Op::Fetch | Op::FetchRemote(_) | Op::Pull(_) | Op::Push { .. }
+        ) {
             return None;
         }
         let progress = running.control.progress.lock().ok().and_then(|p| p.clone());
@@ -989,6 +1022,47 @@ impl RepoView {
             button: "Delete branch".into(),
             danger: true,
             op: Op::DeleteBranch { name, force: false },
+        });
+    }
+
+    /// Opens the dialog to add a remote, or edit `name`.
+    pub fn edit_remote(&mut self, name: Option<String>) {
+        let url = name
+            .as_ref()
+            .and_then(|n| self.refs.remotes.iter().find(|r| &r.name == n))
+            .and_then(|r| r.url.clone())
+            .unwrap_or_default();
+        self.dialog = Some(Dialog::Remote {
+            name: name.clone().unwrap_or_default(),
+            original: name,
+            url,
+        });
+    }
+
+    pub fn confirm_remove_remote(&mut self, name: String) {
+        let tracking = self
+            .refs
+            .local
+            .iter()
+            .filter(|b| {
+                b.upstream
+                    .as_ref()
+                    .is_some_and(|u| u.name.starts_with(&format!("{name}/")))
+            })
+            .count();
+        let also = match tracking {
+            0 => String::new(),
+            1 => " One local branch tracks it and will no longer have an upstream.".into(),
+            n => format!(" {n} local branches track it and will no longer have an upstream."),
+        };
+        self.dialog = Some(Dialog::Confirm {
+            title: format!("Remove remote {name}?"),
+            body: format!(
+                "Its remote branches disappear from the graph. Nothing changes on the remote itself, and your local branches and commits stay.{also}"
+            ),
+            button: "Remove remote".into(),
+            danger: true,
+            op: Op::RemoveRemote(name),
         });
     }
 
@@ -1221,7 +1295,9 @@ impl RepoView {
                 Ok(Some(undo)) => self.undo = Some(undo),
                 // Something changed that can't be undone: older undos would be out of order.
                 // (A fetch only moves remote branches, so local undos still hold.)
-                Ok(None) if op.changes_refs() && !matches!(op, Op::Fetch) => self.undo = None,
+                Ok(None) if op.changes_refs() && !matches!(op, Op::Fetch | Op::FetchRemote(_)) => {
+                    self.undo = None
+                }
                 Ok(None) => {}
                 Err(e) => {
                     if !self.offer_way_on(&op, &e) {

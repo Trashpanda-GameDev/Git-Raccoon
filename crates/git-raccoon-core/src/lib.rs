@@ -12,6 +12,7 @@ pub mod discard;
 mod error;
 pub mod graph;
 pub mod refs;
+pub mod remote;
 pub mod repo;
 pub mod search;
 pub mod stage;

@@ -1472,3 +1472,63 @@ fn fetches_pulls_and_pushes() {
     );
     let _ = std::fs::remove_dir_all(&base);
 }
+
+fn remote_names(app: &App) -> Vec<(String, usize)> {
+    app.repo()
+        .unwrap()
+        .refs
+        .remotes
+        .iter()
+        .map(|r| (r.name.clone(), r.branches.len()))
+        .collect()
+}
+
+#[test]
+fn adds_edits_and_removes_remotes() {
+    use egui::accesskit::Role;
+    let sample = Sample::build();
+    let bare = std::env::temp_dir().join(format!("git-raccoon-fork-{}.git", rand_suffix()));
+    let url = bare.to_str().unwrap().replace('\\', "/");
+    git(&sample, &["init", "-q", "--bare", &url]);
+    git(&sample, &["push", "-q", &url, "main", "feature/graph"]);
+
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+
+    // Add one: the name is checked as typed, and it's fetched once added.
+    h.get_by_label("Add remote").click();
+    h.run_ok();
+    type_into(&mut h, "Remote name", "origin");
+    h.get_by_label("A remote with this name already exists.");
+    erase(&mut h, "origin".len());
+    h.get_by_label("Remote name").type_text("fork");
+    type_into(&mut h, "Remote URL", &url);
+    screenshot(&mut h, "25-add-remote");
+    h.get_by_label("Add and fetch").click();
+    wait_for(&mut h, "the fetched remote", |app| {
+        remote_names(app).contains(&("fork".into(), 2))
+    });
+    assert_eq!(h.state().error(), None);
+
+    // Rename it.
+    menu_item(&mut h, "fork", "Edit");
+    h.get_by_label("Remote name").click();
+    h.run_ok();
+    erase(&mut h, "fork".len());
+    h.get_by_label("Remote name").type_text("mirror");
+    h.run_ok();
+    h.get_by_role_and_label(Role::Button, "Save").click();
+    wait_for(&mut h, "the rename", |app| {
+        remote_names(app).contains(&("mirror".into(), 2))
+    });
+
+    // Remove it, after confirming.
+    menu_item(&mut h, "mirror", "Remove");
+    h.get_by_label("Remove remote mirror?");
+    h.get_by_label("Remove remote").click();
+    wait_for(&mut h, "the removal", |app| {
+        remote_names(app).iter().all(|(n, _)| n != "mirror")
+    });
+    assert_eq!(remote_names(h.state()), [("origin".to_string(), 1)]);
+    let _ = std::fs::remove_dir_all(&bare);
+}
