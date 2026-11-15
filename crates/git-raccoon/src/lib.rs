@@ -11,5 +11,6 @@ pub mod settings;
 mod task;
 mod theme;
 mod ui;
+pub mod updates;
 
 pub use app::App;

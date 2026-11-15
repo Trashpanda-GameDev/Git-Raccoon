@@ -9,6 +9,8 @@ fn main() -> eframe::Result {
     if let Some(code) = git_raccoon_core::askpass::run_if_asked() {
         std::process::exit(code);
     }
+    // Velopack's install, update and uninstall steps run here (and exit).
+    velopack::VelopackApp::build().run();
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Git Raccoon")
         .with_app_id("git-raccoon")

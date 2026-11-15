@@ -35,6 +35,28 @@ cargo run --release -- path/to/repo
 - **macOS:** `xcode-select --install`.
 - **Linux (Debian/Ubuntu):** `sudo apt install build-essential pkg-config libssl-dev libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libvulkan1 mesa-vulkan-drivers`
 
+## Releases and updates
+
+Windows installers are published to the public [Git-Raccoon-Releases](https://github.com/Trashpanda-GameDev/Git-Raccoon-Releases) repository (the code here stays private). An installed Git Raccoon checks there now and then, downloads a newer version in the background, and offers to restart into it from the toolbar (Settings can turn the checks off). Installers are built with [Velopack](https://velopack.io); copies run with `cargo run` don't update themselves.
+
+### One-time setup
+
+1. Create the public repository `Trashpanda-GameDev/Git-Raccoon-Releases` (it can be empty).
+2. Create a fine-grained personal access token (GitHub > Settings > Developer settings) with access to only that repository and **Contents: Read and write** permission.
+3. In this repository, add it as an Actions secret named `RELEASES_TOKEN` (Settings > Secrets and variables > Actions).
+
+### Making a release
+
+1. Set the version in the root `Cargo.toml` (for example `0.5.1`), and commit it.
+2. Tag that commit and push the tag:
+
+   ```bash
+   git tag v0.5.1
+   git push origin v0.5.1
+   ```
+
+The Release workflow builds the installer and publishes it. To try an installer first, run the workflow by hand (Actions > Release > Run workflow): it builds one and keeps it as a downloadable artifact without publishing. The installer isn't code-signed yet, so Windows SmartScreen warns about it ("More info", then "Run anyway") until it builds a reputation.
+
 ## Keyboard shortcuts
 
 **Ctrl+K** (or **Ctrl+Shift+P**) opens the command palette: every action, plus checking out, merging, rebasing onto and going to each branch. Type a few letters, choose with the arrow keys, press Enter. On macOS, use Cmd for Ctrl.

@@ -101,6 +101,11 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings) -> Option<Action> {
             ui.checkbox(&mut shown, "Show the sidebar");
             settings.hide_sidebar = !shown;
         });
+        row(ui, "Updates", &mut |ui| {
+            let mut check = !settings.no_update_checks;
+            ui.checkbox(&mut check, "Check for updates automatically");
+            settings.no_update_checks = !check;
+        });
         row(ui, "Recent repositories", &mut |ui| {
             let n = settings.recent.len();
             if ui
@@ -111,6 +116,11 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings) -> Option<Action> {
             }
         });
         ui.add_space(6.0);
+        ui.label(
+            RichText::new(format!("Git Raccoon {}", env!("CARGO_PKG_VERSION")))
+                .size(12.0)
+                .color(theme::muted()),
+        );
         ui.label(
             RichText::new("Changes apply straight away and are remembered.")
                 .size(12.0)

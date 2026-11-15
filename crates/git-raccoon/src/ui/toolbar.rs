@@ -23,6 +23,7 @@ pub enum Action {
     CancelSync,
     Palette,
     Settings,
+    RestartToUpdate,
 }
 
 /// A fetch, pull or push in progress.
@@ -57,6 +58,8 @@ pub fn show(
     recent: &[RecentRepo],
     opening: bool,
     now: i64,
+    // A downloaded update's version, waiting for a restart.
+    update: Option<&str>,
 ) -> Option<Action> {
     let mut action = None;
     ui.horizontal_centered(|ui| {
@@ -193,6 +196,21 @@ pub fn show(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if widgets::icon_button(ui, icon::GEAR_SIX, "Settings").clicked() {
                 action = Some(Action::Settings);
+            }
+            if let Some(version) = update {
+                let button = egui::Button::new(
+                    RichText::new(format!("{}  Restart to update to {version}", icon::ARROW_CIRCLE_UP))
+                        .size(12.0)
+                        .color(theme::on_accent()),
+                )
+                .fill(theme::accent());
+                if ui
+                    .add(button)
+                    .on_hover_text("A new version is downloaded. Your tabs and settings are kept.")
+                    .clicked()
+                {
+                    action = Some(Action::RestartToUpdate);
+                }
             }
             let shortcut = crate::commands::shortcut(&crate::commands::Command::Palette)
                 .map(|s| ui.ctx().format_shortcut(&s))

@@ -51,6 +51,8 @@ pub struct Settings {
     pub theme: ThemeChoice,
     /// How big everything is drawn; `None` for normal (100%).
     pub zoom: Option<f32>,
+    /// Don't look for updates.
+    pub no_update_checks: bool,
 }
 
 /// A look, or light or dark following the system.

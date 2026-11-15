@@ -48,6 +48,9 @@ pub struct App {
     settings_open: bool,
     /// The look and zoom last applied.
     applied: Option<(theme::Look, f32)>,
+    updater: crate::updates::Updater,
+    /// Restart into the downloaded update once settings are saved.
+    restart_to_update: bool,
 }
 
 /// A repository being opened: its path, the load, and its tab's id.
@@ -120,6 +123,8 @@ impl App {
             palette: None,
             settings_open: false,
             applied: None,
+            updater: crate::updates::Updater::new(),
+            restart_to_update: false,
         }
     }
 
@@ -998,6 +1003,7 @@ impl App {
                     &self.settings.recent,
                     self.active_opening(),
                     now,
+                    self.updater.ready_version(),
                 )
             })
             .inner;
@@ -1013,6 +1019,7 @@ impl App {
             Some(toolbar::Action::Close) => self.close(&ctx),
             Some(toolbar::Action::Palette) => self.run_command(&ctx, Command::Palette),
             Some(toolbar::Action::Settings) => self.run_command(&ctx, Command::Settings),
+            Some(toolbar::Action::RestartToUpdate) => self.restart_to_update = true,
             Some(toolbar::Action::Fetch) => self.run(&ctx, Op::Fetch),
             Some(toolbar::Action::Pull) => {
                 self.run(
@@ -1448,6 +1455,7 @@ impl App {
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.apply_look(ctx);
+        self.updater.tick(ctx, !self.settings.no_update_checks);
         self.poll_opening(ctx);
         // A submodule or worktree to open in a tab.
         if let Some(path) = self.repo.as_mut().and_then(|r| r.open_request.take()) {
@@ -1469,7 +1477,17 @@ impl eframe::App for App {
         self.shortcuts(ctx);
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        // Restarting into an update ends the process at once: save first.
+        if std::mem::take(&mut self.restart_to_update) {
+            if let Some(storage) = frame.storage_mut() {
+                eframe::App::save(self, storage);
+                storage.flush();
+            }
+            if let Err(e) = self.updater.restart() {
+                self.error = Some(format!("Could not update: {e}"));
+            }
+        }
         let ctx = ui.ctx().clone();
         self.panels(ui);
         // Above everything: the clone dialog, then Git's questions.
