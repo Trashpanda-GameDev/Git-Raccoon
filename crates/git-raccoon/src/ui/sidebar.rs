@@ -95,8 +95,10 @@ fn row(
     current: bool,
     tooltip: &str,
 ) -> egui::Response {
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), ROW),
+        Sense::click_and_drag(),
+    );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, text));
     let painter = ui.painter();
     if active {
@@ -323,6 +325,62 @@ pub enum Action {
     /// Add a remote (`None`) or edit one.
     EditRemote(Option<String>),
     RemoveRemote(String),
+    /// Merge `source` into `target` (the checked-out branch if `None`).
+    Merge {
+        source: String,
+        target: Option<String>,
+    },
+}
+
+/// What's carried while dragging a branch (to drop it on another to merge).
+#[derive(Clone)]
+struct DragBranch(String);
+
+/// Lets a row be dragged as `name`, and shows where it's being dragged.
+fn drag_source(response: &egui::Response, name: &str) {
+    response.dnd_set_drag_payload(DragBranch(name.to_string()));
+}
+
+/// Lets a local branch row take a dropped branch. Returns the merge asked for.
+fn drop_target(ui: &egui::Ui, response: &egui::Response, name: &str) -> Option<Action> {
+    if let Some(dragged) = response.dnd_hover_payload::<DragBranch>()
+        && dragged.0 != name
+    {
+        ui.painter().rect_stroke(
+            response.rect.shrink(1.0),
+            4,
+            Stroke::new(1.5, theme::ACCENT),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let dropped = response.dnd_release_payload::<DragBranch>()?;
+    (dropped.0 != name).then(|| Action::Merge {
+        source: dropped.0.clone(),
+        target: Some(name.to_string()),
+    })
+}
+
+/// While a branch is dragged, a label follows the pointer.
+fn drag_label(ctx: &egui::Context) {
+    let (Some(dragged), Some(pos)) = (
+        egui::DragAndDrop::payload::<DragBranch>(ctx),
+        ctx.pointer_interact_pos(),
+    ) else {
+        return;
+    };
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Tooltip,
+        egui::Id::new("drag-branch"),
+    ));
+    let galley = painter.layout_no_wrap(
+        format!("{}  Merge {}…", icon::GIT_MERGE, dragged.0),
+        theme::body(12.0),
+        theme::ON_ACCENT,
+    );
+    let rect = Rect::from_min_size(pos + egui::vec2(14.0, 10.0), galley.size())
+        .expand2(egui::vec2(8.0, 4.0));
+    painter.rect_filled(rect, 6, theme::ACCENT);
+    painter.galley(rect.min + egui::vec2(8.0, 4.0), galley, theme::ON_ACCENT);
 }
 
 /// Adds the items of a context menu; the chosen one becomes the action.
@@ -483,9 +541,22 @@ pub fn show(
                         } else if response.clicked() {
                             c.action = Some(Action::Jump(b.target.clone()));
                         }
+                        drag_source(&response, &b.name);
+                        if let Some(a) = drop_target(ui, &response, &b.name) {
+                            c.action = Some(a);
+                        }
+                        let merge_label = format!("Merge into {}", head.unwrap_or("HEAD"));
                         response.context_menu(|ui| {
                             let items = vec![
                                 ("Check out", !b.is_head, Action::Checkout(b.name.clone())),
+                                (
+                                    merge_label.as_str(),
+                                    !b.is_head && head.is_some(),
+                                    Action::Merge {
+                                        source: b.name.clone(),
+                                        target: None,
+                                    },
+                                ),
                                 (
                                     "Create branch here…",
                                     true,
@@ -557,8 +628,18 @@ pub fn show(
                                 } else if response.clicked() {
                                     c.action = Some(Action::Jump(b.target.clone()));
                                 }
+                                drag_source(&response, &b.full_name);
+                                let merge_label = format!("Merge into {}", head.unwrap_or("HEAD"));
                                 response.context_menu(|ui| {
                                     let items = vec![
+                                        (
+                                            merge_label.as_str(),
+                                            head.is_some(),
+                                            Action::Merge {
+                                                source: b.full_name.clone(),
+                                                target: None,
+                                            },
+                                        ),
                                         (
                                             "Check out",
                                             true,
@@ -662,6 +743,7 @@ pub fn show(
             }
             ui.add_space(12.0);
         });
+    drag_label(ui.ctx());
     c.action
 }
 

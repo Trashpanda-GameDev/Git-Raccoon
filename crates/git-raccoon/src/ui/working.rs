@@ -16,6 +16,8 @@ const SUMMARY_HARD: usize = 72;
 
 pub enum Action {
     Open(Side, String),
+    /// Open a conflicted file for resolving.
+    OpenConflict(String),
     Stage(String),
     Unstage(String),
     StageAll,
@@ -36,6 +38,8 @@ pub struct State<'a> {
     pub staging: bool,
     pub committing: bool,
     pub active: Option<(Side, &'a str)>,
+    /// The conflicted file open for resolving.
+    pub active_conflict: Option<&'a str>,
     pub draft: &'a mut CommitDraft,
 }
 
@@ -47,6 +51,7 @@ pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
         staging,
         committing,
         active,
+        active_conflict,
         draft,
     } = st;
     ui.horizontal(|ui| {
@@ -106,6 +111,29 @@ pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
             if status.is_clean() {
                 ui.label(RichText::new("No uncommitted changes.").color(theme::MUTED));
                 return;
+            }
+            if !status.conflicted.is_empty() {
+                ui.horizontal(|ui| {
+                    ui.label(widgets::section_label("Conflicted files").color(theme::DANGER));
+                    ui.label(
+                        RichText::new(status.conflicted.len().to_string())
+                            .size(11.0)
+                            .color(theme::MUTED),
+                    );
+                });
+                ui.spacing_mut().item_spacing.y = 0.0;
+                for f in &status.conflicted {
+                    let row = details::file_row(
+                        ui,
+                        &as_changed(f),
+                        active_conflict == Some(f.path.as_str()),
+                    );
+                    if row.clicked() {
+                        action = Some(Action::OpenConflict(f.path.clone()));
+                    }
+                }
+                ui.add_space(14.0);
+                ui.spacing_mut().item_spacing.y = 6.0;
             }
             for side in [Side::Unstaged, Side::Staged] {
                 if let Some(a) = file_list(ui, status, side, staging, active) {

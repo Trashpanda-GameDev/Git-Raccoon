@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use git_raccoon_core::create;
 use git_raccoon_core::sync::Progress;
 
-use crate::ui::clone;
+use crate::ui::{clone, conflict};
 use crate::ui::{
     details, dialog, diff, history, search_bar, sidebar, toolbar, welcome, widgets, working,
 };
@@ -363,7 +363,9 @@ impl App {
             return;
         }
         if escape {
-            if repo.active_file.is_some() {
+            if repo.conflict.is_some() {
+                repo.conflict = None;
+            } else if repo.active_file.is_some() {
                 repo.active_file = None;
             } else {
                 repo.deselect();
@@ -484,6 +486,70 @@ impl App {
                 });
         }
 
+        // A merge (rebase, ...) waiting to be finished.
+        if let Some(repo) = &mut self.repo
+            && let Some(status) = &repo.status
+            && let Some(state) = &status.in_progress
+        {
+            let conflicts = status.conflicted.len();
+            let (noun, detail) = (state.what.noun(), state.detail.clone());
+            let mut chosen = None;
+            Panel::top("in-progress")
+                .frame(
+                    Frame::new()
+                        .fill(theme::BG_RAISED)
+                        .stroke(egui::Stroke::new(1.0, theme::MODIFIED))
+                        .inner_margin(Margin::symmetric(12, 8)),
+                )
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(egui_phosphor::regular::GIT_MERGE).color(theme::MODIFIED),
+                        );
+                        let mut text = format!("A {noun} is in progress");
+                        if let Some(d) = &detail {
+                            text.push_str(&format!(": {d}"));
+                        }
+                        ui.label(RichText::new(text).strong());
+                        let what_next = match conflicts {
+                            0 => "Ready to continue.".to_string(),
+                            1 => "1 file has conflicts to resolve.".to_string(),
+                            n => format!("{n} files have conflicts to resolve."),
+                        };
+                        ui.label(RichText::new(what_next).color(theme::MUTED));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let busy = repo.op_running();
+                            if ui
+                                .add_enabled(!busy, egui::Button::new(format!("Abort {noun}")))
+                                .clicked()
+                            {
+                                chosen = Some(false);
+                            }
+                            let ready = !busy && conflicts == 0;
+                            let label = RichText::new(format!("Continue {noun}"));
+                            let go = if ready {
+                                egui::Button::new(label.color(theme::ON_ACCENT).strong())
+                                    .fill(theme::ACCENT)
+                            } else {
+                                egui::Button::new(label.color(theme::MUTED)).fill(theme::BG_HOVER)
+                            };
+                            if ui
+                                .add_enabled(!busy && conflicts == 0, go)
+                                .on_disabled_hover_text("Resolve the conflicts first")
+                                .clicked()
+                            {
+                                chosen = Some(true);
+                            }
+                        });
+                    });
+                });
+            match chosen {
+                Some(true) => repo.run(&ctx, Op::Continue),
+                Some(false) => repo.confirm_abort(),
+                None => {}
+            }
+        }
+
         let Some(repo) = &mut self.repo else {
             egui::CentralPanel::default_margins()
                 .frame(Frame::new().fill(theme::BG).inner_margin(Margin::same(16)))
@@ -536,6 +602,7 @@ impl App {
                 Some(sidebar::Action::DeleteTag(name)) => repo.confirm_delete_tag(name),
                 Some(sidebar::Action::EditRemote(name)) => repo.edit_remote(name),
                 Some(sidebar::Action::RemoveRemote(name)) => repo.confirm_remove_remote(name),
+                Some(sidebar::Action::Merge { source, target }) => repo.ask_merge(source, target),
                 None => {}
             }
         }
@@ -597,6 +664,7 @@ impl App {
                             staging,
                             committing,
                             active: active.as_ref().map(|(s, f)| (*s, f.as_str())),
+                            active_conflict: repo.conflict.as_ref().map(|c| c.file.as_str()),
                             draft: &mut repo.draft,
                         },
                     )
@@ -604,6 +672,7 @@ impl App {
                 .inner;
             match action {
                 Some(working::Action::Open(side, f)) => repo.open_working_file(side, f),
+                Some(working::Action::OpenConflict(f)) => repo.open_conflict(f),
                 Some(working::Action::Stage(f)) => repo.run(&ctx, Op::StageFile(f)),
                 Some(working::Action::Unstage(f)) => repo.run(&ctx, Op::UnstageFile(f)),
                 Some(working::Action::StageAll) => repo.run(&ctx, Op::StageAll),
@@ -626,6 +695,28 @@ impl App {
         egui::CentralPanel::no_frame()
             .frame(Frame::new().fill(theme::BG))
             .show(ui, |ui| {
+                let busy = repo.op_running();
+                if let Some(open) = &mut repo.conflict {
+                    match conflict::show(ui, open, busy) {
+                        Some(conflict::Action::Pick(i, pick)) => repo.pick_conflict(&ctx, i, pick),
+                        Some(conflict::Action::TakeSide { ours }) => {
+                            let file = open.file.clone();
+                            repo.run(&ctx, Op::TakeSide { file, ours });
+                        }
+                        Some(conflict::Action::MarkResolved) => {
+                            let file = open.file.clone();
+                            repo.run(&ctx, Op::MarkResolved(file));
+                        }
+                        Some(conflict::Action::StartEdit) => {
+                            open.edit = open.text.as_ref().ok().cloned();
+                        }
+                        Some(conflict::Action::SaveEdit) => repo.save_conflict_edit(&ctx),
+                        Some(conflict::Action::CancelEdit) => open.edit = None,
+                        Some(conflict::Action::Close) => repo.conflict = None,
+                        None => {}
+                    }
+                    return;
+                }
                 if let Some(key) = repo.diff_key() {
                     let file = key.1.clone();
                     let images = if crate::images::is_image(&file) {

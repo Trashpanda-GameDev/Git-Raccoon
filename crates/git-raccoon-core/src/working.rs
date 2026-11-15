@@ -32,11 +32,20 @@ pub struct WorkingFile {
 pub struct WorkingStatus {
     pub staged: Vec<WorkingFile>,
     pub unstaged: Vec<WorkingFile>,
+    /// Files with unresolved conflicts (listed here only, not as staged or
+    /// unstaged).
+    pub conflicted: Vec<WorkingFile>,
+    /// A merge, rebase, cherry-pick or revert waiting to be finished.
+    pub in_progress: Option<crate::merge::State>,
 }
 
 impl WorkingStatus {
+    /// No changes, no conflicts and nothing in progress.
     pub fn is_clean(&self) -> bool {
-        self.staged.is_empty() && self.unstaged.is_empty()
+        self.staged.is_empty()
+            && self.unstaged.is_empty()
+            && self.conflicted.is_empty()
+            && self.in_progress.is_none()
     }
 
     pub fn files(&self, side: Side) -> &[WorkingFile] {
@@ -86,9 +95,24 @@ pub fn working_status(path: &str) -> Result<Option<WorkingStatus>> {
     if repo.is_bare() {
         return Ok(None);
     }
+    let staged = files_of(&side_diff(&repo, Side::Staged)?);
+    let unstaged = files_of(&side_diff(&repo, Side::Unstaged)?);
+    let is_conflict = |f: &WorkingFile| f.status == FileStatus::Conflicted;
+    let mut conflicted: Vec<WorkingFile> = unstaged
+        .iter()
+        .filter(|f| is_conflict(f))
+        .cloned()
+        .collect();
+    for f in staged.iter().filter(|f| is_conflict(f)) {
+        if !conflicted.iter().any(|c| c.path == f.path) {
+            conflicted.push(f.clone());
+        }
+    }
     Ok(Some(WorkingStatus {
-        staged: files_of(&side_diff(&repo, Side::Staged)?),
-        unstaged: files_of(&side_diff(&repo, Side::Unstaged)?),
+        staged: staged.into_iter().filter(|f| !is_conflict(f)).collect(),
+        unstaged: unstaged.into_iter().filter(|f| !is_conflict(f)).collect(),
+        conflicted,
+        in_progress: crate::merge::in_progress(path)?,
     }))
 }
 

@@ -1598,3 +1598,162 @@ fn clones_and_starts_repositories() {
     screenshot(&mut h, "27-new-repository");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+fn head_summary(app: &App) -> String {
+    let repo = app.repo().unwrap();
+    let row = repo.history.head_row().unwrap();
+    repo.history.page(row, 1).unwrap().commits[0]
+        .summary
+        .clone()
+}
+
+fn in_progress(app: &App) -> bool {
+    app.repo()
+        .unwrap()
+        .status
+        .as_ref()
+        .is_some_and(|s| s.in_progress.is_some())
+}
+
+fn conflicted(app: &App) -> usize {
+    app.repo()
+        .unwrap()
+        .status
+        .as_ref()
+        .map_or(0, |s| s.conflicted.len())
+}
+
+/// Drags one sidebar row onto another with the pointer.
+fn drag(h: &mut Harness<'_, App>, from: egui::Pos2, to: egui::Pos2) {
+    h.event(egui::Event::PointerMoved(from));
+    h.run_ok();
+    h.event(egui::Event::PointerButton {
+        pos: from,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_ok();
+    for i in 1..=10 {
+        h.event(egui::Event::PointerMoved(
+            from + (to - from) * (i as f32 / 10.0),
+        ));
+        h.step();
+    }
+    h.run_ok();
+    h.event(egui::Event::PointerButton {
+        pos: to,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_ok();
+}
+
+#[test]
+fn merges_resolves_conflicts_continues_and_aborts() {
+    use egui::accesskit::Role;
+    let sample = Sample::build();
+    // A branch that changes README.md one way while main changes it another.
+    git(&sample, &["switch", "-q", "-c", "clash"]);
+    sample.write("README.md", "# Sample\n\nclash version\n");
+    git(&sample, &["commit", "-q", "-am", "README from clash"]);
+    git(&sample, &["switch", "-q", "main"]);
+    sample.write("README.md", "# Sample\n\nmain version\n");
+    git(&sample, &["commit", "-q", "-am", "README from main"]);
+
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+
+    // A clean merge from the menu, with a merge commit, then undone.
+    let before = head_summary(h.state());
+    menu_item(&mut h, "toolbar-glitch", "Merge into main");
+    h.get_by_label("Merge fix/ui/toolbar-glitch into main?");
+    h.get_by_label("Always create a merge commit").click();
+    wait_for(&mut h, "the merge", |app| {
+        head_summary(app) == "Merge branch 'fix/ui/toolbar-glitch'"
+    });
+    assert_eq!(
+        read(&sample, "src/toolbar.rs").as_deref(),
+        Some("pub fn draw() {}\n")
+    );
+    wait_for(&mut h, "the undo", |app| {
+        undo_label(app).as_deref() == Some("Undo merge of fix/ui/toolbar-glitch")
+    });
+    h.get_by_label("Undo").click();
+    wait_for(&mut h, "the merge undone", move |app| {
+        head_summary(app) == before
+    });
+    assert_eq!(read(&sample, "src/toolbar.rs"), None);
+
+    // The same merge by dragging the branch onto main.
+    let from = h.get_by_label("toolbar-glitch").rect().center();
+    let to = h.get_all_by_label("main").next().unwrap().rect().center();
+    drag(&mut h, from, to);
+    h.get_by_label("Merge fix/ui/toolbar-glitch into main?");
+    h.get_by_role_and_label(Role::Button, "Merge").click();
+    wait_for(&mut h, "the dragged merge", |app| {
+        head_summary(app) == "Merge branch 'fix/ui/toolbar-glitch'"
+    });
+
+    // A merge with a conflict: it opens straight away, with a banner.
+    menu_item(&mut h, "clash", "Merge into main");
+    h.get_by_role_and_label(Role::Button, "Merge").click();
+    wait_for(&mut h, "the conflict", |app| {
+        app.repo().unwrap().conflict.is_some() && conflicted(app) == 1
+    });
+    h.get_by_label_contains("A merge is in progress");
+    screenshot(&mut h, "28-conflict");
+    h.get_by_label("Use both for conflict 1").click();
+    wait_for(&mut h, "the pick", |app| {
+        app.repo()
+            .unwrap()
+            .conflict
+            .as_ref()
+            .is_some_and(|c| c.text.as_ref().is_ok_and(|t| !t.contains("<<<<<<<")))
+    });
+    assert_eq!(
+        read(&sample, "README.md").as_deref(),
+        Some("# Sample\n\nmain version\nclash version\n")
+    );
+    h.get_by_label("Mark resolved").click();
+    wait_for(&mut h, "resolved", |app| conflicted(app) == 0);
+    screenshot(&mut h, "29-ready-to-continue");
+    h.get_by_label("Continue merge").click();
+    wait_for(&mut h, "the merge commit", |app| !in_progress(app));
+    assert_eq!(head_summary(h.state()), "Merge branch 'clash'");
+
+    // Again, edited by hand, then aborted.
+    h.get_by_label("Undo").click();
+    wait_for(&mut h, "undone", |app| {
+        head_summary(app) != "Merge branch 'clash'"
+    });
+    menu_item(&mut h, "clash", "Merge into main");
+    h.get_by_role_and_label(Role::Button, "Merge").click();
+    wait_for(&mut h, "the conflict", |app| {
+        app.repo().unwrap().conflict.is_some()
+    });
+    h.get_by_label_contains("Edit").click();
+    h.run_ok();
+    h.get_by_label("Resolved text").click();
+    h.run_ok();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+    h.get_by_label("Resolved text")
+        .type_text("# Sample\n\nwritten by hand\n");
+    h.run_ok();
+    h.get_by_label("Save").click();
+    wait_for(&mut h, "the save", |app| {
+        app.repo().unwrap().conflict.as_ref().is_some_and(|c| {
+            c.edit.is_none() && c.text.as_ref().is_ok_and(|t| t.contains("by hand"))
+        })
+    });
+    h.get_by_label("Abort merge").click();
+    h.run_ok();
+    h.get_by_label("Yes, abort").click();
+    wait_for(&mut h, "the abort", |app| !in_progress(app));
+    assert_eq!(
+        read(&sample, "README.md").as_deref(),
+        Some("# Sample\n\nmain version\n")
+    );
+    assert_eq!(h.state().error(), None);
+}

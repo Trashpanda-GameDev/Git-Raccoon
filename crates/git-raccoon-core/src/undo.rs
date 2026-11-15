@@ -28,6 +28,12 @@ impl HeadMove {
         rest.rsplit_once(" to ").map(|(from, _)| from)
     }
 
+    /// Whether this records a merge: completed directly ("merge feature: ...")
+    /// or committed after resolving conflicts ("commit (merge): ...").
+    pub fn is_merge(&self) -> bool {
+        self.message.starts_with("merge ") || self.message.starts_with("commit (merge):")
+    }
+
     /// Whether this records a new commit ("commit:", "commit (initial):"
     /// or, with `amend`, "commit (amend):").
     pub fn is_commit(&self, amend: bool) -> bool {
@@ -74,6 +80,18 @@ pub fn reset_soft(path: &str, expected: &str, to: &str) -> Result<()> {
         )));
     }
     cli::run(path, &["reset", "--soft", to], None).map(drop)
+}
+
+/// Moves the current branch back from `expected` to `to` (undoing a merge),
+/// keeping uncommitted changes; Git refuses if they'd be overwritten.
+pub fn reset_keep(path: &str, expected: &str, to: &str) -> Result<()> {
+    if head_id(path)?.as_deref() != Some(expected) {
+        return Err(Error::Stale(format!(
+            "HEAD is no longer at {}, so the merge wasn't undone",
+            short(expected)
+        )));
+    }
+    cli::run(path, &["reset", "--keep", to], None).map(drop)
 }
 
 /// Deletes a branch, but only if it still points at `expected`, so commits
@@ -193,6 +211,24 @@ mod tests {
             last.from.as_deref(),
             "detached: an id"
         );
+    }
+
+    #[test]
+    fn undoes_a_merge_keeping_local_changes() {
+        let (t, _) = crate::merge::tests::conflicting();
+        // Resolve f.txt's conflict by hand, then finish the merge.
+        let before = head_id(t.path()).unwrap().unwrap();
+        crate::merge::merge(t.path(), "feature", crate::merge::MergeMode::Default).unwrap();
+        crate::conflict::take_side(t.path(), "f.txt", true).unwrap();
+        crate::merge::continue_op(t.path()).unwrap();
+        let last = last_head_move(t.path()).unwrap().unwrap();
+        assert!(last.is_merge(), "{last:?}");
+        t.write("local.txt", "untracked work\n");
+
+        reset_keep(t.path(), &last.to, &before).unwrap();
+        assert_eq!(head_id(t.path()).unwrap().as_deref(), Some(before.as_str()));
+        assert!(!t.dir.join("g.txt").exists(), "the merged-in file is gone");
+        assert!(t.dir.join("local.txt").exists(), "local work stays");
     }
 
     #[test]

@@ -9,13 +9,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use eframe::egui;
 use git_raccoon_core::commit::{self, Committed};
 use git_raccoon_core::details::{self, CommitDetails, LineKind};
+use git_raccoon_core::merge::{self, MergeMode};
 use git_raccoon_core::refs::{self, Refs};
 use git_raccoon_core::repo::{GraphCommit, History};
 use git_raccoon_core::stage::{self, Pick};
 use git_raccoon_core::sync::{self, Progress, PullMode};
 use git_raccoon_core::watch::{Changes, RepoWatcher};
 use git_raccoon_core::working::{self, Side, WorkingStatus};
-use git_raccoon_core::{Error, branch, discard, remote, stash, undo};
+use git_raccoon_core::{Error, branch, conflict, discard, remote, stash, undo};
 
 use crate::highlight::RenderedDiff;
 use crate::images::ImagePair;
@@ -224,6 +225,31 @@ pub enum Op {
         url: String,
     },
     RemoveRemote(String),
+    /// Merge a branch (local, or remote like "origin/main") into HEAD.
+    Merge {
+        branch: String,
+        mode: MergeMode,
+    },
+    /// Continue or abort the merge, rebase, cherry-pick or revert in progress.
+    Continue,
+    Abort,
+    /// Resolve a conflicted file with one side's whole version.
+    TakeSide {
+        file: String,
+        ours: bool,
+    },
+    /// Write a conflicted file's new text (if it still reads `expected`).
+    WriteConflict {
+        file: String,
+        expected: String,
+        text: String,
+    },
+    MarkResolved(String),
+    /// Undo a merge: back from `expected` to `to`, keeping local changes.
+    UndoMerge {
+        expected: String,
+        to: String,
+    },
 }
 
 /// Shared with a running fetch, pull or push: its progress, and the switch
@@ -314,6 +340,17 @@ impl Op {
             Op::RenameRemote { old, new } => remote::rename(path, &old, &new),
             Op::SetRemoteUrl { name, url } => remote::set_url(path, &name, &url),
             Op::RemoveRemote(name) => remote::remove(path, &name),
+            Op::Merge { branch, mode } => merge::merge(path, &branch, mode).map(drop),
+            Op::Continue => merge::continue_op(path),
+            Op::Abort => merge::abort(path),
+            Op::TakeSide { file, ours } => conflict::take_side(path, &file, ours),
+            Op::WriteConflict {
+                file,
+                expected,
+                text,
+            } => conflict::write(path, &file, &expected, &text),
+            Op::MarkResolved(file) => conflict::mark_resolved(path, &file),
+            Op::UndoMerge { expected, to } => undo::reset_keep(path, &expected, &to),
         }
     }
 
@@ -357,6 +394,13 @@ impl Op {
             Op::AddRemote { .. } => "add the remote",
             Op::RenameRemote { .. } | Op::SetRemoteUrl { .. } => "change the remote",
             Op::RemoveRemote(_) => "remove the remote",
+            Op::Merge { .. } => "merge",
+            Op::Continue => "continue",
+            Op::Abort => "abort",
+            Op::TakeSide { .. } | Op::WriteConflict { .. } | Op::MarkResolved(_) => {
+                "resolve the conflict"
+            }
+            Op::UndoMerge { .. } => "undo",
         }
     }
 
@@ -370,7 +414,19 @@ impl Op {
                 | Op::UnstageAll
                 | Op::Lines { .. }
                 | Op::Discard(..)
+                | Op::TakeSide { .. }
+                | Op::WriteConflict { .. }
+                | Op::MarkResolved(_)
         )
+    }
+
+    /// Whether local changes in its way can be stashed first.
+    fn can_stash_first(&self) -> bool {
+        match self {
+            Op::Merge { .. } => true,
+            Op::Then(ops) => ops.first().is_some_and(Op::can_stash_first),
+            op => op.is_checkout(),
+        }
     }
 
     /// Whether it checks something out (and so can be blocked by local changes).
@@ -554,6 +610,27 @@ fn undo_for(op: &Op, before: Before, path: &str) -> Option<Undoable> {
             u.op = Op::Then(ops);
             return Some(u);
         }
+        Op::Merge { .. } | Op::Continue => {
+            // Finished (no conflicts left in progress): undo from the reflog.
+            if merge::in_progress(path).ok()?.is_some() {
+                return None;
+            }
+            let last = undo::last_head_move(path).ok()??;
+            if !last.is_merge() {
+                return None;
+            }
+            let label = match op {
+                Op::Merge { branch, .. } => format!("Undo merge of {branch}"),
+                _ => "Undo merge".to_string(),
+            };
+            (
+                label,
+                vec![Op::UndoMerge {
+                    expected: last.to.clone(),
+                    to: last.from?,
+                }],
+            )
+        }
         _ => return None,
     };
     let op = if ops.len() == 1 {
@@ -602,6 +679,15 @@ struct Running {
     message: Option<String>,
     control: Arc<Control>,
     task: Task<Result<Option<Undoable>, Error>>,
+}
+
+/// A conflicted file open for resolving.
+pub struct ConflictFile {
+    pub file: String,
+    /// Its text as last read (or why it couldn't be read).
+    pub text: Result<String, String>,
+    /// The text being edited by hand, in Edit mode.
+    pub edit: Option<String>,
 }
 
 /// What this system calls its trash.
@@ -690,6 +776,8 @@ pub struct RepoView {
     committing: Option<Task<Result<Option<Undoable>, String>>>,
     /// How to undo the last action, if it can be.
     pub undo: Option<Undoable>,
+    /// The conflicted file being resolved, if one is open.
+    pub conflict: Option<ConflictFile>,
     /// When the running refresh started (an older read can't drop a newer undo).
     refresh_started: std::time::Instant,
     /// Where a Shift-click range of picks starts.
@@ -763,6 +851,7 @@ impl RepoView {
             draft: CommitDraft::default(),
             committing: None,
             undo: None,
+            conflict: None,
             refresh_started: std::time::Instant::now(),
             diff: Keyed::default(),
             images: Keyed::default(),
@@ -855,6 +944,11 @@ impl RepoView {
         }
         self.draft.amend = amend;
         self.draft.head_pushed = amend && commit::head_is_pushed(&path).unwrap_or(false);
+    }
+
+    /// Whether any operation (or a commit) is running.
+    pub fn op_running(&self) -> bool {
+        self.op.is_some() || self.committing.is_some()
     }
 
     pub fn is_staging(&self) -> bool {
@@ -1025,6 +1119,115 @@ impl RepoView {
         });
     }
 
+    /// Opens a conflicted file for resolving.
+    pub fn open_conflict(&mut self, file: String) {
+        self.active_file = None;
+        let text = conflict::read(self.path(), &file).map_err(|e| e.to_string());
+        self.conflict = Some(ConflictFile {
+            file,
+            text,
+            edit: None,
+        });
+    }
+
+    /// Picks a side for one conflict in the open file.
+    pub fn pick_conflict(&mut self, ctx: &egui::Context, index: usize, pick: conflict::Pick) {
+        let Some(open) = &self.conflict else { return };
+        let Ok(text) = &open.text else { return };
+        let Some(chunks) = conflict::parse(text) else {
+            return;
+        };
+        let op = Op::WriteConflict {
+            file: open.file.clone(),
+            expected: text.clone(),
+            text: conflict::resolve(&chunks, index, pick),
+        };
+        self.run(ctx, op);
+    }
+
+    /// Saves the hand-edited text of the open conflicted file.
+    pub fn save_conflict_edit(&mut self, ctx: &egui::Context) {
+        let Some(open) = &mut self.conflict else {
+            return;
+        };
+        let (Ok(text), Some(edit)) = (&open.text, open.edit.take()) else {
+            return;
+        };
+        let op = Op::WriteConflict {
+            file: open.file.clone(),
+            expected: text.clone(),
+            text: edit,
+        };
+        self.run(ctx, op);
+    }
+
+    /// Opens the merge question for `source` into `target` (the checked-out
+    /// branch if `None`).
+    pub fn ask_merge(&mut self, source: String, target: Option<String>) {
+        let Some(head) = self.head_branch().map(str::to_string) else {
+            self.refresh_error = Some(
+                "Could not merge: no branch is checked out (detached HEAD). Check out the branch to merge into first.".into(),
+            );
+            return;
+        };
+        let target = target.unwrap_or_else(|| head.clone());
+        if source == target {
+            return;
+        }
+        let merge = |mode| Op::Merge {
+            branch: source.clone(),
+            mode,
+        };
+        if target == head {
+            self.dialog = Some(Dialog::Choice {
+                title: format!("Merge {source} into {head}?"),
+                body: format!(
+                    "Brings {source}'s commits into {head}. If {head} has nothing new of its own, it simply moves forward (fast-forward); otherwise a merge commit joins them. If both changed the same lines, you'll resolve the conflicts first."
+                ),
+                choices: vec![
+                    ("Merge".into(), false, merge(MergeMode::Default)),
+                    (
+                        "Always create a merge commit".into(),
+                        false,
+                        merge(MergeMode::NoFastForward),
+                    ),
+                ],
+            });
+        } else {
+            self.dialog = Some(Dialog::Choice {
+                title: format!("Merge {source} into {target}?"),
+                body: format!(
+                    "{target} isn't checked out. Check it out first, then merge {source} into it."
+                ),
+                choices: vec![(
+                    format!("Check out {target} and merge"),
+                    false,
+                    Op::Then(vec![
+                        Op::Checkout(target.clone()),
+                        merge(MergeMode::Default),
+                    ]),
+                )],
+            });
+        }
+    }
+
+    pub fn confirm_abort(&mut self) {
+        let what = self
+            .status
+            .as_ref()
+            .and_then(|s| s.in_progress.as_ref())
+            .map_or("operation", |s| s.what.noun());
+        self.dialog = Some(Dialog::Confirm {
+            title: format!("Abort the {what}?"),
+            body: format!(
+                "Goes back to how things were before the {what} started. Conflict resolutions made so far are lost."
+            ),
+            button: "Yes, abort".into(),
+            danger: true,
+            op: Op::Abort,
+        });
+    }
+
     /// Opens the dialog to add a remote, or edit `name`.
     pub fn edit_remote(&mut self, name: Option<String>) {
         let url = name
@@ -1125,11 +1328,18 @@ impl RepoView {
                 });
                 true
             }
-            (Error::Dirty(_), op) if op.is_checkout() => {
+            (Error::Dirty(_), op) if op.can_stash_first() => {
+                let (then, button) = if op.is_checkout() {
+                    ("switch", "Stash and switch")
+                } else {
+                    ("merge", "Stash and merge")
+                };
                 self.dialog = Some(Dialog::Confirm {
                     title: "Your changes are in the way".into(),
-                    body: "Some uncommitted changes would be overwritten. Stash them first (untracked files too), then switch? Apply or pop the stash afterwards to get them back.".into(),
-                    button: "Stash and switch".into(),
+                    body: format!(
+                        "Some uncommitted changes would be overwritten. Stash them first (untracked files too), then {then}? Apply or pop the stash afterwards to get them back."
+                    ),
+                    button: button.into(),
                     danger: false,
                     op: Op::StashThen(Box::new(op.clone())),
                 });
@@ -1371,7 +1581,35 @@ impl RepoView {
     /// Takes in a newly read status. An open working diff is reloaded, and
     /// closed if its file is no longer changed.
     fn set_status(&mut self, status: Option<WorkingStatus>) {
+        let had_conflicts = self
+            .status
+            .as_ref()
+            .is_some_and(|s| !s.conflicted.is_empty());
         self.status = status;
+        let conflicted: Vec<String> = self
+            .status
+            .as_ref()
+            .map(|s| s.conflicted.iter().map(|f| f.path.clone()).collect())
+            .unwrap_or_default();
+        // New conflicts (from a merge, pull or stash): show the first.
+        if !had_conflicts && let Some(first) = conflicted.first() {
+            self.select_working();
+            self.open_conflict(first.clone());
+        }
+        // The open conflicted file: re-read it, or close it once resolved.
+        if let Some(open) = &self.conflict {
+            if conflicted.contains(&open.file) {
+                if open.edit.is_none() {
+                    let file = open.file.clone();
+                    let text = conflict::read(self.path(), &file).map_err(|e| e.to_string());
+                    if let Some(open) = &mut self.conflict {
+                        open.text = text;
+                    }
+                }
+            } else {
+                self.conflict = None;
+            }
+        }
         if !self.working_selected {
             return;
         }
@@ -1416,6 +1654,7 @@ impl RepoView {
 
     /// Opens a working file's staged or unstaged diff.
     pub fn open_working_file(&mut self, side: Side, file: String) {
+        self.conflict = None;
         if self.active_side != side || self.active_file.as_deref() != Some(file.as_str()) {
             self.picked.clear();
         }
@@ -1450,6 +1689,7 @@ impl RepoView {
     }
 
     pub fn select_row(&mut self, id: String, row: Option<usize>) {
+        self.conflict = None;
         if self.working_selected || self.selected.as_ref().is_some_and(|s| s.id != id) {
             self.active_file = None;
         }
@@ -1468,6 +1708,7 @@ impl RepoView {
     }
 
     pub fn deselect(&mut self) {
+        self.conflict = None;
         self.selected = None;
         self.working_selected = false;
         self.active_file = None;
