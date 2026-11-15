@@ -1958,3 +1958,82 @@ fn plans_and_runs_an_interactive_rebase() {
     wait_for(&mut h, "undone", move |app| head_id(app) == start);
     assert_eq!(h.state().error(), None);
 }
+
+fn press(h: &mut Harness<'_, App>, modifiers: egui::Modifiers, key: Key) {
+    h.key_press_modifiers(modifiers, key);
+    h.run_ok();
+}
+
+const CTRL_SHIFT: egui::Modifiers = egui::Modifiers {
+    shift: true,
+    ..egui::Modifiers::COMMAND
+};
+
+#[test]
+fn runs_commands_from_the_palette_and_shortcuts() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+
+    // Ctrl+K, a few letters, Enter.
+    press(&mut h, egui::Modifiers::COMMAND, Key::K);
+    h.get_by_label("Command").type_text("co toolbar");
+    h.run_ok();
+    screenshot(&mut h, "32-palette");
+    press(&mut h, egui::Modifiers::NONE, Key::Enter);
+    wait_for(&mut h, "the checkout", |app| {
+        head_branch(app).as_deref() == Some("fix/ui/toolbar-glitch")
+    });
+
+    // Ctrl+Shift+P works too; this time a dialog.
+    press(&mut h, CTRL_SHIFT, Key::P);
+    h.get_by_label("Command").type_text("create branch");
+    h.run_ok();
+    press(&mut h, egui::Modifiers::NONE, Key::Enter);
+    h.get_by_label("Branch name");
+    press(&mut h, egui::Modifiers::NONE, Key::Escape);
+    assert!(h.state().repo().unwrap().dialog.is_none());
+
+    // Arrows choose: the second "Go to" line.
+    press(&mut h, egui::Modifiers::COMMAND, Key::K);
+    h.get_by_label("Command").type_text("go to tag");
+    h.run_ok();
+    press(&mut h, egui::Modifiers::NONE, Key::ArrowDown);
+    press(&mut h, egui::Modifiers::NONE, Key::ArrowUp);
+    press(&mut h, egui::Modifiers::NONE, Key::Enter);
+    wait_for(&mut h, "the tag selected", |app| {
+        selected_summary_of(app).as_deref() == Some("Merge branch 'feature/graph'")
+    });
+
+    // Ctrl+B toggles the sidebar, but not while typing.
+    press(&mut h, egui::Modifiers::COMMAND, Key::B);
+    assert!(h.state().settings().hide_sidebar);
+    press(&mut h, egui::Modifiers::COMMAND, Key::B);
+    assert!(!h.state().settings().hide_sidebar);
+
+    // Ctrl+Shift+S stages everything, even from the commit message box.
+    sample.write("src/toolbar.rs", "pub fn draw() { /* changed */ }\n");
+    wait_for(&mut h, "the change", |app| status_counts(app).1 == 1);
+    press(&mut h, CTRL_SHIFT, Key::M);
+    h.get_by_label("Commit summary").type_text("Tweak");
+    h.run_ok();
+    press(&mut h, egui::Modifiers::COMMAND, Key::B);
+    assert!(
+        !h.state().settings().hide_sidebar,
+        "Ctrl+B while typing is the text's"
+    );
+    press(&mut h, CTRL_SHIFT, Key::S);
+    wait_for(&mut h, "staged", |app| status_counts(app) == (1, 0));
+    assert_eq!(h.state().repo().unwrap().draft.summary, "Tweak");
+}
+
+fn selected_summary_of(app: &App) -> Option<String> {
+    let repo = app.repo()?;
+    let row = repo.selected.as_ref()?.row?;
+    repo.history
+        .page(row, 1)
+        .ok()?
+        .commits
+        .first()
+        .map(|c| c.summary.clone())
+}

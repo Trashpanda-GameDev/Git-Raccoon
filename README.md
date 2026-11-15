@@ -33,6 +33,30 @@ cargo run --release -- path/to/repo
 - **macOS:** `xcode-select --install`.
 - **Linux (Debian/Ubuntu):** `sudo apt install build-essential pkg-config libssl-dev libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libvulkan1 mesa-vulkan-drivers`
 
+## Keyboard shortcuts
+
+**Ctrl+K** (or **Ctrl+Shift+P**) opens the command palette: every action, plus checking out, merging, rebasing onto and going to each branch. Type a few letters, choose with the arrow keys, press Enter. On macOS, use Cmd for Ctrl.
+
+| Action | Shortcut |
+| --- | --- |
+| Command palette | Ctrl+K, Ctrl+Shift+P |
+| Open repository | Ctrl+O |
+| Close repository | Ctrl+W |
+| Refresh | F5 |
+| Search commits | Ctrl+F |
+| Show or hide the sidebar | Ctrl+B |
+| Undo the last action | Ctrl+Z |
+| Fetch / Pull / Push | Ctrl+Shift+F / Ctrl+Shift+D / Ctrl+Shift+U |
+| Show working changes | Ctrl+Shift+W |
+| Write a commit message | Ctrl+Shift+M (then Ctrl+Enter to commit) |
+| Stage all / Unstage all | Ctrl+Shift+S / Ctrl+Shift+A |
+| Stash changes | Ctrl+Shift+H |
+| New branch / New tag | Ctrl+Shift+B / Ctrl+Shift+T |
+| Move through commits | Up, Down, Page Up, Page Down |
+| Close the open diff, conflict or plan | Esc |
+
+Ctrl+Shift shortcuts also work while typing in a text field; the others keep their usual text-editing meaning there.
+
 ## Tests
 
 ```bash

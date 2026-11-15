@@ -14,6 +14,11 @@ use crate::ui::{details, widgets};
 const SUMMARY_SOFT: usize = 50;
 const SUMMARY_HARD: usize = 72;
 
+/// The commit summary field, to focus it from a shortcut.
+pub fn summary_id() -> egui::Id {
+    egui::Id::new("commit-summary")
+}
+
 pub enum Action {
     Open(Side, String),
     /// Open a conflicted file for resolving.
@@ -277,6 +282,7 @@ fn commit_box(
     let summary = ui.add_enabled(
         !committing,
         egui::TextEdit::singleline(&mut draft.summary)
+            .id(summary_id())
             .hint_text("Summary (required)")
             .desired_width(width),
     );

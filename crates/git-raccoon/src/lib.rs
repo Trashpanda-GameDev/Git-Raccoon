@@ -1,6 +1,7 @@
 //! Git Raccoon: a fast, friendly desktop Git client.
 
 mod app;
+pub mod commands;
 pub mod format;
 mod highlight;
 mod images;

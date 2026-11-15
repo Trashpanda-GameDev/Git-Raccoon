@@ -21,6 +21,7 @@ pub enum Action {
     Pull,
     Push,
     CancelSync,
+    Palette,
 }
 
 /// A fetch, pull or push in progress.
@@ -170,6 +171,23 @@ pub fn show(
                 }
             }
         }
+        // The command palette, at the far right.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let shortcut = crate::commands::shortcut(&crate::commands::Command::Palette)
+                .map(|s| ui.ctx().format_shortcut(&s))
+                .unwrap_or_default();
+            let button = ui.button(
+                RichText::new(format!("{}  Commands  {shortcut}", icon::COMMAND)).size(12.0),
+            );
+            ui.ctx()
+                .accesskit_node_builder(button.id, |n| n.set_label("Commands"));
+            if button
+                .on_hover_text("Every action, searchable, with its keyboard shortcut")
+                .clicked()
+            {
+                action = Some(Action::Palette);
+            }
+        });
         if opening {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(8.0);

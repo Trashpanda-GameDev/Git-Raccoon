@@ -13,7 +13,8 @@ use std::sync::{Arc, Mutex};
 use git_raccoon_core::create;
 use git_raccoon_core::sync::Progress;
 
-use crate::ui::{clone, conflict, rebase};
+use crate::commands::{self, Command, Entry};
+use crate::ui::{clone, conflict, palette, rebase};
 use crate::ui::{
     details, dialog, diff, history, search_bar, sidebar, toolbar, welcome, widgets, working,
 };
@@ -34,6 +35,8 @@ pub struct App {
     /// The clone dialog, and a clone in progress.
     clone_form: Option<clone::Form>,
     cloning: Option<Cloning>,
+    /// The command palette, while open.
+    palette: Option<palette::State>,
 }
 
 /// A clone running in the background.
@@ -87,6 +90,7 @@ impl App {
             prompt: None,
             clone_form: None,
             cloning: None,
+            palette: None,
         }
     }
 
@@ -335,33 +339,281 @@ impl App {
         }
     }
 
-    fn shortcuts(&mut self, ctx: &egui::Context) {
-        if self.prompt.is_some() {
+    /// Whether a command can run right now.
+    fn can_run(&self, command: &Command) -> bool {
+        let Some(repo) = &self.repo else {
+            return matches!(
+                command,
+                Command::Palette | Command::OpenRepo | Command::CloneRepo | Command::NewRepo
+            );
+        };
+        let busy = repo.op_running();
+        let status = repo.status.as_ref();
+        let on_branch = repo.head_branch().is_some();
+        let in_progress = status.is_some_and(|s| s.in_progress.is_some());
+        match command {
+            Command::Palette
+            | Command::OpenRepo
+            | Command::CloneRepo
+            | Command::NewRepo
+            | Command::CloseRepo
+            | Command::Refresh
+            | Command::Find
+            | Command::ToggleSidebar
+            | Command::ToggleSplitDiff
+            | Command::ShowWorking
+            | Command::WriteCommit
+            | Command::AddRemote
+            | Command::GoTo { .. } => true,
+            Command::Undo => repo.undo.is_some() && !busy,
+            Command::Fetch => !busy,
+            Command::Pull => !busy && repo.head_upstream().is_some(),
+            Command::Push => !busy && on_branch,
+            Command::StageAll => !busy && status.is_some_and(|s| !s.unstaged.is_empty()),
+            Command::UnstageAll => !busy && status.is_some_and(|s| !s.staged.is_empty()),
+            Command::Stash => {
+                !busy && status.is_some_and(|s| !s.staged.is_empty() || !s.unstaged.is_empty())
+            }
+            Command::PopStash => !busy && !repo.refs.stashes.is_empty(),
+            Command::NewBranch | Command::NewTag => !busy,
+            Command::Continue => {
+                !busy && in_progress && status.is_some_and(|s| s.conflicted.is_empty())
+            }
+            Command::Abort => !busy && in_progress,
+            Command::Checkout(_)
+            | Command::CheckoutRemote(_)
+            | Command::Merge(_)
+            | Command::Rebase(_) => !busy,
+        }
+    }
+
+    /// The palette's lines: every command that applies, then each branch's.
+    fn palette_entries(&self) -> Vec<Entry> {
+        let mut out = Vec::new();
+        let mut add = |command: Command, title: String| {
+            let enabled = self.can_run(&command);
+            out.push(Entry {
+                command,
+                title,
+                enabled,
+            });
+        };
+        add(Command::OpenRepo, "Open repository…".into());
+        add(Command::CloneRepo, "Clone repository…".into());
+        add(Command::NewRepo, "New repository…".into());
+        let Some(repo) = &self.repo else { return out };
+        let head = repo.head_branch().unwrap_or("HEAD").to_string();
+        let state = repo.status.as_ref().and_then(|s| s.in_progress.as_ref());
+        if let Some(state) = state {
+            let noun = state.what.noun();
+            add(Command::Continue, format!("Continue the {noun}"));
+            add(Command::Abort, format!("Abort the {noun}…"));
+        }
+        let undo = repo
+            .undo
+            .as_ref()
+            .map_or_else(|| "Undo".to_string(), |u| u.label.clone());
+        add(Command::Undo, undo);
+        add(Command::Fetch, "Fetch from all remotes".into());
+        add(Command::Pull, format!("Pull into {head}"));
+        add(Command::Push, format!("Push {head}"));
+        add(Command::ShowWorking, "Show working changes".into());
+        add(Command::WriteCommit, "Write a commit message".into());
+        add(Command::StageAll, "Stage all changes".into());
+        add(Command::UnstageAll, "Unstage all changes".into());
+        add(Command::Stash, "Stash changes…".into());
+        add(Command::PopStash, "Pop the latest stash".into());
+        add(Command::NewBranch, format!("Create branch at {head}…"));
+        add(Command::NewTag, format!("Create tag at {head}…"));
+        add(Command::AddRemote, "Add remote…".into());
+        add(Command::Find, "Search commits".into());
+        add(Command::Refresh, "Refresh".into());
+        add(Command::ToggleSidebar, "Show or hide the sidebar".into());
+        add(
+            Command::ToggleSplitDiff,
+            "Switch diffs between unified and side by side".into(),
+        );
+        add(Command::CloseRepo, "Close repository".into());
+        for b in &repo.refs.local {
+            if !b.is_head {
+                add(
+                    Command::Checkout(b.name.clone()),
+                    format!("Check out {}", b.name),
+                );
+                add(
+                    Command::Merge(b.name.clone()),
+                    format!("Merge {} into {head}", b.name),
+                );
+                add(
+                    Command::Rebase(b.name.clone()),
+                    format!("Rebase {head} onto {}", b.name),
+                );
+            }
+            add(
+                Command::GoTo {
+                    name: b.name.clone(),
+                    id: b.target.clone(),
+                },
+                format!("Go to {}", b.name),
+            );
+        }
+        for r in &repo.refs.remotes {
+            for b in &r.branches {
+                let name = b.full_name.clone();
+                add(
+                    Command::CheckoutRemote(name.clone()),
+                    format!("Check out {name}"),
+                );
+                add(
+                    Command::Merge(name.clone()),
+                    format!("Merge {name} into {head}"),
+                );
+                add(
+                    Command::GoTo {
+                        name: name.clone(),
+                        id: b.target.clone(),
+                    },
+                    format!("Go to {name}"),
+                );
+            }
+        }
+        for t in &repo.refs.tags {
+            add(
+                Command::GoTo {
+                    name: t.name.clone(),
+                    id: t.target.clone(),
+                },
+                format!("Go to tag {}", t.name),
+            );
+        }
+        out
+    }
+
+    /// Runs a command, if it can run now.
+    pub fn run_command(&mut self, ctx: &egui::Context, command: Command) {
+        if !self.can_run(&command) {
             return;
+        }
+        match command {
+            Command::Palette => self.palette = Some(palette::State::default()),
+            Command::OpenRepo => self.browse(ctx),
+            Command::CloneRepo => self.show_clone(),
+            Command::NewRepo => self.pick_new_repository(ctx),
+            Command::CloseRepo => self.close(ctx),
+            Command::ToggleSidebar => self.settings.hide_sidebar = !self.settings.hide_sidebar,
+            Command::ToggleSplitDiff => self.settings.split_diff = !self.settings.split_diff,
+            command => {
+                let Some(repo) = &mut self.repo else { return };
+                let head = repo.head_branch().unwrap_or("HEAD").to_string();
+                match command {
+                    Command::Refresh => repo.refresh(ctx),
+                    Command::Find => {
+                        repo.active_file = None;
+                        repo.planner = None;
+                        repo.conflict = None;
+                        ctx.memory_mut(|m| m.request_focus(search_bar::input_id()));
+                    }
+                    Command::Undo => repo.undo(ctx),
+                    Command::Fetch => repo.run(ctx, Op::Fetch),
+                    Command::Pull => {
+                        repo.run(ctx, Op::Pull(git_raccoon_core::sync::PullMode::FastForward))
+                    }
+                    Command::Push => repo.run(ctx, Op::Push { force: false }),
+                    Command::ShowWorking => repo.select_working(),
+                    Command::WriteCommit => {
+                        repo.select_working();
+                        ctx.memory_mut(|m| m.request_focus(working::summary_id()));
+                    }
+                    Command::StageAll => repo.run(ctx, Op::StageAll),
+                    Command::UnstageAll => repo.run(ctx, Op::UnstageAll),
+                    Command::Stash => {
+                        repo.dialog = Some(Dialog::Stash {
+                            message: String::new(),
+                            untracked: true,
+                        });
+                    }
+                    Command::PopStash => {
+                        if let Some(s) = repo.refs.stashes.first() {
+                            let id = s.target.clone();
+                            repo.run(ctx, Op::StashPop(id));
+                        }
+                    }
+                    Command::NewBranch => repo.new_branch("HEAD".into(), head),
+                    Command::NewTag => repo.new_tag("HEAD".into(), head),
+                    Command::AddRemote => repo.edit_remote(None),
+                    Command::Continue => repo.run(ctx, Op::Continue),
+                    Command::Abort => repo.confirm_abort(),
+                    Command::Checkout(name) => repo.checkout(ctx, name),
+                    Command::CheckoutRemote(name) => repo.run(ctx, Op::CheckoutRemote(name)),
+                    Command::Merge(name) => repo.ask_merge(name, None),
+                    Command::Rebase(name) => repo.confirm_rebase(name),
+                    Command::GoTo { id, .. } => {
+                        repo.planner = None;
+                        repo.select(&id);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// The palette, while open.
+    fn palette(&mut self, ctx: &egui::Context) {
+        if self.palette.is_none() {
+            return;
+        }
+        let entries = self.palette_entries();
+        let Some(state) = &mut self.palette else {
+            return;
+        };
+        match palette::show(ctx, state, &entries) {
+            Some(palette::Outcome::Run(command)) => {
+                self.palette = None;
+                self.run_command(ctx, command);
+            }
+            Some(palette::Outcome::Close) => self.palette = None,
+            None => {}
+        }
+    }
+
+    fn shortcuts(&mut self, ctx: &egui::Context) {
+        // A question, the palette or a dialog has the keyboard.
+        let dialog_open = self.repo.as_ref().is_some_and(|r| r.dialog.is_some());
+        if self.prompt.is_some()
+            || self.palette.is_some()
+            || self.clone_form.is_some()
+            || dialog_open
+        {
+            return;
+        }
+        // While typing, only Ctrl+Shift shortcuts (and the palette) apply, so
+        // Ctrl+Z, Ctrl+B and the like keep their usual meaning in the text.
+        // Shift ones first: Ctrl+Shift+F shouldn't also count as Ctrl+F.
+        let typing = ctx.egui_wants_keyboard_input();
+        let ordered = commands::SHORTCUTS
+            .iter()
+            .filter(|(_, s)| s.is_some_and(|s| s.modifiers.shift))
+            .chain(
+                commands::SHORTCUTS
+                    .iter()
+                    .filter(|(_, s)| s.is_some_and(|s| !s.modifiers.shift)),
+            );
+        for (command, shortcut) in ordered {
+            let Some(shortcut) = shortcut else { continue };
+            let allowed = !typing
+                || shortcut.modifiers.shift
+                || *command == Command::Palette
+                || *command == Command::Find;
+            if allowed && ctx.input_mut(|i| i.consume_shortcut(shortcut)) {
+                self.run_command(ctx, command.clone());
+                return;
+            }
         }
         let Some(repo) = &mut self.repo else { return };
-        // An open dialog has the keyboard (Esc closes just the dialog).
-        if repo.dialog.is_some() {
+        if typing {
             return;
         }
-        let (find, escape) = ctx.input(|i| {
-            (
-                i.modifiers.command && i.key_pressed(egui::Key::F),
-                i.key_pressed(egui::Key::Escape),
-            )
-        });
-        if find {
-            repo.active_file = None;
-            ctx.memory_mut(|m| m.request_focus(search_bar::input_id()));
-            return;
-        }
-        if ctx.egui_wants_keyboard_input() {
-            return;
-        }
-        if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Z)) {
-            repo.undo(ctx);
-            return;
-        }
+        let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
         if escape {
             if repo.planner.is_some() {
                 repo.planner = None;
@@ -374,7 +626,7 @@ impl App {
             }
             return;
         }
-        if repo.active_file.is_some() {
+        if repo.active_file.is_some() || repo.planner.is_some() || repo.conflict.is_some() {
             return;
         }
         let step = ctx.input(|i| {
@@ -442,6 +694,7 @@ impl App {
             Some(toolbar::Action::Open(p)) => self.open(&ctx, p),
             Some(toolbar::Action::Forget(p)) => self.settings.forget(&p),
             Some(toolbar::Action::Close) => self.close(&ctx),
+            Some(toolbar::Action::Palette) => self.run_command(&ctx, Command::Palette),
             Some(toolbar::Action::Fetch) => self.run(&ctx, Op::Fetch),
             Some(toolbar::Action::Pull) => {
                 self.run(
@@ -826,6 +1079,7 @@ impl eframe::App for App {
         self.panels(ui);
         // Above everything: the clone dialog, then Git's questions.
         self.clone_dialog(&ctx);
+        self.palette(&ctx);
         self.questions(&ctx);
     }
 
