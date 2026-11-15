@@ -1296,6 +1296,43 @@ impl RepoView {
         });
     }
 
+    /// Asks before discarding every uncommitted change, staged or not.
+    pub fn confirm_discard_all(&mut self) {
+        let Some(status) = self.status.as_ref() else {
+            return;
+        };
+        // Unstaging first turns staged changes (renames: both names) into
+        // ones that discarding throws away.
+        let mut files: Vec<String> = status
+            .staged
+            .iter()
+            .chain(&status.unstaged)
+            .flat_map(|f| std::iter::once(f.path.clone()).chain(f.old_path.clone()))
+            .collect();
+        files.sort();
+        files.dedup();
+        if files.is_empty() {
+            return;
+        }
+        let what = match files.as_slice() {
+            [one] => one.clone(),
+            many => format!("{} files", many.len()),
+        };
+        self.dialog = Some(Dialog::Confirm {
+            title: "Discard all changes?".into(),
+            body: format!(
+                "Every uncommitted change to {what} is thrown away: staged and unstaged changes, and new files. Each file's current version is moved to the {} first, so you can get it back from there.",
+                trash_name()
+            ),
+            button: "Discard all".into(),
+            danger: true,
+            op: Op::Then(vec![
+                Op::UnstageAll,
+                Op::Discard(files, self.trash_override.clone()),
+            ]),
+        });
+    }
+
     /// Asks before dropping a stash.
     pub fn confirm_drop(&mut self, id: String) {
         let name = self.stash(&id).map_or_else(

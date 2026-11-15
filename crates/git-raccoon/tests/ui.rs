@@ -1050,6 +1050,46 @@ fn staged_files_stay_in_view_beside_many_unstaged_ones() {
         staged.bottom() < commit.top(),
         "staged file at {staged:?}, commit box at {commit:?}"
     );
+
+    // The staged list folds away, and back.
+    h.get_by_label("Hide staged files").click();
+    h.run_ok();
+    assert!(h.query_by_label("README.md").is_none());
+    h.get_by_label("Show staged files").click();
+    h.run_ok();
+    h.get_by_label("README.md");
+
+    // As folders: notes/ holds the forty files, and folds them away.
+    h.get_by_label("Show folders").click();
+    h.run_ok();
+    assert!(h.state().settings().file_tree, "remembered");
+    h.get_by_label("notes/");
+    h.get_by_label("notes/00.txt");
+    screenshot(&mut h, "46-folders");
+    h.get_by_label("notes/").click();
+    h.run_ok();
+    assert!(h.query_by_label("notes/00.txt").is_none());
+    h.get_by_label("Show paths").click();
+    h.run_ok();
+    assert!(!h.state().settings().file_tree);
+
+    // Discard all, after asking: staged, unstaged and new files.
+    let bin = sample.dir.with_extension("bin");
+    h.state_mut().repo_mut().unwrap().trash_override = Some(bin.clone());
+    h.get_by_label("Discard all changes").click();
+    h.run_ok();
+    h.get_by_label("Discard all changes?");
+    h.get_by_label("Discard all").click();
+    wait_for(&mut h, "a clean tree", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.is_clean())
+    });
+    assert!(bin.join("README.md").exists(), "kept in the bin");
+    assert!(bin.join("00.txt").exists());
+    let _ = std::fs::remove_dir_all(&bin);
 }
 
 #[test]

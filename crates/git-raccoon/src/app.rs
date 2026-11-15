@@ -1285,7 +1285,10 @@ impl App {
                         &id,
                         repo.details.get(&id),
                         repo.details.is_loading(),
-                        repo.active_file.as_deref(),
+                        details::Files {
+                            active: repo.active_file.as_deref(),
+                            tree: self.settings.file_tree,
+                        },
                         now,
                         stash,
                     )
@@ -1295,6 +1298,9 @@ impl App {
                 Some(details::Action::OpenFile(f)) => repo.active_file = Some(f),
                 Some(details::Action::Select(p)) => repo.select(&p),
                 Some(details::Action::Close) => repo.deselect(),
+                Some(details::Action::ToggleTree) => {
+                    self.settings.file_tree = !self.settings.file_tree;
+                }
                 Some(details::Action::StashApply) => repo.run(&ctx, Op::StashApply(id.clone())),
                 Some(details::Action::StashPop) => repo.run(&ctx, Op::StashPop(id.clone())),
                 Some(details::Action::StashDrop) => repo.confirm_drop(id.clone()),
@@ -1323,6 +1329,7 @@ impl App {
                             active: active.as_ref().map(|(s, f)| (*s, f.as_str())),
                             active_conflict: repo.conflict.as_ref().map(|c| c.file.as_str()),
                             draft: &mut repo.draft,
+                            tree: self.settings.file_tree,
                         },
                     )
                 })
@@ -1341,6 +1348,10 @@ impl App {
                     repo.dialog = Some(repo.stash_dialog());
                 }
                 Some(working::Action::Close) => repo.deselect(),
+                Some(working::Action::DiscardAll) => repo.confirm_discard_all(),
+                Some(working::Action::ToggleTree) => {
+                    self.settings.file_tree = !self.settings.file_tree;
+                }
                 None => {}
             }
         }

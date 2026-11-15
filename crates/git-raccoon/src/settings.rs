@@ -53,6 +53,8 @@ pub struct Settings {
     pub zoom: Option<f32>,
     /// Don't look for updates.
     pub no_update_checks: bool,
+    /// Changed files shown as a tree of folders, rather than by path.
+    pub file_tree: bool,
     /// Which defaults these settings were saved with (see `upgrade`):
     /// 0 when missing, from a version before there was this field.
     #[serde(default)]
@@ -94,6 +96,7 @@ impl Default for Settings {
             theme: ThemeChoice::default(),
             zoom: None,
             no_update_checks: false,
+            file_tree: false,
             defaults: DEFAULTS,
         }
     }

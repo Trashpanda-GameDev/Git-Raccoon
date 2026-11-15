@@ -8,6 +8,7 @@ use git_raccoon_core::working::{Side, WorkingFile, WorkingStatus};
 
 use crate::repo_view::CommitDraft;
 use crate::theme;
+use crate::ui::file_list;
 use crate::ui::{details, widgets};
 
 /// Summary lengths past these get an amber, then red, counter.
@@ -33,6 +34,10 @@ pub enum Action {
     Discard(Vec<String>),
     /// Open the stash dialog.
     Stash,
+    /// Discard every change, staged or not (after asking).
+    DiscardAll,
+    /// Switch files between paths and folders.
+    ToggleTree,
     Close,
 }
 
@@ -46,6 +51,8 @@ pub struct State<'a> {
     /// The conflicted file open for resolving.
     pub active_conflict: Option<&'a str>,
     pub draft: &'a mut CommitDraft,
+    /// Files shown as a tree of folders.
+    pub tree: bool,
 }
 
 pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
@@ -58,6 +65,7 @@ pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
         active,
         active_conflict,
         draft,
+        tree,
     } = st;
     ui.horizontal(|ui| {
         ui.set_height(36.0);
@@ -77,6 +85,20 @@ pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
                 .clicked()
             {
                 action = Some(Action::Stash);
+            }
+            let conflicts = status.is_some_and(|s| !s.conflicted.is_empty());
+            if widgets::named_icon_button(
+                ui,
+                icon::TRASH,
+                "Discard all changes",
+                has_changes && !conflicts && !staging && !committing,
+            )
+            .clicked()
+            {
+                action = Some(Action::DiscardAll);
+            }
+            if details::tree_toggle(ui, tree) {
+                action = Some(Action::ToggleTree);
             }
             if loading || staging || committing {
                 ui.spinner();
@@ -146,17 +168,63 @@ pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
         });
     // Unstaged and staged files share the rest, each list scrolling on its
     // own, so staged files are in view however many unstaged ones there are.
+    // A folded list gives its room to the other.
+    let folded_id = |side: Side| egui::Id::new(("list folded", side == Side::Staged));
+    let folded = |side: Side| ui.data(|d| d.get_temp::<bool>(folded_id(side)).unwrap_or(false));
+    let (unstaged_folded, staged_folded) = (folded(Side::Unstaged), folded(Side::Staged));
+    let need = |side: Side, folded: bool| {
+        if folded {
+            0.0
+        } else {
+            list_height(file_list::rows(
+                status.files(side).iter().map(|f| f.path.as_str()),
+                tree,
+            ))
+        }
+    };
     let (unstaged, staged) = split(
         ui.available_height() - 2.0 * LIST_CHROME,
-        list_height(status.unstaged.len()),
-        list_height(status.staged.len()),
+        need(Side::Unstaged, unstaged_folded),
+        need(Side::Staged, staged_folded),
     );
-    for (side, height) in [(Side::Unstaged, unstaged), (Side::Staged, staged)] {
-        if let Some(a) = file_list(ui, status, side, staging, active, height) {
-            action = Some(a);
+    for (side, height, folded) in [
+        (Side::Unstaged, unstaged, unstaged_folded),
+        (Side::Staged, staged, staged_folded),
+    ] {
+        let list = List {
+            side,
+            busy: staging,
+            active,
+            height,
+            folded,
+            tree,
+        };
+        match file_list(ui, status, &list) {
+            Some(ListAction::Fold) => {
+                ui.data_mut(|d| d.insert_temp(folded_id(side), !folded));
+            }
+            Some(ListAction::Do(a)) => action = Some(a),
+            None => {}
         }
     }
     action
+}
+
+/// How one of the two file lists is shown.
+struct List<'a> {
+    side: Side,
+    /// Staging is running: buttons are disabled.
+    busy: bool,
+    active: Option<(Side, &'a str)>,
+    height: f32,
+    folded: bool,
+    tree: bool,
+}
+
+enum ListAction {
+    /// Its heading was clicked: fold or unfold it.
+    Fold,
+    Do(Action),
 }
 
 const FILE_ROW: f32 = 26.0;
@@ -189,15 +257,17 @@ fn split(space: f32, first: f32, second: f32) -> (f32, f32) {
     }
 }
 
-fn file_list(
-    ui: &mut egui::Ui,
-    status: &WorkingStatus,
-    side: Side,
-    busy: bool,
-    active: Option<(Side, &str)>,
-    height: f32,
-) -> Option<Action> {
+fn file_list(ui: &mut egui::Ui, status: &WorkingStatus, list: &List<'_>) -> Option<ListAction> {
+    let &List {
+        side,
+        busy,
+        active,
+        height,
+        folded,
+        tree,
+    } = list;
     let mut action = None;
+    let mut fold = false;
     let files = status.files(side);
     let (title, all_label, all_glyph, all_action) = match side {
         Side::Unstaged => (
@@ -214,12 +284,30 @@ fn file_list(
         ),
     };
     ui.horizontal(|ui| {
-        ui.label(widgets::section_label(title));
-        ui.label(
-            RichText::new(files.len().to_string())
-                .size(11.0)
-                .color(theme::muted()),
+        // The heading folds and unfolds the list.
+        let caret = if folded {
+            icon::CARET_RIGHT
+        } else {
+            icon::CARET_DOWN
+        };
+        let heading = ui.add(
+            egui::Label::new(
+                RichText::new(format!("{caret} {} {}", title.to_uppercase(), files.len()))
+                    .size(11.0)
+                    .strong()
+                    .color(theme::muted()),
+            )
+            .sense(egui::Sense::click()),
         );
+        let name = if folded {
+            format!("Show {}", title.to_lowercase())
+        } else {
+            format!("Hide {}", title.to_lowercase())
+        };
+        heading.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &name));
+        if heading.on_hover_text(&name).clicked() {
+            fold = true;
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let button =
                 egui::Button::new(RichText::new(format!("{all_glyph}  {all_label}")).size(12.0));
@@ -242,58 +330,83 @@ fn file_list(
         });
     });
     ui.spacing_mut().item_spacing.y = 0.0;
-    if files.is_empty() {
+    if files.is_empty() && !folded {
         ui.label(RichText::new("None").size(12.0).color(theme::muted()));
+    }
+    if folded {
+        ui.add_space(8.0);
+        ui.spacing_mut().item_spacing.y = 6.0;
+        return if fold {
+            Some(ListAction::Fold)
+        } else {
+            action.map(ListAction::Do)
+        };
     }
     egui::ScrollArea::vertical()
         .id_salt(("files", side == Side::Staged))
         .max_height(height)
         .auto_shrink([false, true])
         .show(ui, |ui| {
-            for f in files {
-                let is_active = active.is_some_and(|(s, p)| s == side && p == f.path);
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
-                    // Room for the buttons: stage/unstage, plus discard when unstaged.
-                    let buttons = if side == Side::Unstaged { 2.0 } else { 1.0 };
-                    let row_width = ui.available_width() - 26.0 * buttons;
-                    let row = ui
-                        .allocate_ui(egui::vec2(row_width, 26.0), |ui| {
-                            details::file_row(ui, &as_changed(f), is_active)
-                        })
-                        .inner;
-                    if row.clicked() {
-                        action = Some(Action::Open(side, f.path.clone()));
-                    }
-                    let (glyph, verb) = match side {
-                        Side::Unstaged => (icon::PLUS, "Stage"),
-                        Side::Staged => (icon::MINUS, "Unstage"),
-                    };
-                    if side == Side::Unstaged
-                        && widgets::named_icon_button(
+            file_list::show(
+                ui,
+                ("tree", side == Side::Staged),
+                files,
+                |f| f.path.as_str(),
+                tree,
+                |ui, f, shown| {
+                    let is_active = active.is_some_and(|(s, p)| s == side && p == f.path);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        // Room for the buttons: stage/unstage, plus discard when unstaged.
+                        let buttons = if side == Side::Unstaged { 2.0 } else { 1.0 };
+                        let row_width = ui.available_width() - 26.0 * buttons;
+                        let row = ui
+                            .allocate_ui(egui::vec2(row_width, 26.0), |ui| {
+                                details::file_row_shown(ui, &as_changed(f), is_active, shown)
+                            })
+                            .inner;
+                        if row.clicked() {
+                            action = Some(Action::Open(side, f.path.clone()));
+                        }
+                        let (glyph, verb) = match side {
+                            Side::Unstaged => (icon::PLUS, "Stage"),
+                            Side::Staged => (icon::MINUS, "Unstage"),
+                        };
+                        if side == Side::Unstaged
+                            && widgets::named_icon_button(
+                                ui,
+                                icon::ARROW_COUNTER_CLOCKWISE,
+                                &format!("Discard changes to {}", f.path),
+                                !busy,
+                            )
+                            .clicked()
+                        {
+                            action = Some(Action::Discard(vec![f.path.clone()]));
+                        }
+                        if widgets::named_icon_button(
                             ui,
-                            icon::ARROW_COUNTER_CLOCKWISE,
-                            &format!("Discard changes to {}", f.path),
+                            glyph,
+                            &format!("{verb} {}", f.path),
                             !busy,
                         )
                         .clicked()
-                    {
-                        action = Some(Action::Discard(vec![f.path.clone()]));
-                    }
-                    if widgets::named_icon_button(ui, glyph, &format!("{verb} {}", f.path), !busy)
-                        .clicked()
-                    {
-                        action = Some(match side {
-                            Side::Unstaged => Action::Stage(f.path.clone()),
-                            Side::Staged => Action::Unstage(f.path.clone()),
-                        });
-                    }
-                });
-            }
+                        {
+                            action = Some(match side {
+                                Side::Unstaged => Action::Stage(f.path.clone()),
+                                Side::Staged => Action::Unstage(f.path.clone()),
+                            });
+                        }
+                    });
+                },
+            );
         });
     ui.add_space(14.0);
     ui.spacing_mut().item_spacing.y = 6.0;
-    action
+    if fold {
+        Some(ListAction::Fold)
+    } else {
+        action.map(ListAction::Do)
+    }
 }
 
 fn commit_box(

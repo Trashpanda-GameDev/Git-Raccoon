@@ -7,6 +7,7 @@ pub mod crash;
 pub mod details;
 pub mod dialog;
 pub mod diff;
+pub mod file_list;
 pub mod file_view;
 pub mod history;
 pub mod licenses;

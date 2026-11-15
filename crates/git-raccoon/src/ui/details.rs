@@ -6,6 +6,7 @@ use git_raccoon_core::details::{ChangedFile, CommitDetails, Person};
 
 use crate::format;
 use crate::theme;
+use crate::ui::file_list::{self, Shown};
 use crate::ui::widgets;
 
 pub enum Action {
@@ -14,7 +15,29 @@ pub enum Action {
     StashApply,
     StashPop,
     StashDrop,
+    /// Switch changed files between paths and folders.
+    ToggleTree,
     Close,
+}
+
+/// How the changed files are shown.
+#[derive(Clone, Copy)]
+pub struct Files<'a> {
+    /// The one whose diff is open.
+    pub active: Option<&'a str>,
+    /// As a tree of folders, rather than by path.
+    pub tree: bool,
+}
+
+/// The button switching changed files between paths and a folder tree.
+/// Returns whether it was clicked.
+pub fn tree_toggle(ui: &mut egui::Ui, tree: bool) -> bool {
+    let (glyph, name) = if tree {
+        (icon::LIST, "Show paths")
+    } else {
+        (icon::TREE_STRUCTURE, "Show folders")
+    };
+    widgets::icon_button(ui, glyph, name).clicked()
 }
 
 pub fn show(
@@ -22,11 +45,15 @@ pub fn show(
     id: &str,
     details: Option<&Result<std::sync::Arc<CommitDetails>, String>>,
     loading: bool,
-    active_file: Option<&str>,
+    files: Files<'_>,
     now: i64,
     // For a stash: its controls are shown (`busy` disables them).
     stash: Option<bool>,
 ) -> Option<Action> {
+    let Files {
+        active: active_file,
+        tree,
+    } = files;
     let mut action = None;
     ui.horizontal(|ui| {
         ui.set_height(36.0);
@@ -162,14 +189,27 @@ pub fn show(
                 ui.label(RichText::new(format!("+{}", d.additions)).color(theme::add()));
                 ui.label(RichText::new(format!("−{}", d.deletions)).color(theme::del()));
                 change_bar(ui, d.additions, d.deletions);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if tree_toggle(ui, tree) {
+                        action = Some(Action::ToggleTree);
+                    }
+                });
             });
 
             ui.spacing_mut().item_spacing.y = 0.0;
-            for f in &d.files {
-                if file_row(ui, f, active_file == Some(f.path.as_str())).clicked() {
-                    action = Some(Action::OpenFile(f.path.clone()));
-                }
-            }
+            file_list::show(
+                ui,
+                "commit files",
+                &d.files,
+                |f| f.path.as_str(),
+                tree,
+                |ui, f, shown| {
+                    if file_row_shown(ui, f, active_file == Some(f.path.as_str()), shown).clicked()
+                    {
+                        action = Some(Action::OpenFile(f.path.clone()));
+                    }
+                },
+            );
         });
     action
 }
@@ -213,6 +253,16 @@ fn change_bar(ui: &mut egui::Ui, additions: usize, deletions: usize) {
 }
 
 pub fn file_row(ui: &mut egui::Ui, f: &ChangedFile, active: bool) -> egui::Response {
+    file_row_shown(ui, f, active, Shown::PATH)
+}
+
+/// A changed file's row, indented and with just its name in a folder tree.
+pub fn file_row_shown(
+    ui: &mut egui::Ui,
+    f: &ChangedFile,
+    active: bool,
+    shown: Shown,
+) -> egui::Response {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &f.path));
@@ -223,7 +273,7 @@ pub fn file_row(ui: &mut egui::Ui, f: &ChangedFile, active: bool) -> egui::Respo
         painter.rect_filled(rect, 0, theme::bg_hover());
     }
     let badge = Rect::from_min_size(
-        Pos2::new(rect.left() + 2.0, rect.center().y - 9.0),
+        Pos2::new(rect.left() + 2.0 + shown.indent, rect.center().y - 9.0),
         egui::vec2(18.0, 18.0),
     );
     widgets::status_badge(painter, badge, f.status);
@@ -253,9 +303,14 @@ pub fn file_row(ui: &mut egui::Ui, f: &ChangedFile, active: bool) -> egui::Respo
 
     // Path: the folder (and old name) shrink first; the file name stays whole.
     let (dir, name) = format::split_path(&f.path);
-    let prefix = match &f.old_path {
-        Some(old) => format!("{old} {} {dir}", icon::ARROW_RIGHT),
-        None => dir.to_string(),
+    let prefix = match (&f.old_path, shown.name_only) {
+        (Some(old), _) => format!(
+            "{old} {} {}",
+            icon::ARROW_RIGHT,
+            if shown.name_only { "" } else { dir }
+        ),
+        (None, true) => String::new(),
+        (None, false) => dir.to_string(),
     };
     let left = badge.right() + 8.0;
     let name_galley = painter.layout_no_wrap(name.to_string(), theme::body(13.0), theme::text());
