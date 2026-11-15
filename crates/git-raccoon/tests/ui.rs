@@ -1461,7 +1461,7 @@ fn fetches_pulls_and_pushes() {
         std::thread::sleep(Duration::from_millis(20));
     }
     screenshot(&mut h, "23-fetching");
-    h.get_by_label("Cancel").click();
+    h.get_by_label("Cancel fetch").click();
     wait_for(&mut h, "the cancel", |app| {
         app.repo().unwrap().sync_progress().is_none()
     });

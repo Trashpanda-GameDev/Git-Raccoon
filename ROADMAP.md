@@ -48,7 +48,7 @@ Everyday local work without leaving the app.
 Collaborate through remotes.
 
 - [x] Fetch, pull and push, with progress and cancellation
-- [ ] Authentication through SSH agent, SSH keys and Git credential helpers (agent and credential helpers already work through `git`; still to do: asking for SSH key passphrases and passwords in the app)
+- [x] Authentication through SSH agent, SSH keys and Git credential helpers, with passwords, key passphrases and new host keys asked in the app
 - [x] Ahead/behind counts on branches; set upstream on first push
 - [ ] Add, edit and remove remotes
 - [x] Force-push only with lease, behind a confirmation

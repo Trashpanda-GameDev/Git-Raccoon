@@ -18,10 +18,22 @@ fn git(path: &str) -> Command {
         .arg(path)
         .env("GIT_EDITOR", "true")
         .env("GIT_TERMINAL_PROMPT", "0");
-    // SSH would ask for passphrases and new host keys on a terminal the app
-    // doesn't have (or, started from one, block on it unseen). Keys in an
-    // agent and known hosts still work. A user's own SSH command wins.
-    if std::env::var_os("GIT_SSH_COMMAND").is_none() && std::env::var_os("GIT_SSH").is_none() {
+    if let Some(ask) = crate::askpass::current() {
+        // Questions (passwords, passphrases, new host keys) go to the app.
+        // A user's own askpass programs win.
+        cmd.env(crate::askpass::ENV, &ask.value);
+        if unset("GIT_ASKPASS") {
+            cmd.env("GIT_ASKPASS", &ask.program);
+        }
+        if unset("SSH_ASKPASS") {
+            cmd.env("SSH_ASKPASS", &ask.program)
+                .env("SSH_ASKPASS_REQUIRE", "force");
+        }
+    } else if std::env::var_os("GIT_SSH_COMMAND").is_none() && std::env::var_os("GIT_SSH").is_none()
+    {
+        // With nobody to ask, SSH would wait for a passphrase or host key on
+        // a terminal the app doesn't have (or, started from one, block on it
+        // unseen). Keys in an agent and known hosts still work.
         cmd.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
     }
     #[cfg(windows)]
@@ -31,6 +43,11 @@ fn git(path: &str) -> Command {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
     cmd
+}
+
+/// Whether an environment variable is unset or empty (Git ignores empty ones).
+fn unset(name: &str) -> bool {
+    std::env::var_os(name).is_none_or(|v| v.is_empty())
 }
 
 fn spawn(cmd: &mut Command) -> Result<Child> {

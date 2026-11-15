@@ -4,6 +4,11 @@
 use eframe::egui;
 
 fn main() -> eframe::Result {
+    // Started by Git to ask for a password or passphrase: ask the running
+    // app, print the answer, and finish (no window).
+    if let Some(code) = git_raccoon_core::askpass::run_if_asked() {
+        std::process::exit(code);
+    }
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Git Raccoon")
         .with_app_id("git-raccoon")

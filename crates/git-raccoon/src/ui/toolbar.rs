@@ -188,11 +188,11 @@ fn sync_buttons(ui: &mut egui::Ui, repo: &OpenRepo<'_>) -> Option<Action> {
                     .desired_height(4.0),
             );
         }
-        if ui
-            .button(RichText::new("Cancel").size(12.0))
-            .on_hover_text("Stop it. Nothing is half-changed: Git only updates refs at the end.")
-            .clicked()
-        {
+        let cancel = ui.button(RichText::new("Cancel").size(12.0));
+        let name = format!("Cancel {}", sync.verb);
+        ui.ctx()
+            .accesskit_node_builder(cancel.id, |n| n.set_label(name));
+        if cancel.on_hover_text("Stop it").clicked() {
             action = Some(Action::CancelSync);
         }
         return action;

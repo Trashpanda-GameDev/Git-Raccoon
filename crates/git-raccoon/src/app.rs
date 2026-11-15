@@ -19,6 +19,10 @@ pub struct App {
     opening: Option<(String, Task<Result<Loaded, String>>)>,
     error: Option<String>,
     scroll: history::Scroll,
+    /// Answers Git's questions (passwords, passphrases) while running.
+    askpass: Option<git_raccoon_core::askpass::Server>,
+    /// The question being shown.
+    prompt: Option<crate::ui::askpass::Prompt>,
 }
 
 fn logo(ctx: &egui::Context) -> egui::TextureHandle {
@@ -42,6 +46,9 @@ impl App {
             .and_then(|s| eframe::get_value::<Settings>(s, Settings::KEY))
             .unwrap_or_default();
         let mut app = Self::with_settings(&cc.egui_ctx, settings);
+        if let Ok(exe) = std::env::current_exe() {
+            app.answer_git_questions(&cc.egui_ctx, &exe);
+        }
         if let Some(last) = app.settings.last_repo.clone() {
             app.open(&cc.egui_ctx, last);
         }
@@ -58,6 +65,52 @@ impl App {
             opening: None,
             error: None,
             scroll: history::Scroll::default(),
+            askpass: None,
+            prompt: None,
+        }
+    }
+
+    /// Makes Git ask for passwords and passphrases in the app, through
+    /// `program` (this app's executable, which answers when started by Git).
+    /// Without this, Git can't ask, and fails instead.
+    pub fn answer_git_questions(&mut self, ctx: &egui::Context, program: &std::path::Path) {
+        let ctx = ctx.clone();
+        // Without it, signing in only works through credential helpers and agents.
+        self.askpass =
+            git_raccoon_core::askpass::Server::start(program, move || ctx.request_repaint()).ok();
+    }
+
+    /// The question from Git being shown, if any.
+    pub fn git_question(&self) -> Option<&str> {
+        self.prompt.as_ref().map(|p| p.request.prompt.as_str())
+    }
+
+    /// Shows Git's questions one at a time.
+    fn questions(&mut self, ctx: &egui::Context) {
+        if self.prompt.is_none()
+            && let Some(request) = self.askpass.as_ref().and_then(|s| s.poll())
+        {
+            self.prompt = Some(crate::ui::askpass::Prompt {
+                request,
+                input: String::new(),
+            });
+        }
+        // Only a running Git asks; once it has finished (or was cancelled),
+        // its question is moot.
+        let git_running = self
+            .repo
+            .as_ref()
+            .is_some_and(|r| r.is_staging() || r.is_committing());
+        if !git_running && let Some(prompt) = self.prompt.take() {
+            prompt.request.answer(None);
+        }
+        let Some(prompt) = &mut self.prompt else {
+            return;
+        };
+        if let Some(answer) = crate::ui::askpass::show(ctx, prompt)
+            && let Some(prompt) = self.prompt.take()
+        {
+            prompt.request.answer(answer);
         }
     }
 
@@ -150,6 +203,9 @@ impl App {
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
+        if self.prompt.is_some() {
+            return;
+        }
         let Some(repo) = &mut self.repo else { return };
         // An open dialog has the keyboard (Esc closes just the dialog).
         if repo.dialog.is_some() {
@@ -514,6 +570,7 @@ impl eframe::App for App {
         if let Some(op) = dialog::show(&ctx, &mut repo.dialog, &repo.refs) {
             repo.run(&ctx, op);
         }
+        self.questions(&ctx);
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {

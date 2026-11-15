@@ -3,6 +3,7 @@
 //!
 //! Nothing here depends on the user interface.
 
+pub mod askpass;
 pub mod branch;
 mod cli;
 pub mod commit;
