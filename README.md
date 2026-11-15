@@ -1,5 +1,7 @@
 # Git Raccoon
 
+[![CI](https://github.com/Trashpanda-GameDev/Git-Raccoon/actions/workflows/ci.yml/badge.svg)](https://github.com/Trashpanda-GameDev/Git-Raccoon/actions/workflows/ci.yml)
+
 A fast, friendly desktop Git client, written in Rust with [egui](https://github.com/emilk/egui) (eframe on wgpu) and [git2](https://docs.rs/git2).
 
 See [ROADMAP.md](ROADMAP.md) for what is planned.
@@ -76,5 +78,7 @@ GIT_RACCOON_BIG_REPO=big cargo test --release -p git-raccoon --test ui big_repo 
 ```
 
 It reports how long opening took, the slowest frame while jumping and paging around, and peak memory. On a 4-core machine, a million commits open in about 3 seconds (6 the first time, before Git's commit-graph cache exists; the app writes it), every frame stays under 10 ms, and memory peaks around 400 MB.
+
+CI (GitHub Actions) runs on every push to `main` and every pull request: on Linux, the format check, the lints and every test, UI included (on Mesa's software renderer, with the screenshots kept as an artifact); on Windows and macOS, a release build and the Git-logic and app unit tests (CI machines there can't reliably draw, so the UI tests run on Linux only).
 
 Lints are strict (`cargo clippy --workspace --all-targets`): exceptions use `#[expect(..., reason = "...")]`.
