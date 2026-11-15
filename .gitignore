@@ -7,3 +7,6 @@
 .idea
 .DS_Store
 *.swp
+
+# The built website (scripts/build-site.py)
+/_site

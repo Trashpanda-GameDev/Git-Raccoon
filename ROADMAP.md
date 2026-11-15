@@ -79,12 +79,11 @@ The operations people open a GUI for.
 - [x] CI on GitHub Actions: build and test on Linux, macOS and Windows
 - [x] Installers and in-app updates with Velopack: Windows
 - [x] Installers for macOS (Apple Silicon: an app and a .pkg) and Linux (an AppImage)
-- [ ] Code signing (Windows, macOS) and notarisation; Intel Mac builds
 - [x] Opt-in crash reporting (a local report, offered on the next start; sent only as a GitHub issue the user reviews)
 - [x] User guide ([docs/guide.md](docs/guide.md))
-- [ ] Project website
+- [x] Project website ([site/](site/), on GitHub Pages)
 - [x] App icon
-- [ ] Branding: website and installer artwork
+- [ ] Branding: installer artwork
 
 ## Later (ideas, not commitments)
 

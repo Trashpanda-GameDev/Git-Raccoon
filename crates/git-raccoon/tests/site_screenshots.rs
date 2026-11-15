@@ -1,0 +1,728 @@
+//! The screenshots on the project website (site/screenshots), taken from
+//! the real app against a demo project. Not run with the other tests:
+//!
+//! ```bash
+//! cargo test -p git-raccoon --test site_screenshots -- --ignored
+//! ```
+
+#![expect(
+    clippy::unwrap_used,
+    reason = "a screenshot script: a failure should simply stop it"
+)]
+
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use egui::Key;
+use egui_kittest::Harness;
+use egui_kittest::kittest::Queryable as _;
+use git_raccoon::App;
+use git_raccoon::settings::{Settings, ThemeChoice};
+use git2::{Oid, Repository, Signature, Time, build::CheckoutBuilder};
+
+const DAY: i64 = 86_400;
+
+const ROCKY: (&str, &str) = ("Rocky Raccoon", "rocky@example.com");
+const ADA: (&str, &str) = ("Ada Bandit", "ada@example.com");
+const MILO: (&str, &str) = ("Milo Mask", "milo@example.com");
+
+/// The demo project: "stash-box", a tiny key-value store in Rust.
+struct Demo {
+    dir: PathBuf,
+    repo: Repository,
+    now: i64,
+}
+
+impl Demo {
+    fn write(&self, file: &str, contents: &str) {
+        let p = self.dir.join(file);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, contents).unwrap();
+    }
+
+    fn commit_with(&self, who: (&str, &str), message: &str, days_ago: f64, extra: &[Oid]) -> Oid {
+        let mut index = self.repo.index().unwrap();
+        index
+            .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
+            .unwrap();
+        index.write().unwrap();
+        let tree = self.repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let mut parents: Vec<git2::Commit<'_>> = self
+            .repo
+            .head()
+            .ok()
+            .and_then(|h| h.peel_to_commit().ok())
+            .into_iter()
+            .collect();
+        parents.extend(extra.iter().map(|id| self.repo.find_commit(*id).unwrap()));
+        let refs: Vec<&git2::Commit<'_>> = parents.iter().collect();
+        let when = Time::new(self.now - (days_ago * DAY as f64) as i64, 0);
+        let sig = Signature::new(who.0, who.1, &when).unwrap();
+        self.repo
+            .commit(Some("HEAD"), &sig, &sig, message, &tree, &refs)
+            .unwrap()
+    }
+
+    fn commit(&self, who: (&str, &str), message: &str, days_ago: f64) -> Oid {
+        self.commit_with(who, message, days_ago, &[])
+    }
+
+    fn checkout(&self, branch: &str) {
+        let name = format!("refs/heads/{branch}");
+        if self.repo.find_reference(&name).is_err() {
+            let head = self.repo.head().unwrap().peel_to_commit().unwrap();
+            self.repo.branch(branch, &head, false).unwrap();
+        }
+        self.repo.set_head(&name).unwrap();
+        self.repo
+            .checkout_head(Some(CheckoutBuilder::new().force()))
+            .unwrap();
+    }
+
+    fn merge(&self, who: (&str, &str), branch: &str, days_ago: f64) -> Oid {
+        let theirs = self
+            .repo
+            .find_branch(branch, git2::BranchType::Local)
+            .unwrap()
+            .get()
+            .peel_to_commit()
+            .unwrap();
+        let ours = self.repo.head().unwrap().peel_to_commit().unwrap();
+        let mut index = self.repo.merge_commits(&ours, &theirs, None).unwrap();
+        index.write_tree_to(&self.repo).unwrap();
+        // Check the merged tree out, then commit it with both parents.
+        self.repo
+            .checkout_index(Some(&mut index), Some(CheckoutBuilder::new().force()))
+            .unwrap();
+        self.commit_with(
+            who,
+            &format!("Merge branch '{branch}'"),
+            days_ago,
+            &[theirs.id()],
+        )
+    }
+
+    fn tag(&self, name: &str) {
+        let head = self.repo.head().unwrap().peel_to_commit().unwrap();
+        self.repo
+            .tag_lightweight(name, head.as_object(), false)
+            .unwrap();
+    }
+
+    fn build() -> Self {
+        let dir = std::env::temp_dir()
+            .join(format!("git-raccoon-site-{}", std::process::id()))
+            .join("stash-box");
+        let _ = std::fs::remove_dir_all(&dir);
+        let repo = Repository::init(&dir).unwrap();
+        repo.set_head("refs/heads/main").unwrap();
+        let mut config = repo.config().unwrap();
+        config.set_str("user.name", ROCKY.0).unwrap();
+        config.set_str("user.email", ROCKY.1).unwrap();
+        config.set_bool("commit.gpgsign", false).unwrap();
+        let d = Demo {
+            dir,
+            repo,
+            now: git_raccoon::settings::now(),
+        };
+
+        d.write("README.md", README_1);
+        d.write("Cargo.toml", CARGO);
+        d.write("src/lib.rs", LIB_1);
+        d.commit(ROCKY, "Start stash-box", 41.0);
+        d.write("src/store.rs", STORE_1);
+        d.write("src/lib.rs", LIB_2);
+        d.commit(ROCKY, "Add an in-memory store", 39.0);
+        d.write("src/main.rs", MAIN_1);
+        d.commit(ADA, "Add a command-line interface", 36.0);
+        d.tag("v0.1.0");
+
+        d.checkout("feature/persistence");
+        d.write("src/disk.rs", DISK_1);
+        d.commit(MILO, "Write the store to disk", 34.0);
+        d.write("src/disk.rs", DISK_2);
+        d.commit(MILO, "Load the store on start", 31.0);
+
+        d.checkout("main");
+        d.write("README.md", README_2);
+        d.commit(ADA, "Document the API", 32.0);
+        d.merge(ROCKY, "feature/persistence", 29.0);
+        d.write("src/cache.rs", CACHE_1);
+        d.commit(ADA, "Add an LRU cache in front of the store", 27.0);
+        d.tag("v0.2.0");
+
+        d.checkout("feature/expiry");
+        d.write("src/expiry.rs", EXPIRY_1);
+        d.commit(MILO, "Expire keys after a time to live", 20.0);
+        d.write("src/expiry.rs", EXPIRY_2);
+        d.commit(MILO, "Sweep expired keys in the background", 11.0);
+
+        d.checkout("main");
+        d.write("src/store.rs", STORE_2);
+        d.commit(
+            ROCKY,
+            "Find keys through a hash index\n\nLookups were a linear scan of the log, which got slow past a few\nthousand keys. The index maps each key to its latest entry.",
+            17.0,
+        );
+        d.write("src/disk.rs", DISK_3);
+        d.commit(ADA, "Handle an empty store file", 14.0);
+
+        d.checkout("fix/flush-on-exit");
+        d.write("src/main.rs", MAIN_2);
+        d.commit(ADA, "Flush pending writes on exit", 5.0);
+
+        d.checkout("main");
+        d.write("src/store.rs", STORE_3);
+        d.commit(ROCKY, "Compact the log when it grows", 8.0);
+        let pushed = d.repo.head().unwrap().target().unwrap();
+        d.write("Cargo.toml", &CARGO.replace("0.2.0", "0.3.0"));
+        d.commit(ROCKY, "Release 0.3.0", 2.0);
+
+        d.repo
+            .reference("refs/remotes/origin/main", pushed, true, "demo")
+            .unwrap();
+        d.repo
+            .remote("origin", "https://github.com/rocky/stash-box.git")
+            .unwrap();
+        let mut config = d.repo.config().unwrap();
+        config.set_str("branch.main.remote", "origin").unwrap();
+        config
+            .set_str("branch.main.merge", "refs/heads/main")
+            .unwrap();
+        d
+    }
+}
+
+impl Drop for Demo {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(self.dir.parent().unwrap());
+    }
+}
+
+fn harness(theme: ThemeChoice) -> Harness<'static, App> {
+    let settings = Settings {
+        theme,
+        split_diff: true,
+        no_update_checks: true,
+        ..Settings::default()
+    };
+    Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .with_pixels_per_point(2.0)
+        .wgpu()
+        .build_eframe(move |cc| App::with_settings(&cc.egui_ctx, settings))
+}
+
+fn settle(h: &mut Harness<'_, App>) {
+    let start = Instant::now();
+    let mut idle = 0;
+    while start.elapsed() < Duration::from_secs(20) {
+        h.step();
+        if h.state().is_busy() {
+            idle = 0;
+        } else {
+            idle += 1;
+            if idle >= 3 {
+                return;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("app still busy after 20 s");
+}
+
+fn out_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../site/screenshots")
+}
+
+/// Saves a screenshot, with the pointer moved out of the window first.
+fn shot(h: &mut Harness<'_, App>, name: &str) {
+    h.event(egui::Event::PointerGone);
+    h.run_ok();
+    let image = h.render().expect("render");
+    std::fs::create_dir_all(out_dir()).unwrap();
+    image.save(out_dir().join(format!("{name}.png"))).unwrap();
+}
+
+/// A smaller screenshot (half size), for previews.
+fn small_shot(h: &mut Harness<'_, App>, name: &str) {
+    h.event(egui::Event::PointerGone);
+    h.run_ok();
+    let image = h.render().expect("render");
+    let (w, h) = (image.width() / 2, image.height() / 2);
+    let small = image::imageops::resize(&image, w, h, image::imageops::FilterType::Triangle);
+    std::fs::create_dir_all(out_dir()).unwrap();
+    small.save(out_dir().join(format!("{name}.png"))).unwrap();
+}
+
+fn open(h: &mut Harness<'_, App>, path: &Path) {
+    let ctx = h.ctx.clone();
+    h.state_mut().open(&ctx, path.to_str().unwrap());
+    settle(h);
+    assert!(h.state().repo().is_some(), "{:?}", h.state().error());
+}
+
+fn click(h: &mut Harness<'_, App>, label: &str) {
+    h.get_by_label(label).click();
+    settle(h);
+}
+
+fn press(h: &mut Harness<'_, App>, modifiers: egui::Modifiers, key: Key) {
+    h.key_press_modifiers(modifiers, key);
+    h.run_ok();
+}
+
+const INDEX_COMMIT: &str = "Find keys through a hash index";
+
+#[test]
+#[ignore = "writes the website's screenshots"]
+fn website_screenshots() {
+    let demo = Demo::build();
+
+    // The graph, with a commit's details.
+    let mut h = harness(ThemeChoice::Dark);
+    open(&mut h, &demo.dir);
+    click(&mut h, INDEX_COMMIT);
+    shot(&mut h, "history");
+
+    // The command palette.
+    press(&mut h, egui::Modifiers::COMMAND, Key::K);
+    h.get_by_label("Command").type_text("check feat");
+    h.run_ok();
+    shot(&mut h, "palette");
+    press(&mut h, egui::Modifiers::NONE, Key::Escape);
+
+    // Interactive rebase of the commits after the cache.
+    h.get_all_by_label("Add an LRU cache in front of the store")
+        .next()
+        .unwrap()
+        .click_secondary();
+    h.run_ok();
+    h.get_by_label_contains("Interactive rebase from here")
+        .click();
+    settle(&mut h);
+    click(&mut h, "Squash Handle an empty store file");
+    click(&mut h, "Reword Release 0.3.0");
+    h.get_by_label("Message for Release 0.3.0").click();
+    h.run_ok();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+    h.get_by_label("Message for Release 0.3.0")
+        .type_text("Release stash-box 0.3.0");
+    h.run_ok();
+    shot(&mut h, "rebase");
+    click(&mut h, "Cancel");
+
+    // Its diff, side by side.
+    click(&mut h, "src/store.rs");
+    shot(&mut h, "diff");
+
+    // Blame.
+    click(&mut h, "Blame");
+    shot(&mut h, "blame");
+    h.key_press(Key::Escape);
+    settle(&mut h);
+    h.key_press(Key::Escape);
+    settle(&mut h);
+
+    // Working changes: stage some lines of an edit.
+    demo.write("src/cache.rs", CACHE_2);
+    demo.write(
+        "CHANGELOG.md",
+        "# Changelog\n\n## 0.3.0\n\n- Faster lookups.\n",
+    );
+    let mut index = demo.repo.index().unwrap();
+    index.add_path(Path::new("CHANGELOG.md")).unwrap();
+    index.write().unwrap();
+    let start = Instant::now();
+    while h.query_by_label("Working changes").is_none() {
+        assert!(start.elapsed() < Duration::from_secs(20), "no WIP row");
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    click(&mut h, "Working changes");
+    click(&mut h, "src/cache.rs");
+    shot(&mut h, "staging");
+    drop(h);
+
+    // The same view in other themes.
+    for (theme, name) in [
+        (ThemeChoice::Raccoon, "raccoon"),
+        (ThemeChoice::Light, "light"),
+        (ThemeChoice::Pastel, "pastel"),
+        (ThemeChoice::Abyss, "abyss"),
+        (ThemeChoice::Forest, "forest"),
+        (ThemeChoice::Paper, "paper"),
+    ] {
+        let mut h = harness(theme);
+        open(&mut h, &demo.dir);
+        click(&mut h, INDEX_COMMIT);
+        small_shot(&mut h, &format!("theme-{name}"));
+    }
+}
+
+const CARGO: &str = r#"[package]
+name = "stash-box"
+version = "0.2.0"
+edition = "2024"
+description = "A tiny key-value store"
+license = "MIT"
+"#;
+
+const README_1: &str = "# stash-box\n\nA tiny key-value store.\n";
+const README_2: &str = "# stash-box\n\nA tiny key-value store, kept in a single file.\n\n```rust\nlet mut store = Store::open(\"data.box\")?;\nstore.put(\"raccoon\", b\"trash panda\")?;\nassert_eq!(store.get(\"raccoon\"), Some(&b\"trash panda\"[..]));\n```\n";
+
+const LIB_1: &str = "//! A tiny key-value store.\n";
+const LIB_2: &str = "//! A tiny key-value store.\n\nmod store;\n\npub use store::Store;\n";
+
+const STORE_1: &str = r#"/// Keys and values, in the order they were written.
+pub struct Store {
+    log: Vec<(String, Vec<u8>)>,
+}
+
+impl Store {
+    pub fn new() -> Self {
+        Store { log: Vec::new() }
+    }
+
+    /// Stores `value` under `key`, replacing what was there.
+    pub fn put(&mut self, key: &str, value: &[u8]) {
+        self.log.push((key.to_string(), value.to_vec()));
+    }
+
+    /// The latest value written under `key`.
+    pub fn get(&self, key: &str) -> Option<&[u8]> {
+        self.log
+            .iter()
+            .rev()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_slice())
+    }
+}
+"#;
+
+const STORE_2: &str = r#"use std::collections::HashMap;
+
+/// Keys and values, in the order they were written.
+pub struct Store {
+    log: Vec<(String, Vec<u8>)>,
+    /// Where each key's latest value is in the log.
+    index: HashMap<String, usize>,
+}
+
+impl Store {
+    pub fn new() -> Self {
+        Store {
+            log: Vec::new(),
+            index: HashMap::new(),
+        }
+    }
+
+    /// Stores `value` under `key`, replacing what was there.
+    pub fn put(&mut self, key: &str, value: &[u8]) {
+        self.index.insert(key.to_string(), self.log.len());
+        self.log.push((key.to_string(), value.to_vec()));
+    }
+
+    /// The latest value written under `key`.
+    pub fn get(&self, key: &str) -> Option<&[u8]> {
+        let at = *self.index.get(key)?;
+        Some(self.log[at].1.as_slice())
+    }
+
+    /// How many keys there are.
+    pub fn len(&self) -> usize {
+        self.index.len()
+    }
+}
+"#;
+
+const STORE_3: &str = r#"use std::collections::HashMap;
+
+/// Past this many stale entries, the log is compacted.
+const COMPACT_AFTER: usize = 1024;
+
+/// Keys and values, in the order they were written.
+pub struct Store {
+    log: Vec<(String, Vec<u8>)>,
+    /// Where each key's latest value is in the log.
+    index: HashMap<String, usize>,
+}
+
+impl Store {
+    pub fn new() -> Self {
+        Store {
+            log: Vec::new(),
+            index: HashMap::new(),
+        }
+    }
+
+    /// Stores `value` under `key`, replacing what was there.
+    pub fn put(&mut self, key: &str, value: &[u8]) {
+        self.index.insert(key.to_string(), self.log.len());
+        self.log.push((key.to_string(), value.to_vec()));
+        if self.log.len() - self.index.len() > COMPACT_AFTER {
+            self.compact();
+        }
+    }
+
+    /// The latest value written under `key`.
+    pub fn get(&self, key: &str) -> Option<&[u8]> {
+        let at = *self.index.get(key)?;
+        Some(self.log[at].1.as_slice())
+    }
+
+    /// How many keys there are.
+    pub fn len(&self) -> usize {
+        self.index.len()
+    }
+
+    /// Drops the entries that later writes replaced.
+    fn compact(&mut self) {
+        let mut log = Vec::with_capacity(self.index.len());
+        for (key, at) in self.index.iter_mut() {
+            log.push((key.clone(), std::mem::take(&mut self.log[*at].1)));
+            *at = log.len() - 1;
+        }
+        self.log = log;
+    }
+}
+"#;
+
+const MAIN_1: &str = r#"use stash_box::Store;
+
+fn main() {
+    let mut store = Store::new();
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.as_slice() {
+        [cmd, key, value] if cmd == "put" => store.put(key, value.as_bytes()),
+        [cmd, key] if cmd == "get" => match store.get(key) {
+            Some(value) => println!("{}", String::from_utf8_lossy(value)),
+            None => eprintln!("no such key: {key}"),
+        },
+        _ => eprintln!("usage: stash-box put KEY VALUE | get KEY"),
+    }
+}
+"#;
+
+const MAIN_2: &str = r#"use stash_box::Store;
+
+fn main() -> std::io::Result<()> {
+    let mut store = Store::open("data.box")?;
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.as_slice() {
+        [cmd, key, value] if cmd == "put" => store.put(key, value.as_bytes()),
+        [cmd, key] if cmd == "get" => match store.get(key) {
+            Some(value) => println!("{}", String::from_utf8_lossy(value)),
+            None => eprintln!("no such key: {key}"),
+        },
+        _ => eprintln!("usage: stash-box put KEY VALUE | get KEY"),
+    }
+    // Pending writes reach the disk even when the process is interrupted.
+    store.flush()
+}
+"#;
+
+const DISK_1: &str = r#"use std::fs::File;
+use std::io::{self, Write};
+use std::path::Path;
+
+use crate::Store;
+
+impl Store {
+    /// Writes every key and value to `path`.
+    pub fn save(&self, path: &Path) -> io::Result<()> {
+        let mut file = File::create(path)?;
+        for (key, value) in self.entries() {
+            writeln!(file, "{key}\t{}", hex(value))?;
+        }
+        file.sync_all()
+    }
+}
+"#;
+
+const DISK_2: &str = r#"use std::fs::{self, File};
+use std::io::{self, Write};
+use std::path::Path;
+
+use crate::Store;
+
+impl Store {
+    /// Writes every key and value to `path`.
+    pub fn save(&self, path: &Path) -> io::Result<()> {
+        let mut file = File::create(path)?;
+        for (key, value) in self.entries() {
+            writeln!(file, "{key}\t{}", hex(value))?;
+        }
+        file.sync_all()
+    }
+
+    /// Reads a store written by `save`.
+    pub fn load(path: &Path) -> io::Result<Store> {
+        let mut store = Store::new();
+        for line in fs::read_to_string(path)?.lines() {
+            let (key, value) = line.split_once('\t').ok_or(io::ErrorKind::InvalidData)?;
+            store.put(key, &unhex(value)?);
+        }
+        Ok(store)
+    }
+}
+"#;
+
+const DISK_3: &str = r#"use std::fs::{self, File};
+use std::io::{self, Write};
+use std::path::Path;
+
+use crate::Store;
+
+impl Store {
+    /// Writes every key and value to `path`.
+    pub fn save(&self, path: &Path) -> io::Result<()> {
+        let mut file = File::create(path)?;
+        for (key, value) in self.entries() {
+            writeln!(file, "{key}\t{}", hex(value))?;
+        }
+        file.sync_all()
+    }
+
+    /// Reads a store written by `save`. A missing or empty file is an
+    /// empty store.
+    pub fn load(path: &Path) -> io::Result<Store> {
+        let mut store = Store::new();
+        let text = match fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(store),
+            Err(e) => return Err(e),
+        };
+        for line in text.lines().filter(|l| !l.is_empty()) {
+            let (key, value) = line.split_once('\t').ok_or(io::ErrorKind::InvalidData)?;
+            store.put(key, &unhex(value)?);
+        }
+        Ok(store)
+    }
+}
+"#;
+
+const CACHE_1: &str = r#"use std::collections::VecDeque;
+
+/// The most recently read values, so hot keys skip the store.
+pub struct Cache {
+    capacity: usize,
+    entries: VecDeque<(String, Vec<u8>)>,
+}
+
+impl Cache {
+    pub fn new(capacity: usize) -> Self {
+        Cache {
+            capacity,
+            entries: VecDeque::with_capacity(capacity),
+        }
+    }
+
+    pub fn get(&mut self, key: &str) -> Option<&[u8]> {
+        let at = self.entries.iter().position(|(k, _)| k == key)?;
+        let entry = self.entries.remove(at)?;
+        self.entries.push_front(entry);
+        self.entries.front().map(|(_, v)| v.as_slice())
+    }
+
+    pub fn insert(&mut self, key: &str, value: &[u8]) {
+        if self.entries.len() == self.capacity {
+            self.entries.pop_back();
+        }
+        self.entries.push_front((key.to_string(), value.to_vec()));
+    }
+}
+"#;
+
+const CACHE_2: &str = r#"use std::collections::VecDeque;
+
+/// The most recently read values, so hot keys skip the store.
+pub struct Cache {
+    capacity: usize,
+    entries: VecDeque<(String, Vec<u8>)>,
+    hits: u64,
+    misses: u64,
+}
+
+impl Cache {
+    pub fn new(capacity: usize) -> Self {
+        Cache {
+            capacity,
+            entries: VecDeque::with_capacity(capacity),
+            hits: 0,
+            misses: 0,
+        }
+    }
+
+    pub fn get(&mut self, key: &str) -> Option<&[u8]> {
+        let Some(at) = self.entries.iter().position(|(k, _)| k == key) else {
+            self.misses += 1;
+            return None;
+        };
+        self.hits += 1;
+        let entry = self.entries.remove(at)?;
+        self.entries.push_front(entry);
+        self.entries.front().map(|(_, v)| v.as_slice())
+    }
+
+    pub fn insert(&mut self, key: &str, value: &[u8]) {
+        if self.entries.len() == self.capacity {
+            self.entries.pop_back();
+        }
+        self.entries.push_front((key.to_string(), value.to_vec()));
+    }
+
+    /// The share of reads answered from the cache.
+    pub fn hit_rate(&self) -> f64 {
+        self.hits as f64 / (self.hits + self.misses).max(1) as f64
+    }
+}
+"#;
+
+const EXPIRY_1: &str = r#"use std::time::{Duration, Instant};
+
+/// When each key stops being valid.
+pub struct Expiry {
+    deadlines: Vec<(String, Instant)>,
+}
+
+impl Expiry {
+    pub fn set(&mut self, key: &str, ttl: Duration) {
+        self.deadlines.push((key.to_string(), Instant::now() + ttl));
+    }
+
+    pub fn is_expired(&self, key: &str) -> bool {
+        self.deadlines
+            .iter()
+            .any(|(k, at)| k == key && *at <= Instant::now())
+    }
+}
+"#;
+
+const EXPIRY_2: &str = r#"use std::time::{Duration, Instant};
+
+/// When each key stops being valid.
+pub struct Expiry {
+    deadlines: Vec<(String, Instant)>,
+}
+
+impl Expiry {
+    pub fn set(&mut self, key: &str, ttl: Duration) {
+        self.deadlines.push((key.to_string(), Instant::now() + ttl));
+    }
+
+    pub fn is_expired(&self, key: &str) -> bool {
+        self.deadlines
+            .iter()
+            .any(|(k, at)| k == key && *at <= Instant::now())
+    }
+
+    /// Removes the keys whose time is up, and returns them.
+    pub fn sweep(&mut self) -> Vec<String> {
+        let now = Instant::now();
+        let (gone, kept) = self.deadlines.drain(..).partition(|(_, at)| *at <= now);
+        self.deadlines = kept;
+        gone.into_iter().map(|(k, _): (String, Instant)| k).collect()
+    }
+}
+"#;

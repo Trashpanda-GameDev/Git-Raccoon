@@ -42,16 +42,8 @@ pub fn show(
         .inner_margin(egui::Margin::symmetric(12, 8))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(icon::LIST_NUMBERS).color(theme::accent()));
-                ui.label(RichText::new("Interactive rebase").strong().size(15.0));
-                ui.label(
-                    RichText::new(format!(
-                        "{} commits after {}",
-                        planner.rows.len(),
-                        planner.base_label
-                    ))
-                    .color(theme::muted()),
-                );
+                // The buttons first (from the right), so the title gives way
+                // to them in a narrow window.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if widgets::icon_button(ui, icon::X, "Close (Esc)").clicked() {
                         action = Some(Action::Cancel);
@@ -83,6 +75,21 @@ pub fn show(
                     {
                         action = Some(Action::Start);
                     }
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.label(RichText::new(icon::LIST_NUMBERS).color(theme::accent()));
+                        ui.label(RichText::new("Interactive rebase").strong().size(15.0));
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(format!(
+                                    "{} commits after {}",
+                                    planner.rows.len(),
+                                    planner.base_label
+                                ))
+                                .color(theme::muted()),
+                            )
+                            .truncate(),
+                        );
+                    });
                 });
             });
             ui.label(

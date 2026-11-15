@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>User guide · Git Raccoon</title>
+  <meta name="description" content="How to use Git Raccoon: installing, committing, branches, syncing, merging, rebasing, undo, tabs, shortcuts and settings.">
+  <meta name="theme-color" content="#1b1d23">
+  <link rel="icon" href="icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="icon.png" alt="" width="30" height="30">Git Raccoon</a>
+    <nav>
+      <a class="optional" href="./#features">Features</a>
+      <a class="optional" href="./#themes">Themes</a>
+      <a class="current" href="guide.html">Guide</a>
+      <a href="https://github.com/Trashpanda-GameDev/Git-Raccoon">GitHub</a>
+      <a class="button primary header-download" href="./#download">Download</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap guide">
+  <nav class="guide-toc" aria-label="Contents">
+    <p>Contents</p>
+    <ul>
+{{toc}}
+    </ul>
+  </nav>
+  <article class="prose">
+{{content}}
+  </article>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <span>Git Raccoon is open source, under the MIT or Apache 2.0 license.</span>
+    <div class="links">
+      <a href="./">Home</a>
+      <a href="https://github.com/Trashpanda-GameDev/Git-Raccoon">Source code</a>
+      <a href="https://github.com/Trashpanda-GameDev/Git-Raccoon/releases">Releases</a>
+      <a href="https://github.com/Trashpanda-GameDev/Git-Raccoon/issues">Report a problem</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // Highlight the section being read in the contents.
+  (function () {
+    var links = Array.prototype.slice.call(document.querySelectorAll(".guide-toc a"));
+    var byId = {};
+    links.forEach(function (a) { byId[a.getAttribute("href").slice(1)] = a; });
+    var headings = Array.prototype.slice.call(document.querySelectorAll(".prose h2[id]"));
+    function update() {
+      var current = headings[0];
+      headings.forEach(function (h) { if (h.getBoundingClientRect().top < 120) current = h; });
+      links.forEach(function (a) { a.classList.remove("active"); });
+      if (current && byId[current.id]) byId[current.id].classList.add("active");
+    }
+    window.addEventListener("scroll", update, { passive: true });
+    update();
+  })();
+</script>
+</body>
+</html>

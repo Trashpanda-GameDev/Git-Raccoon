@@ -4,12 +4,15 @@
 
 A fast, friendly desktop Git client, written in Rust with [egui](https://github.com/emilk/egui) (eframe on wgpu) and [git2](https://docs.rs/git2).
 
+**Website and downloads: [trashpanda-gamedev.github.io/Git-Raccoon](https://trashpanda-gamedev.github.io/Git-Raccoon/)**
+
 See the [user guide](docs/guide.md) for how to use it, and [ROADMAP.md](ROADMAP.md) for what is planned.
 
 ## Layout
 
 - `crates/git-raccoon-core`: the Git logic: history and graph layout, commit details and diffs, staging, committing, branches, tags, stashes, undo, fetch/pull/push, search, and watching for changes. No UI code.
 - `crates/git-raccoon`: the desktop app.
+- `site/`: the website. `python3 scripts/build-site.py` builds it into `_site/` (with the user guide), and the Website workflow publishes it on GitHub Pages when it changes. Its screenshots come from the app: `cargo test -p git-raccoon --test site_screenshots -- --ignored`.
 
 ## Running it
 
