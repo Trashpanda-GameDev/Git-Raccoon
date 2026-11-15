@@ -55,16 +55,32 @@ pub fn checkout(path: &str, name: &str) -> Result<()> {
 
 /// Checks out a remote branch such as "origin/feature": switches to the
 /// local branch of the same name, creating it to track the remote one if
-/// it doesn't exist yet.
+/// it doesn't exist yet, and brings it up to the remote one.
+///
+/// An existing local branch behind the remote one is fast-forwarded (to
+/// the remote branch as last fetched: nothing is downloaded). One with
+/// commits the remote branch lacks is left as it is, still checked out,
+/// with [`Error::Diverged`]: then it's for merging or rebasing.
 pub fn checkout_remote(path: &str, remote_branch: &str) -> Result<()> {
     let repo = Repository::discover(path)?;
     let local = remote_branch
         .split_once('/')
         .map_or(remote_branch, |(_, rest)| rest);
-    if repo.find_branch(local, git2::BranchType::Local).is_ok() {
-        return checkout(path, local);
+    if repo.find_branch(local, git2::BranchType::Local).is_err() {
+        return run_checkout(path, &["switch", "--track", remote_branch]);
     }
-    run_checkout(path, &["switch", "--track", remote_branch])
+    checkout(path, local)?;
+    let ours = repo.refname_to_id(&format!("refs/heads/{local}"))?;
+    let theirs = repo.revparse_single(remote_branch)?.peel_to_commit()?.id();
+    if ours == theirs || repo.graph_descendant_of(ours, theirs)? {
+        return Ok(()); // up to date, or ahead
+    }
+    if repo.graph_descendant_of(theirs, ours)? {
+        return run_checkout(path, &["merge", "--ff-only", "--quiet", remote_branch]);
+    }
+    Err(Error::Diverged(format!(
+        "{local} and {remote_branch} have both moved on"
+    )))
 }
 
 /// Checks out a commit without a branch ("detached HEAD").
@@ -262,6 +278,52 @@ mod tests {
 
         checkout_detached(t.path(), &second.to_string()).unwrap();
         assert_eq!(head(&t), (None, second.to_string()));
+    }
+
+    #[test]
+    fn checking_out_a_remote_branch_brings_the_local_one_up_to_it() {
+        let (t, first, second) = repo();
+        t.repo
+            .remote("origin", "https://example.com/r.git")
+            .unwrap();
+        let remote = |id| {
+            t.repo
+                .reference("refs/remotes/origin/feature", id, true, "test")
+                .unwrap();
+        };
+
+        create(t.path(), "base", &second.to_string(), false).unwrap();
+
+        // Behind: fast-forwarded to the remote branch.
+        create(t.path(), "feature", &first.to_string(), false).unwrap();
+        remote(second);
+        checkout_remote(t.path(), "origin/feature").unwrap();
+        assert_eq!(head(&t), (Some("feature".into()), second.to_string()));
+        assert_eq!(
+            std::fs::read_to_string(t.dir.join("f.txt")).unwrap(),
+            "two\n"
+        );
+
+        // Ahead: left where it is.
+        remote(first);
+        checkout(t.path(), "base").unwrap();
+        checkout_remote(t.path(), "origin/feature").unwrap();
+        assert_eq!(head(&t), (Some("feature".into()), second.to_string()));
+
+        // Both moved on: checked out, unchanged, and reported.
+        t.write("g.txt", "mine\n");
+        let mine = t.commit_all("mine");
+        remote(first);
+        checkout(t.path(), "base").unwrap();
+        let theirs = {
+            create(t.path(), "theirs", &first.to_string(), true).unwrap();
+            t.write("h.txt", "theirs\n");
+            t.commit_all("theirs")
+        };
+        remote(theirs);
+        let err = checkout_remote(t.path(), "origin/feature").unwrap_err();
+        assert!(matches!(err, Error::Diverged(_)), "{err}");
+        assert_eq!(head(&t), (Some("feature".into()), mine.to_string()));
     }
 
     #[test]

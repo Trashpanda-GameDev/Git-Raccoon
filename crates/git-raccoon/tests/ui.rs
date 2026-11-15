@@ -1196,6 +1196,58 @@ fn spreads_out_a_commits_labels_and_checks_them_out() {
 }
 
 #[test]
+fn double_clicking_a_remote_branch_brings_the_local_one_up_to_it() {
+    let sample = Sample::build();
+    // A local branch behind its remote copy: "sync" at the merge, the
+    // remote's two commits further on.
+    git(&sample, &["branch", "sync", "v0.1.0"]);
+    let theirs = {
+        let out = std::process::Command::new("git")
+            .args(["rev-parse", "main~1"])
+            .current_dir(sample.path())
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    git(
+        &sample,
+        &["update-ref", "refs/remotes/origin/sync", &theirs],
+    );
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+
+    // Its label is on "Add icon", the remote's commit.
+    let row = h.get_by_label("Add icon").rect();
+    double_click_at(&mut h, egui::pos2(row.left() + 30.0, row.center().y));
+    wait_for(&mut h, "the checkout", |app| {
+        head_branch(app).as_deref() == Some("sync")
+    });
+    settle(&mut h);
+    assert_eq!(head_id(h.state()), theirs, "brought up to origin/sync");
+    assert_eq!(
+        undo_label(h.state()).as_deref(),
+        Some("Undo check out origin/sync")
+    );
+
+    // Undo: back on main, and sync where it was.
+    h.get_by_label("Undo").click();
+    wait_for(&mut h, "the undo", |app| {
+        head_branch(app).as_deref() == Some("main") && app.repo().unwrap().undo.is_none()
+    });
+    let out = std::process::Command::new("git")
+        .args(["rev-parse", "sync", "v0.1.0^{commit}"])
+        .current_dir(sample.path())
+        .output()
+        .unwrap();
+    let ids: Vec<String> = String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(ids[0], ids[1], "sync is back at v0.1.0");
+}
+
+#[test]
 fn creates_checks_out_renames_and_deletes_branches_and_tags() {
     use egui::accesskit::Role;
     let sample = Sample::build();

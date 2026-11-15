@@ -540,6 +540,8 @@ impl Undoable {
 #[derive(Default)]
 struct Before {
     tip: Option<String>,
+    /// The checked-out branch, or HEAD's commit if detached.
+    checked_out: Option<Op>,
     upstream: Option<String>,
     tag: Option<String>,
     stash_message: Option<String>,
@@ -569,7 +571,15 @@ impl Before {
                 });
             }
             Op::CheckoutRemote(name) => {
-                b.branch_existed = branch::tip(path, local_name(name)).is_ok();
+                b.tip = branch::tip(path, local_name(name)).ok();
+                b.branch_existed = b.tip.is_some();
+                // Where to go back to: the reflog's last move may be the
+                // fast-forward, not the switch.
+                b.checked_out = refs::load_refs(path)
+                    .ok()
+                    .and_then(|r| r.local.into_iter().find(|l| l.is_head))
+                    .map(|l| Op::Checkout(l.name))
+                    .or_else(|| undo::head_id(path).ok().flatten().map(Op::CheckoutDetached));
             }
             Op::Stash { .. } => b.stash_top = stash::top(path).ok().flatten(),
             Op::StashThen(inner) => return Before::capture(inner, path),
@@ -583,6 +593,15 @@ impl Before {
             _ => {}
         }
         b
+    }
+}
+
+/// The remote branch `op` checks out, if it does (stashing first or not).
+fn remote_checkout(op: &Op) -> Option<&str> {
+    match op {
+        Op::CheckoutRemote(name) => Some(name),
+        Op::StashThen(inner) => remote_checkout(inner),
+        _ => None,
     }
 }
 
@@ -631,9 +650,27 @@ fn undo_for(op: &Op, before: Before, path: &str) -> Option<Undoable> {
             vec![checkout_back(path)?],
         ),
         Op::CheckoutRemote(name) => {
-            let mut ops = vec![checkout_back(path)?];
+            let local = local_name(name);
+            let mut ops = Vec::new();
+            // Fast-forwarded: back to where it was (while it's checked out).
+            if let (Some(was), Ok(now)) = (before.tip.clone(), branch::tip(path, local))
+                && was != now
+            {
+                ops.push(Op::ResetKeep {
+                    expected: now,
+                    to: was,
+                });
+            }
+            match before.checked_out {
+                Some(Op::Checkout(b)) if b == local => {}
+                Some(back) => ops.push(back),
+                None => ops.push(checkout_back(path)?),
+            }
             if !before.branch_existed {
-                ops.push(delete_new(local_name(name))?);
+                ops.push(delete_new(local)?);
+            }
+            if ops.is_empty() {
+                return None;
             }
             (format!("Undo check out {name}"), ops)
         }
@@ -1798,6 +1835,28 @@ impl RepoView {
                 self.refresh_error = Some(format!(
                     "Could not force push: {upstream} has changed since you last fetched, so it wasn't overwritten. Fetch to see the new commits first.\n\n{text}"
                 ));
+                true
+            }
+            (Error::Diverged(_), op) if remote_checkout(op).is_some() => {
+                let remote = remote_checkout(op).unwrap_or_default().to_string();
+                let local = local_name(&remote).to_string();
+                self.dialog = Some(Dialog::Choice {
+                    title: format!("{local} and {remote} have both moved on"),
+                    body: format!(
+                        "{local} is checked out, but it has commits {remote} doesn't, so it can't simply be moved up to it. Merge adds a merge commit joining them; rebase replays your commits on top of theirs, for a straight history."
+                    ),
+                    choices: vec![
+                        (
+                            "Merge".into(),
+                            false,
+                            Op::Merge {
+                                branch: remote.clone(),
+                                mode: MergeMode::Default,
+                            },
+                        ),
+                        ("Rebase".into(), false, Op::Rebase(remote)),
+                    ],
+                });
                 true
             }
             (Error::Diverged(_), Op::Pull(PullMode::FastForward)) => {
