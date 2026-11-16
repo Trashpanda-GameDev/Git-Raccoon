@@ -3,6 +3,13 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.5
+
+- **Delete a branch on the remote**: right-click it under Remote in the sidebar (it asks first, and Undo puts it back).
+- **Branch, Fetch, Pull and Push sit in the middle** of the toolbar.
+- **Esc in the search bar** closes just the search bar, not the commit beside it.
+- What's new also shows after updating from 0.5.2 or earlier; long feedback titles arrive whole.
+
 ## 0.5.4
 
 - **Feedback is sent straight from the app**: no browser or GitHub account needed.
