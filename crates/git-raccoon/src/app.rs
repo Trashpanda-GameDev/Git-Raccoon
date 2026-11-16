@@ -1895,6 +1895,9 @@ impl App {
                         repo.plan_rebase(id, label);
                     }
                     Some(history::Click::Checkout(name)) => repo.checkout(&ctx, name),
+                    Some(history::Click::StashApply(id)) => repo.run(&ctx, Op::StashApply(id)),
+                    Some(history::Click::StashPop(id)) => repo.run(&ctx, Op::StashPop(id)),
+                    Some(history::Click::StashDrop(id)) => repo.confirm_drop(id),
                     Some(history::Click::Merge { source, target }) => {
                         repo.ask_merge(source, Some(target));
                     }

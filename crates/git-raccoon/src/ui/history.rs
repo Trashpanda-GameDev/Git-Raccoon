@@ -119,6 +119,10 @@ pub enum Click {
         source: String,
         target: String,
     },
+    /// From a stash's context menu (its commit id).
+    StashApply(String),
+    StashPop(String),
+    StashDrop(String),
 }
 
 /// The branch a label stands for when dragged: a local or remote branch.
@@ -154,7 +158,7 @@ fn label_click(c: &GraphCommit, r: &RefLabel) -> Option<Click> {
             id: c.id.clone(),
             label: format!("tag {}", r.name),
         }),
-        RefKind::Local | RefKind::Head => None,
+        RefKind::Local | RefKind::Head | RefKind::Stash => None,
     }
 }
 
@@ -308,82 +312,103 @@ pub fn show(
             if let Some(c) = commit {
                 let (id, label) = (c.id.clone(), commit_label(&c.id, &c.summary));
                 let web = repo.web.commit(&c.id);
-                response.context_menu(|ui| {
-                    if let Some((text, url)) = &web {
-                        if ui
-                            .button(format!("{}  {text}", icon::ARROW_SQUARE_OUT))
-                            .clicked()
-                        {
-                            clicked = Some(Click::OpenWeb(url.clone()));
-                            ui.close();
+                let stash = c.refs.iter().any(|r| r.kind == RefKind::Stash);
+                if stash {
+                    response.context_menu(|ui| {
+                        for (glyph, text, which) in [
+                            (icon::ARROW_SQUARE_DOWN, "Apply", 0),
+                            (icon::STACK_MINUS, "Pop", 1),
+                            (icon::TRASH, "Delete…", 2),
+                        ] {
+                            if ui.button(format!("{glyph}  {text}")).clicked() {
+                                let id = id.clone();
+                                clicked = Some(match which {
+                                    0 => Click::StashApply(id),
+                                    1 => Click::StashPop(id),
+                                    _ => Click::StashDrop(id),
+                                });
+                                ui.close();
+                            }
                         }
-                        if ui
-                            .button(format!("{}  Copy its link", icon::LINK))
-                            .clicked()
-                        {
-                            ui.ctx().copy_text(url.clone());
-                            ui.close();
-                        }
-                        ui.separator();
-                    }
-                    let on_branch = head.is_some();
-                    let target = head.as_deref().unwrap_or("HEAD");
-                    let items = [
-                        (icon::GIT_BRANCH, "Create branch here…".to_string(), 0, true),
-                        (icon::TAG, "Create tag here…".to_string(), 1, true),
-                        (
-                            icon::SIGN_OUT,
-                            "Check out this commit…".to_string(),
-                            2,
-                            true,
-                        ),
-                        (
-                            icon::ARROW_BEND_DOWN_RIGHT,
-                            format!("Cherry-pick onto {target}"),
-                            3,
-                            on_branch,
-                        ),
-                        (
-                            icon::ARROW_COUNTER_CLOCKWISE,
-                            "Revert this commit".to_string(),
-                            4,
-                            on_branch,
-                        ),
-                        (
-                            icon::CLOCK_COUNTER_CLOCKWISE,
-                            format!("Reset {target} to here…"),
-                            5,
-                            on_branch,
-                        ),
-                        (
-                            icon::LIST_NUMBERS,
-                            "Interactive rebase from here…".to_string(),
-                            6,
-                            on_branch,
-                        ),
-                    ];
-                    for (glyph, text, which, enabled) in items {
-                        if which == 3 {
+                    });
+                } else {
+                    response.context_menu(|ui| {
+                        if let Some((text, url)) = &web {
+                            if ui
+                                .button(format!("{}  {text}", icon::ARROW_SQUARE_OUT))
+                                .clicked()
+                            {
+                                clicked = Some(Click::OpenWeb(url.clone()));
+                                ui.close();
+                            }
+                            if ui
+                                .button(format!("{}  Copy its link", icon::LINK))
+                                .clicked()
+                            {
+                                ui.ctx().copy_text(url.clone());
+                                ui.close();
+                            }
                             ui.separator();
                         }
-                        if ui
-                            .add_enabled(enabled, egui::Button::new(format!("{glyph}  {text}")))
-                            .clicked()
-                        {
-                            let (id, label) = (id.clone(), label.clone());
-                            clicked = Some(match which {
-                                0 => Click::NewBranch { id, label },
-                                1 => Click::NewTag { id, label },
-                                2 => Click::CheckoutDetached { id, label },
-                                3 => Click::CherryPick { id },
-                                4 => Click::Revert { id },
-                                5 => Click::Reset { id, label },
-                                _ => Click::InteractiveRebase { id, label },
-                            });
-                            ui.close();
+                        let on_branch = head.is_some();
+                        let target = head.as_deref().unwrap_or("HEAD");
+                        let items = [
+                            (icon::GIT_BRANCH, "Create branch here…".to_string(), 0, true),
+                            (icon::TAG, "Create tag here…".to_string(), 1, true),
+                            (
+                                icon::SIGN_OUT,
+                                "Check out this commit…".to_string(),
+                                2,
+                                true,
+                            ),
+                            (
+                                icon::ARROW_BEND_DOWN_RIGHT,
+                                format!("Cherry-pick onto {target}"),
+                                3,
+                                on_branch,
+                            ),
+                            (
+                                icon::ARROW_COUNTER_CLOCKWISE,
+                                "Revert this commit".to_string(),
+                                4,
+                                on_branch,
+                            ),
+                            (
+                                icon::CLOCK_COUNTER_CLOCKWISE,
+                                format!("Reset {target} to here…"),
+                                5,
+                                on_branch,
+                            ),
+                            (
+                                icon::LIST_NUMBERS,
+                                "Interactive rebase from here…".to_string(),
+                                6,
+                                on_branch,
+                            ),
+                        ];
+                        for (glyph, text, which, enabled) in items {
+                            if which == 3 {
+                                ui.separator();
+                            }
+                            if ui
+                                .add_enabled(enabled, egui::Button::new(format!("{glyph}  {text}")))
+                                .clicked()
+                            {
+                                let (id, label) = (id.clone(), label.clone());
+                                clicked = Some(match which {
+                                    0 => Click::NewBranch { id, label },
+                                    1 => Click::NewTag { id, label },
+                                    2 => Click::CheckoutDetached { id, label },
+                                    3 => Click::CherryPick { id },
+                                    4 => Click::Revert { id },
+                                    5 => Click::Reset { id, label },
+                                    _ => Click::InteractiveRebase { id, label },
+                                });
+                                ui.close();
+                            }
                         }
-                    }
-                });
+                    });
+                }
             }
         }
 
@@ -692,6 +717,7 @@ fn ref_text(r: &RefLabel, on_remote: bool) -> String {
         (RefKind::Remote, _) => icon::CLOUD,
         (RefKind::Tag, _) => icon::TAG,
         (RefKind::Head, _) => icon::DIAMOND,
+        (RefKind::Stash, _) => icon::STACK,
     };
     let mut text = if glyph.is_empty() {
         r.name.clone()

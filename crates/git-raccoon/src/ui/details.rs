@@ -107,7 +107,7 @@ pub fn show(
                     "Apply, then remove the stash (it is kept if applying conflicts)",
                     Action::StashPop,
                 ),
-                ("Drop", "Delete the stash (asks first)", Action::StashDrop),
+                ("Delete", "Delete the stash (asks first)", Action::StashDrop),
             ];
             for (label, tip, act) in buttons {
                 if ui

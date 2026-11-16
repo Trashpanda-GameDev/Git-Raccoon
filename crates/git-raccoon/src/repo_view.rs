@@ -480,7 +480,7 @@ impl Op {
             Op::Ignore(_) => "ignore",
             Op::StashApply(_) => "apply the stash",
             Op::StashPop(_) | Op::StashPopStaged(_) => "pop the stash",
-            Op::StashDrop(_) => "drop the stash",
+            Op::StashDrop(_) => "delete the stash",
             Op::CreateBranch { checkout: true, .. } => "create and check out the branch",
             Op::CreateBranch { .. } => "create the branch",
             Op::Checkout(_) | Op::CheckoutRemote(_) => "check out the branch",
@@ -781,7 +781,7 @@ fn undo_for(op: &Op, before: Before, path: &str) -> Option<Undoable> {
             ("Undo stash".into(), vec![pop])
         }
         Op::StashDrop(id) => (
-            "Undo drop stash".into(),
+            "Undo delete stash".into(),
             vec![Op::StashStore {
                 id: id.clone(),
                 message: before.stash_message?,
@@ -1407,12 +1407,12 @@ impl RepoView {
             |s| format!("\u{201c}{}\u{201d}", s.message),
         );
         self.dialog = Some(Dialog::Confirm {
-            title: "Drop this stash?".into(),
+            title: "Delete this stash?".into(),
             body: format!(
                 "{name} will be deleted. Its contents can still be recovered from its id ({}) until Git cleans up.",
                 &id[..7.min(id.len())]
             ),
-            button: "Drop stash".into(),
+            button: "Delete stash".into(),
             danger: true,
             op: Op::StashDrop(id),
         });

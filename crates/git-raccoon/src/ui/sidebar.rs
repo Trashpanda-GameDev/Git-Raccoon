@@ -1037,7 +1037,7 @@ pub fn show(
                         let items = vec![
                             ("Apply", true, Action::StashApply(s.target.clone())),
                             ("Pop", true, Action::StashPop(s.target.clone())),
-                            ("Drop…", true, Action::StashDrop(s.target.clone())),
+                            ("Delete…", true, Action::StashDrop(s.target.clone())),
                         ];
                         menu(ui, &mut c.action, items);
                     });

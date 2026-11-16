@@ -57,7 +57,7 @@ When you have uncommitted changes, a **// WIP** row sits at the top of the graph
 - Open a file's diff to stage **single hunks**, or pick **individual lines** in the gutter and stage just those.
 - Write a **summary** (the counter turns amber past 50 characters and red past 72) and an optional description, then **Commit** (or Ctrl+Enter).
 - **Amend last commit** replaces the last commit instead; it warns if that commit is already pushed.
-- **Stash** puts your changes aside: all of them, or, when some are staged, just the staged ones (the rest stay as they are). The stash appears in the sidebar, where you can apply, pop or drop it.
+- **Stash** puts your changes aside: all of them, or, when some are staged, just the staged ones (the rest stay as they are). The stash appears in the sidebar, and in the graph just above the commit it was made on; right-click it in either to apply, pop or delete it.
 
 Your hooks run as usual. If one refuses the commit, its message is shown and your commit message is kept.
 
@@ -129,7 +129,7 @@ In any diff, **History** lists every commit that changed the file (following ren
 
 ## Undo
 
-After most actions, the toolbar shows exactly what **Undo** would do ("Undo commit 'Fix the thing'"), and Ctrl+Z does it: commits, amends, checkouts, merges, rebases, cherry-picks, reverts, resets, branch and tag changes, and stash save and drop. An undo first checks nothing has changed since, so it never throws away newer work.
+After most actions, the toolbar shows exactly what **Undo** would do ("Undo commit 'Fix the thing'"), and Ctrl+Z does it: commits, amends, checkouts, merges, rebases, cherry-picks, reverts, resets, branch and tag changes, and stash save and delete. An undo first checks nothing has changed since, so it never throws away newer work.
 
 ## Tabs, submodules and worktrees
 

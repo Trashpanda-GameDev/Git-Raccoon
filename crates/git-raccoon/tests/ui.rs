@@ -331,7 +331,8 @@ fn browses_history_details_diffs_and_images() {
     open(&mut h, sample.path());
 
     let repo = h.state().repo().unwrap();
-    assert_eq!(repo.history.total(), 8);
+    // Seven commits and the stash.
+    assert_eq!(repo.history.total(), 8 + 1);
     assert_eq!(repo.history.branch(), Some("main"));
     assert_eq!(
         h.state().settings().recent.len(),
@@ -385,12 +386,26 @@ fn browses_history_details_diffs_and_images() {
     h.key_press(Key::Escape);
     h.run_ok();
 
-    // A stash is shown in the details pane without a graph row.
-    h.get_by_label_contains("half-done README tweak").click();
+    // A stash is in the graph too, just above the commit it was made on
+    // (main's), and shows in the details pane with its own buttons.
+    h.get_all_by_label_contains("half-done README tweak")
+        .next()
+        .unwrap()
+        .click();
     settle(&mut h);
     let sel = h.state().repo().unwrap().selected.as_ref().unwrap();
-    assert_eq!(sel.row, None);
+    let row = sel.row.expect("a graph row");
+    assert_eq!(h.state().repo().unwrap().history.total(), 9);
     h.get_by_label("README.md");
+    h.get_by_label("Pop");
+    let below = h
+        .state()
+        .repo()
+        .unwrap()
+        .rows
+        .get(row + 1)
+        .map(|c| c.summary.clone());
+    assert_eq!(below.as_deref(), Some("Redraw icon and rename loader"));
 }
 
 #[test]
@@ -468,7 +483,7 @@ fn refreshes_when_the_repo_changes_on_disk() {
     sample.commit("Made outside the app", 0);
 
     let start = Instant::now();
-    while h.state().repo().unwrap().history.total() == 8 {
+    while h.state().repo().unwrap().history.total() == 8 + 1 {
         assert!(
             start.elapsed() < Duration::from_secs(30),
             "no refresh after an external commit"
@@ -477,7 +492,7 @@ fn refreshes_when_the_repo_changes_on_disk() {
         std::thread::sleep(Duration::from_millis(20));
     }
     settle(&mut h);
-    assert_eq!(h.state().repo().unwrap().history.total(), 9);
+    assert_eq!(h.state().repo().unwrap().history.total(), 9 + 1);
     assert_eq!(
         selected_summary(&h).as_deref(),
         Some("Add icon"),
@@ -1231,8 +1246,11 @@ fn stashes_pops_and_drops() {
         "untracked files were stashed too"
     );
 
-    // Pop it from the details pane.
-    h.get_by_label_contains("try another approach").click();
+    // Pop it from the details pane (it's in the sidebar, and in the graph).
+    h.get_all_by_label_contains("try another approach")
+        .next()
+        .unwrap()
+        .click();
     settle(&mut h);
     h.get_by_label("Pop").click();
     wait_for(&mut h, "the pop", move |app| stashes(app) == 1);
@@ -1289,12 +1307,15 @@ fn stashes_pops_and_drops() {
     });
 
     // Drop the sample's own stash, after confirming.
-    h.get_by_label_contains("half-done README tweak").click();
+    h.get_all_by_label_contains("half-done README tweak")
+        .next()
+        .unwrap()
+        .click();
     settle(&mut h);
-    h.get_by_label("Drop").click();
+    h.get_by_label("Delete").click();
     h.run_ok();
-    h.get_by_label("Drop this stash?");
-    h.get_by_label("Drop stash").click();
+    h.get_by_label("Delete this stash?");
+    h.get_by_label("Delete stash").click();
     wait_for(&mut h, "the drop", move |app| stashes(app) == 0);
 }
 

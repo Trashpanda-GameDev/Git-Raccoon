@@ -15,6 +15,8 @@ pub enum RefKind {
     Local,
     Remote,
     Tag,
+    /// A stash ("stash@{0}"), shown above the commit it was made on.
+    Stash,
 }
 
 #[derive(Debug, Clone)]
@@ -130,6 +132,50 @@ fn offer_commit_graph(git_dir: &std::path::Path, path: &str) {
     });
 }
 
+/// Puts each stash just above the commit it was made on (drawn as a short
+/// branch from it; its other parents, git's own bookkeeping of the index
+/// and untracked files, are left out), and labels it.
+fn with_stashes(
+    repo: &Repository,
+    pairs: Vec<(Oid, Vec<Oid>)>,
+    labels: &mut HashMap<Oid, Vec<RefLabel>>,
+) -> Vec<(Oid, Vec<Oid>)> {
+    let Ok(log) = repo.reflog("refs/stash") else {
+        return pairs;
+    };
+    // Stashes by the commit they were made on, newest first.
+    let mut on: HashMap<Oid, Vec<Oid>> = HashMap::new();
+    for (i, entry) in log.iter().enumerate() {
+        let id = entry.id_new();
+        let Ok(parent) = repo.find_commit(id).and_then(|c| c.parent_id(0)) else {
+            continue;
+        };
+        on.entry(parent).or_default().push(id);
+        labels.entry(id).or_default().push(RefLabel {
+            name: format!("stash@{{{i}}}"),
+            kind: RefKind::Stash,
+            is_head: false,
+        });
+    }
+    if on.is_empty() {
+        return pairs;
+    }
+    let mut out = Vec::with_capacity(pairs.len() + log.len());
+    for pair in pairs {
+        if let Some(stashes) = on.remove(&pair.0) {
+            out.extend(stashes.into_iter().map(|s| (s, vec![pair.0])));
+        }
+        out.push(pair);
+    }
+    // Stashes on commits beyond what's shown aren't labelled either.
+    for stashes in on.into_values() {
+        for s in stashes {
+            labels.remove(&s);
+        }
+    }
+    out
+}
+
 impl History {
     /// Walks every commit reachable from any branch, remote branch, tag or
     /// HEAD, newest first, and lays out the graph.
@@ -219,6 +265,7 @@ impl History {
         }
         // The checked-out commit on the left.
         let checked_out = head.as_ref().and_then(git2::Reference::target);
+        let pairs = with_stashes(&repo, pairs, &mut labels);
         let layout = graph::layout(&pairs, checked_out.as_ref());
         let ids: Vec<Oid> = pairs.into_iter().map(|(id, _)| id).collect();
         let mut index = HashMap::with_capacity_and_hasher(ids.len(), BuildHasherDefault::default());
@@ -451,6 +498,41 @@ mod tests {
         assert_eq!(g.branch, None);
         let refs = &g.commits[1].refs;
         assert_eq!(refs[0].kind, RefKind::Head);
+    }
+
+    #[test]
+    fn stashes_sit_just_above_the_commit_they_were_made_on() {
+        let t = TempRepo::new();
+        t.write("a.txt", "one");
+        t.commit_all("first");
+        t.write("a.txt", "two");
+        t.commit_all("second");
+        t.write("a.txt", "half-done");
+        crate::stash::save(t.path(), "half-done", false, false).unwrap();
+        t.write("a.txt", "again");
+        crate::stash::save(t.path(), "again", false, false).unwrap();
+
+        let g = History::load(t.path(), 1).unwrap().page(0, 100).unwrap();
+        let rows: Vec<(String, Vec<String>)> = g
+            .commits
+            .iter()
+            .map(|c| {
+                let refs = c.refs.iter().map(|r| r.name.clone()).collect();
+                (c.summary.clone(), refs)
+            })
+            .collect();
+        // The newest stash first, then the older, then the commit they were
+        // made on; git's index commits don't show.
+        assert_eq!(rows.len(), 4, "{rows:?}");
+        assert_eq!(rows[0].1, ["stash@{0}"]);
+        assert!(rows[0].0.contains("again"), "{rows:?}");
+        assert_eq!(rows[1].1, ["stash@{1}"]);
+        assert_eq!(rows[2].0, "second");
+        assert_eq!(rows[3].0, "first");
+        assert_eq!(g.commits[0].refs[0].kind, RefKind::Stash);
+        // The checked-out line stays on the left; stashes branch off it.
+        assert_eq!(g.commits[2].column, 0);
+        assert!(g.commits[0].column > 0 && g.commits[1].column > 0);
     }
 
     #[test]
