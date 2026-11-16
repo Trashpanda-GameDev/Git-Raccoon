@@ -1481,6 +1481,53 @@ fn sidebar_sections_scroll_on_their_own_and_resize() {
 }
 
 #[test]
+fn opens_a_terminal_in_the_repository() {
+    let sample = Sample::build();
+    // A stand-in terminal that leaves a mark where it's started.
+    let mut h = harness(Settings {
+        terminal: "touch opened-here".into(),
+        ..Settings::default()
+    });
+    open(&mut h, sample.path());
+    let mark = Path::new(sample.path()).join("opened-here");
+    // Ctrl+` (or the toolbar's button, or the palette).
+    press(&mut h, egui::Modifiers::COMMAND, Key::Backtick);
+    for _ in 0..100 {
+        if mark.exists() {
+            break;
+        }
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(mark.exists(), "opened in the repository's folder");
+    std::fs::remove_file(&mark).unwrap();
+    h.get_by_label("Open a terminal here (Ctrl+`)").click();
+    for _ in 0..100 {
+        if mark.exists() {
+            break;
+        }
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(mark.exists(), "from the toolbar too");
+    // One that doesn't start says so.
+    let mut h = harness(Settings {
+        terminal: "no-such-terminal-anywhere".into(),
+        ..Settings::default()
+    });
+    open(&mut h, sample.path());
+    press(&mut h, egui::Modifiers::COMMAND, Key::Backtick);
+    h.run_ok();
+    assert!(
+        h.state()
+            .error()
+            .is_some_and(|e| e.contains("Could not open a terminal")),
+        "{:?}",
+        h.state().error()
+    );
+}
+
+#[test]
 fn a_label_cut_short_shows_its_whole_name_on_hover() {
     let sample = Sample::build();
     let long = "feature/a-branch-name-much-too-long-to-fit-in-the-column";

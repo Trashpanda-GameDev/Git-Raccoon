@@ -756,6 +756,8 @@ pub enum Action {
     UpdateSubmodule(String),
     AddWorktree,
     RemoveWorktree(String),
+    /// Open a terminal in this folder (a worktree or submodule).
+    Terminal(String),
     /// Merge `source` into `target` (the checked-out branch if `None`).
     Merge {
         source: String,
@@ -1392,6 +1394,11 @@ pub fn show(
                                     Action::OpenPath(w.path.clone()),
                                 ),
                                 (
+                                    "Open a terminal here",
+                                    !w.missing,
+                                    Action::Terminal(w.path.clone()),
+                                ),
+                                (
                                     "Remove…",
                                     !w.main && !w.current,
                                     Action::RemoveWorktree(w.path.clone()),
@@ -1472,6 +1479,11 @@ pub fn show(
                                         if cloned { "Update" } else { "Clone and update" },
                                         true,
                                         Action::UpdateSubmodule(s.path.clone()),
+                                    ),
+                                    (
+                                        "Open a terminal here",
+                                        cloned,
+                                        Action::Terminal(full.clone()),
                                     ),
                                 ];
                                 menu(ui, &mut c.action, items);

@@ -24,6 +24,8 @@ pub enum Action {
     Palette,
     Settings,
     Feedback,
+    /// Open a terminal in the repository's folder.
+    Terminal,
     RestartToUpdate,
 }
 
@@ -119,6 +121,11 @@ pub fn show(
                 .clicked()
                 {
                     action = Some(Action::Refresh);
+                }
+                if widgets::icon_button(ui, icon::TERMINAL_WINDOW, "Open a terminal here (Ctrl+`)")
+                    .clicked()
+                {
+                    action = Some(Action::Terminal);
                 }
             });
             if let Some(installed) = repo.lfs {

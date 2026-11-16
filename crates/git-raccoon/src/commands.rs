@@ -24,6 +24,8 @@ pub enum Command {
     ZoomReset,
     Feedback,
     WhatsNew,
+    /// Open a terminal in the repository's folder.
+    Terminal,
     Undo,
     Fetch,
     Pull,
@@ -158,6 +160,10 @@ pub const SHORTCUTS: &[(Command, Option<KeyboardShortcut>)] = &[
     ),
     (Command::AddRemote, None),
     (Command::Feedback, None),
+    (
+        Command::Terminal,
+        Some(KeyboardShortcut::new(CTRL, Key::Backtick)),
+    ),
     (Command::WhatsNew, None),
     (Command::FileHistory, None),
     (Command::Blame, None),

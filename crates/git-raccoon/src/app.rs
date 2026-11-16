@@ -786,6 +786,7 @@ impl App {
             | Command::ZoomOut
             | Command::ZoomReset
             | Command::Feedback
+            | Command::Terminal
             | Command::WhatsNew
             | Command::ShowWorking
             | Command::WriteCommit
@@ -869,6 +870,7 @@ impl App {
         add(Command::ZoomIn, "Zoom in (bigger)".into());
         add(Command::ZoomOut, "Zoom out (smaller)".into());
         add(Command::ZoomReset, "Actual size".into());
+        add(Command::Terminal, "Open a terminal here".into());
         add(Command::Feedback, "Send feedback, a bug or an idea…".into());
         add(Command::WhatsNew, "What's new in this version".into());
         add(
@@ -958,6 +960,11 @@ impl App {
             Command::ZoomOut => self.settings.zoom_step(false),
             Command::ZoomReset => self.settings.zoom = None,
             Command::Feedback => self.open_feedback(ctx),
+            Command::Terminal => {
+                if let Some(path) = self.repo.as_ref().map(|r| r.path().to_string()) {
+                    self.open_terminal(&path);
+                }
+            }
             Command::WhatsNew => {
                 self.whats_new = crate::changelog::of(env!("CARGO_PKG_VERSION"))
                     .into_iter()
@@ -1147,6 +1154,13 @@ impl App {
                 self.new_request_post = None;
             }
             None => {}
+        }
+    }
+
+    /// Opens a terminal in `dir`; says why if it can't.
+    fn open_terminal(&mut self, dir: &str) {
+        if let Err(why) = crate::terminal::open(dir, &self.settings.terminal) {
+            self.error = Some(format!("Could not open a terminal: {why}."));
         }
     }
 
@@ -1498,6 +1512,7 @@ impl App {
             Some(toolbar::Action::Palette) => self.run_command(&ctx, Command::Palette),
             Some(toolbar::Action::Settings) => self.run_command(&ctx, Command::Settings),
             Some(toolbar::Action::Feedback) => self.run_command(&ctx, Command::Feedback),
+            Some(toolbar::Action::Terminal) => self.run_command(&ctx, Command::Terminal),
             Some(toolbar::Action::RestartToUpdate) => self.restart_to_update = true,
             Some(toolbar::Action::Fetch) => {
                 self.run(&ctx, Op::Fetch);
@@ -1716,6 +1731,11 @@ impl App {
                 }
                 Some(sidebar::Action::AddWorktree) => repo.new_worktree(),
                 Some(sidebar::Action::RemoveWorktree(p)) => repo.confirm_remove_worktree(p),
+                Some(sidebar::Action::Terminal(dir)) => {
+                    if let Err(why) = crate::terminal::open(&dir, &self.settings.terminal) {
+                        self.error = Some(format!("Could not open a terminal: {why}."));
+                    }
+                }
                 None => {}
             }
         }

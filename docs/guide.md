@@ -161,6 +161,9 @@ After most actions, the toolbar shows exactly what **Undo** would do ("Undo comm
 | New branch / New tag | Ctrl+Shift+B / T |
 | Zoom in / out / actual size | Ctrl++ / Ctrl+- / Ctrl+0 (or Ctrl+scroll) |
 | Refresh | F5 |
+| Open a terminal here | Ctrl+` |
+
+**A terminal.** For anything Git Raccoon doesn't do, the terminal button in the toolbar (or Ctrl+`, or "Open a terminal here" in the command palette) opens a terminal in the repository's folder: Windows Terminal, Git Bash or the Command Prompt on Windows, Terminal on macOS, and on Linux the one in `$TERMINAL` or the first of the usual ones that's installed. Worktrees and submodules have it in their right-click menu too. To use another terminal, set it in Settings.
 
 ## Themes and settings
 
@@ -169,6 +172,7 @@ After most actions, the toolbar shows exactly what **Undo** would do ("Undo comm
 - **Theme:** a look (Raccoon, the default, Classic, Pastel, Forest, Paper or High contrast), each **Dark** or **Light**, or **System** to follow your computer's light and dark.
 - **Interface size**, from 90% to 150%. Anywhere in the app, Ctrl+scroll or Ctrl+plus and Ctrl+minus zoom in and out (from 50% to 200%), and Ctrl+0 goes back to normal; the size is remembered.
 - **Diffs:** unified or side by side.
+- **Terminal:** the command "Open a terminal here" runs, if not the system's own; `{path}` stands for the repository's folder (for example `alacritty --working-directory "{path}"`).
 - **Updates:** whether to check automatically.
 
 ## Updates and crash reports

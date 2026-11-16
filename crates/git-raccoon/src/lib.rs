@@ -14,6 +14,7 @@ pub mod repo_view;
 mod search;
 pub mod settings;
 mod task;
+pub mod terminal;
 mod theme;
 mod title_bar;
 mod ui;

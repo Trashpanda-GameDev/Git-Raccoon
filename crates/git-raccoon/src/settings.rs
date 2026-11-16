@@ -61,6 +61,9 @@ pub struct Settings {
     pub accounts: Vec<crate::forge::Account>,
     /// Changed files shown as a tree of folders, rather than by path.
     pub file_tree: bool,
+    /// The command that opens a terminal ("{path}" is the folder); empty
+    /// for the system's own.
+    pub terminal: String,
     /// Which defaults these settings were saved with (see `upgrade`):
     /// 0 when missing, from a version before there was this field.
     #[serde(default)]
@@ -156,6 +159,7 @@ impl Default for Settings {
             last_version: None,
             accounts: Vec::new(),
             file_tree: false,
+            terminal: String::new(),
             defaults: DEFAULTS,
         }
     }

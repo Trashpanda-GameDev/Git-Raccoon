@@ -110,6 +110,24 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings) -> Option<Action> {
             ui.checkbox(&mut shown, "Show the sidebar");
             settings.hide_sidebar = !shown;
         });
+        row(ui, "Terminal", &mut |ui| {
+            ui.vertical(|ui| {
+                let field = ui.add(
+                    egui::TextEdit::singleline(&mut settings.terminal)
+                        .hint_text("The system's own")
+                        .desired_width(320.0),
+                );
+                ui.ctx()
+                    .accesskit_node_builder(field.id, |n| n.set_label("Terminal command"));
+                ui.label(
+                    RichText::new(
+                        "What \"Open a terminal here\" (Ctrl+`) runs, like alacritty --working-directory \"{path}\"; {path} is the repository's folder.",
+                    )
+                    .size(11.0)
+                    .color(theme::muted()),
+                );
+            });
+        });
         row(ui, "Updates", &mut |ui| {
             let mut check = !settings.no_update_checks;
             ui.checkbox(&mut check, "Check for updates automatically");

@@ -3,6 +3,10 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.9
+
+- **Open a terminal in the repository** from the toolbar, with Ctrl+` or from the command palette (worktrees and submodules too, from their right-click menu). Choose which terminal in Settings.
+
 ## 0.5.8
 
 - **A label cut short grows to its whole name** when you hover over it in the graph, the way several labels spread out, instead of a tooltip.
