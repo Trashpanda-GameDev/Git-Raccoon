@@ -15,7 +15,12 @@ use crate::task::Task;
 pub const RELEASES: &str = "https://github.com/Trashpanda-GameDev/Git-Raccoon";
 
 /// How often to look again while the app stays open.
-const EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+const EVERY: Duration = Duration::from_secs(30 * 60);
+
+/// How long until the next check is due (zero if it's due now).
+fn wait(last_check: Option<Instant>, now: Instant) -> Duration {
+    last_check.map_or(Duration::ZERO, |t| EVERY.saturating_sub(now - t))
+}
 
 pub struct Updater {
     /// `None` when this copy wasn't installed (so it can't update itself).
@@ -42,7 +47,9 @@ impl Updater {
         self.manager.is_some()
     }
 
-    /// Checks (and downloads) in the background if it's time to.
+    /// Checks (and downloads) in the background if it's time to, and
+    /// wakes the app up for the next check: an idle window doesn't redraw,
+    /// so without that a check would wait for the mouse to move over it.
     pub fn tick(&mut self, ctx: &egui::Context, enabled: bool) {
         if let Some(result) = self.task.as_ref().and_then(Task::poll) {
             self.task = None;
@@ -51,23 +58,37 @@ impl Updater {
                 self.ready = Some(info);
             }
         }
-        let due = self.last_check.is_none_or(|t| t.elapsed() >= EVERY);
-        if !enabled || !due || self.task.is_some() || self.ready.is_some() {
-            return;
-        }
-        let Some(manager) = self.manager.clone() else {
+        let Some(manager) = self.manager.clone().filter(|_| enabled) else {
             return;
         };
+        if self.task.is_some() {
+            return;
+        }
+        let wait = wait(self.last_check, Instant::now());
+        if !wait.is_zero() {
+            ctx.request_repaint_after(wait);
+            return;
+        }
         self.last_check = Some(Instant::now());
+        // A newer release than the one already downloaded replaces it.
+        let have = self
+            .ready
+            .as_ref()
+            .map(|i| i.TargetFullRelease.Version.clone());
         self.task = Some(Task::spawn(ctx, move || {
             match manager.check_for_updates().map_err(|e| e.to_string())? {
-                UpdateCheck::UpdateAvailable(info) => {
+                UpdateCheck::UpdateAvailable(info)
+                    if have.as_deref() != Some(info.TargetFullRelease.Version.as_str()) =>
+                {
                     manager
                         .download_updates(&info, None)
                         .map_err(|e| e.to_string())?;
                     Ok(Some(*info))
                 }
-                UpdateCheck::NoUpdateAvailable | UpdateCheck::RemoteIsEmpty => Ok(None),
+                // Already downloaded; or nothing new.
+                UpdateCheck::UpdateAvailable(_)
+                | UpdateCheck::NoUpdateAvailable
+                | UpdateCheck::RemoteIsEmpty => Ok(None),
             }
         }));
     }
@@ -93,5 +114,22 @@ impl Updater {
 impl Default for Updater {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checks_again_every_half_hour() {
+        let start = Instant::now();
+        assert_eq!(wait(None, start), Duration::ZERO, "first thing");
+        assert_eq!(wait(Some(start), start), EVERY);
+        let later = start + Duration::from_secs(20 * 60);
+        assert_eq!(wait(Some(start), later), Duration::from_secs(10 * 60));
+        let overdue = start + Duration::from_secs(3 * 60 * 60);
+        assert_eq!(wait(Some(start), overdue), Duration::ZERO);
+        assert!(EVERY <= Duration::from_secs(60 * 60), "not hours");
     }
 }

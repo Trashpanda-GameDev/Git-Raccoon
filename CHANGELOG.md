@@ -5,6 +5,7 @@ release page). Newest first; a version's heading is just its number.
 
 ## 0.5.10
 
+- **Updates are found while the app is open**: it looks every half hour, even when it's sitting in the background, and a newer release replaces one already downloaded. Before, the restart button usually only appeared after reopening the app.
 - **Make the sidebar and the details as wide as you like**: drag their edges; they're no longer held to a fixed width (the graph keeps some room).
 - **Move the graph's columns** by dragging their headings; right-click a heading to put them back in order.
 - **The sidebar no longer scrolls as a whole**: only each section's list scrolls.

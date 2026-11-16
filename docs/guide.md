@@ -178,7 +178,7 @@ After most actions, the toolbar shows exactly what **Undo** would do ("Undo comm
 
 ## Updates and crash reports
 
-**Updates.** An installed Git Raccoon checks for a new version now and then and downloads it in the background. When it's ready, the toolbar shows **Restart to update**; your tabs and settings are kept.
+**Updates.** An installed Git Raccoon checks for a new version when it starts and every half hour while it's open, and downloads it in the background. When it's ready, the toolbar shows **Restart to update**; your tabs and settings are kept.
 
 **What's new.** After an update, Git Raccoon shows what changed since the version you had (and "What's new in this version" in the command palette shows it again).
 
