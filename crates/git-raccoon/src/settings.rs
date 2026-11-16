@@ -66,8 +66,8 @@ pub struct Settings {
 }
 
 /// The current defaults: 1 since Raccoon became the default look, 2 since
-/// every look comes dark and light.
-const DEFAULTS: u32 = 2;
+/// every look comes dark and light, 3 since the version run is noted.
+const DEFAULTS: u32 = 3;
 
 /// The look: which family of colours (each comes dark and light; see
 /// [`ThemeMode`]).
@@ -208,6 +208,11 @@ impl Settings {
             self.theme = theme;
             self.theme_mode = mode;
         }
+        // Saved before the version run was noted (it came with 0.5.3): from
+        // 0.5.2 or earlier, so what's new since then is shown.
+        if self.defaults < 3 && self.last_version.is_none() {
+            self.last_version = Some("0.5.2".to_string());
+        }
         // Abyss is gone: Classic is the nearest, in the same mode.
         if self.theme == ThemeChoice::Abyss {
             self.theme = ThemeChoice::Classic;
@@ -294,6 +299,13 @@ mod tests {
             (saved.theme, saved.theme_mode),
             (ThemeChoice::Forest, ThemeMode::System)
         );
+        // From before the version run was noted: as if from 0.5.2. Noted
+        // since: kept.
+        assert_eq!(new.last_version.as_deref(), Some("0.5.2"));
+        let noted: Settings =
+            ron::from_str("(last_version: Some(\"0.5.3\"), defaults: 2)").unwrap();
+        assert_eq!(noted.upgrade().last_version.as_deref(), Some("0.5.3"));
+        assert_eq!(Settings::default().last_version, None, "a fresh install");
         // Abyss, removed since: Classic, keeping its mode.
         let abyss: Settings =
             ron::from_str("(theme: Abyss, theme_mode: Light, defaults: 2)").unwrap();
