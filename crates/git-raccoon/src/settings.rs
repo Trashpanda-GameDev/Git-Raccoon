@@ -34,6 +34,52 @@ pub fn now() -> i64 {
         .unwrap_or(0)
 }
 
+/// A column of the graph's list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Column {
+    Refs,
+    Graph,
+    Message,
+    Author,
+    Date,
+    Sha,
+}
+
+impl Column {
+    /// Every column, in the usual order.
+    pub const ALL: [Column; 6] = [
+        Column::Refs,
+        Column::Graph,
+        Column::Message,
+        Column::Author,
+        Column::Date,
+        Column::Sha,
+    ];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Column::Refs => "Branch / Tag",
+            Column::Graph => "Graph",
+            Column::Message => "Commit message",
+            Column::Author => "Author",
+            Column::Date => "Date",
+            Column::Sha => "SHA",
+        }
+    }
+
+    /// `order` with each column once: unknown repeats dropped, missing
+    /// ones added at the end (so a damaged setting can't lose one).
+    pub fn sanitise(order: &[Column]) -> Vec<Column> {
+        let mut out: Vec<Column> = Vec::new();
+        for c in order.iter().chain(Column::ALL.iter()) {
+            if !out.contains(c) {
+                out.push(*c);
+            }
+        }
+        out
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -61,6 +107,8 @@ pub struct Settings {
     pub accounts: Vec<crate::forge::Account>,
     /// Changed files shown as a tree of folders, rather than by path.
     pub file_tree: bool,
+    /// The graph's columns, in the order they're shown.
+    pub columns: Vec<Column>,
     /// The command that opens a terminal ("{path}" is the folder); empty
     /// for the system's own.
     pub terminal: String,
@@ -160,6 +208,7 @@ impl Default for Settings {
             accounts: Vec::new(),
             file_tree: false,
             terminal: String::new(),
+            columns: Column::ALL.to_vec(),
             defaults: DEFAULTS,
         }
     }
@@ -249,6 +298,22 @@ impl Settings {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_column_order_always_has_every_column_once() {
+        use Column::{Author, Date, Graph, Message, Refs, Sha};
+        assert_eq!(Column::sanitise(&[]), Column::ALL);
+        assert_eq!(
+            Column::sanitise(&[Sha, Graph, Sha]),
+            [Sha, Graph, Refs, Message, Author, Date]
+        );
+        let saved: Settings = serde_json::from_str(r#"{"columns": ["Date", "Refs"]}"#).unwrap();
+        assert_eq!(
+            Column::sanitise(&saved.columns),
+            [Date, Refs, Graph, Message, Author, Sha]
+        );
+    }
+
     use super::*;
 
     #[test]

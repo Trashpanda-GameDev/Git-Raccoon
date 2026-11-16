@@ -1494,6 +1494,92 @@ fn sidebar_sections_scroll_on_their_own_and_resize() {
 }
 
 #[test]
+fn the_side_panels_are_as_wide_as_you_drag_them() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    settle(&mut h);
+    let screen = h.ctx.content_rect();
+    // The sidebar, well past the old 420 limit.
+    let local = h.get_by_label("Local").rect();
+    let edge = egui::pos2(local.right() + 1.0, 600.0);
+    drag(&mut h, edge, edge + egui::vec2(400.0, 0.0));
+    settle(&mut h);
+    let wide = h.get_by_label("Local").rect().width();
+    assert!(wide > 600.0, "sidebar {wide}");
+    // Back narrower, for room for the details.
+    let edge = egui::pos2(h.get_by_label("Local").rect().right() + 1.0, 600.0);
+    drag(&mut h, edge, edge - egui::vec2(450.0, 0.0));
+    settle(&mut h);
+    let narrow = h.get_by_label("Local").rect().width();
+    assert!(narrow < 200.0, "sidebar {narrow}");
+    // The details pane, past its old 640 limit.
+    h.get_by_label("Add icon").click();
+    settle(&mut h);
+    let details_left = |h: &Harness<'_, App>| {
+        h.get_all_by_label("Add icon")
+            .map(|n| n.rect().left())
+            .fold(f32::MIN, f32::max)
+    };
+    let left = details_left(&h);
+    let edge = egui::pos2(left - 10.0, 700.0);
+    drag(&mut h, edge, edge - egui::vec2(400.0, 0.0));
+    settle(&mut h);
+    let width = screen.right() - details_left(&h);
+    assert!(width > 660.0, "details {width}");
+    screenshot(&mut h, "60-wide-panels");
+    // The graph always keeps some room.
+    let edge = egui::pos2(details_left(&h) - 10.0, 700.0);
+    drag(&mut h, edge, egui::pos2(0.0, 700.0));
+    settle(&mut h);
+    let graph = details_left(&h) - h.get_by_label("Local").rect().right();
+    assert!(graph >= 300.0, "graph {graph}");
+}
+
+#[test]
+fn moves_columns_by_dragging_their_headings() {
+    use git_raccoon::settings::Column;
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    settle(&mut h);
+    let x = |h: &Harness<'_, App>, label: &str| h.get_by_label(label).rect().left();
+    assert!(x(&h, "Author") > x(&h, "Commit message"));
+    // Drag Author to the left of Commit message.
+    let from = h.get_by_label("Author").rect().center();
+    let to = egui::pos2(x(&h, "Commit message") + 10.0, from.y);
+    drag(&mut h, from, to);
+    settle(&mut h);
+    assert_eq!(
+        h.state().settings().columns,
+        [
+            Column::Refs,
+            Column::Graph,
+            Column::Author,
+            Column::Message,
+            Column::Date,
+            Column::Sha
+        ]
+    );
+    assert!(
+        x(&h, "Author") < x(&h, "Commit message"),
+        "the heading moved"
+    );
+    // The graph can go first too.
+    let from = h.get_by_label("Graph").rect().center();
+    drag(&mut h, from, egui::pos2(2.0, from.y));
+    settle(&mut h);
+    assert_eq!(h.state().settings().columns[0], Column::Graph);
+    screenshot(&mut h, "61-moved-columns");
+    // Right-click a heading for the usual order.
+    h.get_by_label("Date").click_secondary();
+    h.run_ok();
+    h.get_by_label("Put the columns back in order").click();
+    settle(&mut h);
+    assert_eq!(h.state().settings().columns, Column::ALL);
+}
+
+#[test]
 fn opens_a_terminal_in_the_repository() {
     let sample = Sample::build();
     // A stand-in terminal that leaves a mark where it's started.

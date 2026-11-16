@@ -5,6 +5,8 @@ release page). Newest first; a version's heading is just its number.
 
 ## 0.5.10
 
+- **Make the sidebar and the details as wide as you like**: drag their edges; they're no longer held to a fixed width (the graph keeps some room).
+- **Move the graph's columns** by dragging their headings; right-click a heading to put them back in order.
 - **The sidebar no longer scrolls as a whole**: only each section's list scrolls.
 
 ## 0.5.9

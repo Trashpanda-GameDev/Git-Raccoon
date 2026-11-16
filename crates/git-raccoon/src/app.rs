@@ -87,6 +87,14 @@ struct Tab {
     parked: Option<(Option<RepoView>, history::Scroll)>,
 }
 
+/// How wide a side panel (the sidebar, the details) can be dragged: from
+/// `min` to as wide as leaves the graph room, so it's up to the person.
+fn side_range(ui: &egui::Ui, min: f32) -> std::ops::RangeInclusive<f32> {
+    /// Kept for the graph, between the panels.
+    const GRAPH: f32 = 320.0;
+    min..=(ui.available_width() - GRAPH).max(min)
+}
+
 /// An account's repositories, or why they couldn't be listed.
 type RepoList = Result<Vec<crate::forge::accounts::Repo>, String>;
 
@@ -1659,7 +1667,7 @@ impl App {
             let jump = Panel::left("sidebar")
                 .resizable(true)
                 .default_size(240.0)
-                .size_range(180.0..=420.0)
+                .size_range(side_range(ui, 140.0))
                 .frame(Frame::new().fill(theme::bg_raised()))
                 .show(ui, |ui| {
                     let selected = repo.selected.as_ref().map(|s| s.id.clone());
@@ -1752,7 +1760,7 @@ impl App {
             let action = Panel::right("forge-details")
                 .resizable(true)
                 .default_size(380.0)
-                .size_range(280.0..=640.0)
+                .size_range(side_range(ui, 220.0))
                 .frame(pane)
                 .show(ui, |ui| crate::ui::forge::show(ui, forge, now))
                 .inner;
@@ -1773,7 +1781,7 @@ impl App {
             let action = Panel::right("details")
                 .resizable(true)
                 .default_size(380.0)
-                .size_range(280.0..=640.0)
+                .size_range(side_range(ui, 220.0))
                 .frame(pane)
                 .show(ui, |ui| {
                     let stash = repo.stash(&id).map(|_| repo.is_staging());
@@ -1808,7 +1816,7 @@ impl App {
             let action = Panel::right("details")
                 .resizable(true)
                 .default_size(380.0)
-                .size_range(280.0..=640.0)
+                .size_range(side_range(ui, 220.0))
                 .frame(pane)
                 .show(ui, |ui| {
                     let (loading, staging, committing) = (
@@ -2024,7 +2032,7 @@ impl App {
                         egui::Stroke::new(1.0, theme::border()),
                     );
                 }
-                match history::show(ui, repo, &mut self.scroll, now) {
+                match history::show(ui, repo, &mut self.scroll, now, &mut self.settings.columns) {
                     Some(history::Click::Row(row)) => {
                         repo.select_index(row);
                         repo.scroll_to = None;

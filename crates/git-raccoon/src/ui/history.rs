@@ -1,5 +1,6 @@
 //! The commit list with its graph. Only the rows on screen are drawn.
 
+use crate::settings::Column;
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Stroke, epaint::CubicBezierShape};
 use egui_phosphor::regular as icon;
 use git_raccoon_core::repo::{GraphCommit, RefKind, RefLabel};
@@ -36,10 +37,12 @@ struct Columns {
     author: f32,
     date: f32,
     sha: f32,
+    /// The order they're in (every column, once).
+    order: Vec<Column>,
 }
 
 impl Columns {
-    fn new(width: f32, lanes: usize) -> Self {
+    fn new(width: f32, lanes: usize, order: &[Column]) -> Self {
         let narrow = width < NARROW;
         Columns {
             refs: if narrow { 140.0 } else { 200.0 },
@@ -47,12 +50,145 @@ impl Columns {
             author: if narrow { 0.0 } else { 140.0 },
             date: 110.0,
             sha: if narrow { 0.0 } else { 72.0 },
+            order: Column::sanitise(order),
         }
     }
 
     fn message(&self, width: f32) -> f32 {
         (width - self.refs - self.graph - self.author - self.date - self.sha).max(120.0)
     }
+
+    /// A column's width, in a list `width` wide.
+    fn w(&self, column: Column, width: f32) -> f32 {
+        match column {
+            Column::Refs => self.refs,
+            Column::Graph => self.graph,
+            Column::Message => self.message(width),
+            Column::Author => self.author,
+            Column::Date => self.date,
+            Column::Sha => self.sha,
+        }
+    }
+
+    /// Where a column starts.
+    fn x(&self, column: Column, width: f32) -> f32 {
+        self.order
+            .iter()
+            .take_while(|c| **c != column)
+            .map(|c| self.w(*c, width))
+            .sum()
+    }
+
+    /// The message column and the text columns right after it, as one
+    /// stretch (for the working-changes row's wide text).
+    fn message_run(&self, width: f32) -> (f32, f32) {
+        let start = self
+            .order
+            .iter()
+            .position(|c| *c == Column::Message)
+            .unwrap_or(0);
+        let run: f32 = self.order[start..]
+            .iter()
+            .take_while(|c| !matches!(c, Column::Refs | Column::Graph))
+            .map(|c| self.w(*c, width))
+            .sum();
+        (self.x(Column::Message, width), run)
+    }
+}
+
+/// The column headings. A heading can be dragged left or right to move
+/// its column; returns the new order when one is dropped. Right-clicking
+/// one offers the usual order back.
+fn headings(ui: &mut egui::Ui, header: Rect, cols: &Columns, width: f32) -> Option<Vec<Column>> {
+    let mut moved = None;
+    let pointer = ui.ctx().pointer_interact_pos();
+    let mut dragging: Option<(Column, Rect)> = None;
+    for &column in &cols.order {
+        let w = cols.w(column, width);
+        if w <= 0.0 {
+            continue;
+        }
+        let cell = Rect::from_min_size(
+            Pos2::new(header.left() + cols.x(column, width), header.top()),
+            egui::vec2(w, header.height()),
+        );
+        let response = ui.interact(
+            cell,
+            ui.id().with(("heading", column.title())),
+            Sense::click_and_drag(),
+        );
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, column.title())
+        });
+        let response = response
+            .on_hover_cursor(egui::CursorIcon::Grab)
+            .on_hover_text("Drag to move this column");
+        response.context_menu(|ui| {
+            if ui.button("Put the columns back in order").clicked() {
+                moved = Some(Column::ALL.to_vec());
+                ui.close();
+            }
+        });
+        if response.dragged() {
+            dragging = Some((column, cell));
+        } else {
+            draw_heading(ui.painter(), cell, column.title(), theme::muted());
+        }
+        if response.drag_stopped()
+            && let Some(p) = pointer
+        {
+            // Where it lands: before the first column whose middle is
+            // right of the pointer.
+            let mut order: Vec<Column> = cols
+                .order
+                .iter()
+                .copied()
+                .filter(|c| *c != column)
+                .collect();
+            let at = order
+                .iter()
+                .position(|c| header.left() + cols.x(*c, width) + cols.w(*c, width) / 2.0 > p.x)
+                .unwrap_or(order.len());
+            order.insert(at, column);
+            if order != cols.order {
+                moved = Some(order);
+            }
+        }
+    }
+    // The heading being moved follows the pointer, with a line where it
+    // would land.
+    if let (Some((column, cell)), Some(p)) = (dragging, pointer) {
+        let others: Vec<Column> = cols
+            .order
+            .iter()
+            .copied()
+            .filter(|c| *c != column)
+            .collect();
+        let landing = others
+            .iter()
+            .find(|c| header.left() + cols.x(**c, width) + cols.w(**c, width) / 2.0 > p.x)
+            .map_or(header.right(), |c| header.left() + cols.x(*c, width));
+        let painter = ui.painter();
+        painter.vline(landing, header.y_range(), Stroke::new(2.0, theme::accent()));
+        let ghost = cell.translate(egui::vec2(p.x - cell.center().x, 0.0));
+        painter.rect_filled(ghost, 4, theme::bg_hover());
+        draw_heading(painter, ghost, column.title(), theme::text());
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    }
+    ui.painter().hline(
+        header.x_range(),
+        header.bottom(),
+        Stroke::new(1.0, theme::border()),
+    );
+    moved
+}
+
+fn draw_heading(painter: &egui::Painter, cell: Rect, text: &str, colour: Color32) {
+    let r = Rect::from_min_size(
+        Pos2::new(cell.left() + 8.0, cell.top()),
+        egui::vec2(cell.width() - 12.0, cell.height()),
+    );
+    widgets::text_in(painter, r, &text.to_uppercase(), theme::body(11.0), colour);
 }
 
 pub struct Scroll {
@@ -173,46 +309,17 @@ pub fn show(
     repo: &mut RepoView,
     scroll: &mut Scroll,
     now: i64,
+    order: &mut Vec<Column>,
 ) -> Option<Click> {
     let total = repo.history.total();
     let width = ui.available_width();
-    let cols = Columns::new(width, repo.history.width());
+    let cols = Columns::new(width, repo.history.width(), order);
 
-    // Column headings.
+    // Column headings: drag one to move its column.
     let (header, _) = ui.allocate_exact_size(egui::vec2(width, 28.0), Sense::hover());
-    let painter = ui.painter();
-    let heading = |x: f32, w: f32, text: &str| {
-        if w > 0.0 {
-            let r = Rect::from_min_size(
-                Pos2::new(header.left() + x + 8.0, header.top()),
-                egui::vec2(w - 12.0, header.height()),
-            );
-            widgets::text_in(
-                painter,
-                r,
-                &text.to_uppercase(),
-                theme::body(11.0),
-                theme::muted(),
-            );
-        }
-    };
-    let mut x = 0.0;
-    for (w, text) in [
-        (cols.refs, "Branch / Tag"),
-        (cols.graph, "Graph"),
-        (cols.message(width), "Commit message"),
-        (cols.author, "Author"),
-        (cols.date, "Date"),
-        (cols.sha, "SHA"),
-    ] {
-        heading(x, w, text);
-        x += w;
+    if let Some(moved) = headings(ui, header, &cols, width) {
+        *order = moved;
     }
-    painter.hline(
-        header.x_range(),
-        header.bottom(),
-        Stroke::new(1.0, theme::border()),
-    );
 
     if working_row(ui, repo, &cols, width) {
         return Some(Click::Working);
@@ -418,7 +525,7 @@ pub fn show(
         }
 
         // The graph: edges from each row to the next, then the dots.
-        let graph_left = origin.x + cols.refs;
+        let graph_left = origin.x + cols.x(Column::Graph, full);
         let clip = Rect::from_x_y_ranges(
             graph_left..=graph_left + cols.graph,
             ui.clip_rect().y_range(),
@@ -501,7 +608,7 @@ pub fn show(
             };
             let Some(c) = repo.rows.get(row) else {
                 let bar = Rect::from_min_size(
-                    Pos2::new(origin.x + cols.refs + cols.graph + 8.0, top + 9.0),
+                    Pos2::new(origin.x + cols.x(Column::Message, full) + 8.0, top + 9.0),
                     egui::vec2(240.0, 10.0),
                 );
                 painter.rect_filled(bar, 4, theme::bg_hover());
@@ -516,7 +623,7 @@ pub fn show(
             } else {
                 (theme::text(), theme::muted())
             };
-            let refs_cell = cell(0.0, cols.refs);
+            let refs_cell = cell(cols.x(Column::Refs, full), cols.refs);
             // More than one label, or one cut short: hovering spreads them
             // out, at their full length.
             let cut_short = labels(c).first().is_some_and(|(r, on_remote)| {
@@ -556,37 +663,33 @@ pub fn show(
             {
                 clicked = Some(action);
             }
-            let mut x = cols.refs + cols.graph;
             widgets::text_in(
                 painter,
-                cell(x, cols.message(full)),
+                cell(cols.x(Column::Message, full), cols.message(full)),
                 &c.summary,
                 theme::body(theme::FONT_SIZE),
                 text,
             );
-            x += cols.message(full);
             if cols.author > 0.0 {
                 widgets::text_in(
                     painter,
-                    cell(x, cols.author),
+                    cell(cols.x(Column::Author, full), cols.author),
                     &c.author,
                     theme::body(theme::FONT_SIZE),
                     muted,
                 );
-                x += cols.author;
             }
             widgets::text_in(
                 painter,
-                cell(x, cols.date),
+                cell(cols.x(Column::Date, full), cols.date),
                 &format::age(c.time, now),
                 theme::body(theme::FONT_SIZE),
                 muted,
             );
-            x += cols.date;
             if cols.sha > 0.0 {
                 widgets::text_in(
                     painter,
-                    cell(x, cols.sha),
+                    cell(cols.x(Column::Sha, full), cols.sha),
                     format::short_sha(&c.id),
                     theme::mono(12.0),
                     muted,
@@ -654,7 +757,10 @@ fn working_row(ui: &mut egui::Ui, repo: &mut RepoView, cols: &Columns, width: f3
     };
     widgets::pill(
         painter,
-        Pos2::new(rect.left() + 8.0, rect.center().y),
+        Pos2::new(
+            rect.left() + cols.x(Column::Refs, width) + 8.0,
+            rect.center().y,
+        ),
         cols.refs - 16.0,
         "// WIP",
         theme::muted(),
@@ -662,7 +768,10 @@ fn working_row(ui: &mut egui::Ui, repo: &mut RepoView, cols: &Columns, width: f3
     );
 
     // A hollow, dashed node with a dashed line down towards HEAD.
-    let centre = Pos2::new(lane_x(rect.left() + cols.refs, lane), rect.center().y);
+    let centre = Pos2::new(
+        lane_x(rect.left() + cols.x(Column::Graph, width), lane),
+        rect.center().y,
+    );
     let dashed = Stroke::new(2.0, theme::muted());
     painter.extend(egui::Shape::dashed_line(
         &[
@@ -684,10 +793,8 @@ fn working_row(ui: &mut egui::Ui, repo: &mut RepoView, cols: &Columns, width: f3
     painter.extend(egui::Shape::dashed_line(&points, dashed, 2.5, 2.0));
 
     // Title, then the counts in the same (wide) column so they never get cut.
-    let message = cell(
-        cols.refs + cols.graph,
-        cols.message(width) + cols.author + cols.date + cols.sha,
-    );
+    let (start, run) = cols.message_run(width);
+    let message = cell(start, run);
     let title = widgets::text_in(
         painter,
         message,
