@@ -3,6 +3,10 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.11
+
+- **A graph with many branches scrolls sideways**: use the horizontal wheel (or Shift and the wheel) over it, or drag the bar under the Graph heading. Jumping to a commit brings its line into view.
+
 ## 0.5.10
 
 - **Updates are found while the app is open**: it looks every half hour, even when it's sitting in the background, and a newer release replaces one already downloaded. Before, the restart button usually only appeared after reopening the app.

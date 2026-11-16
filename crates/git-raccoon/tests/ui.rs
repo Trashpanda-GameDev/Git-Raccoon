@@ -1580,6 +1580,73 @@ fn moves_columns_by_dragging_their_headings() {
 }
 
 #[test]
+fn a_wide_graph_scrolls_sideways() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    settle(&mut h);
+    assert!(
+        h.query_by_label("Scroll the graph sideways").is_none(),
+        "a graph that fits doesn't scroll"
+    );
+    // Thirty branches side by side: far more lanes than the column shows.
+    let out = |args: &[&str]| {
+        let o = std::process::Command::new("git")
+            .args(args)
+            .current_dir(sample.path())
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8(o.stdout).unwrap().trim().to_string()
+    };
+    for i in 0..30 {
+        let id = out(&[
+            "commit-tree",
+            "HEAD^{tree}",
+            "-p",
+            "HEAD~3",
+            "-m",
+            &format!("Side {i}"),
+        ]);
+        out(&["branch", &format!("side-{i:02}"), &id]);
+    }
+    h.key_press(Key::F5);
+    wait_for(&mut h, "the branches", |app| {
+        app.repo().unwrap().history.width() > 25
+    });
+    settle(&mut h);
+    let path = h.state().repo().unwrap().path().to_string();
+    let offset = |h: &Harness<'_, App>| {
+        h.ctx
+            .data(|d| d.get_temp::<f32>(egui::Id::new(("graph-x", path.as_str()))))
+            .unwrap_or(0.0)
+    };
+    assert_eq!(offset(&h), 0.0);
+    let bar = h.get_by_label("Scroll the graph sideways").rect();
+    // Shift and the wheel over the graph move it sideways, not the list.
+    let over_graph = egui::pos2(bar.center().x, bar.bottom() + 200.0);
+    h.event(egui::Event::PointerMoved(over_graph));
+    h.run_ok();
+    h.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(-150.0, 0.0),
+        modifiers: egui::Modifiers::NONE,
+        phase: egui::TouchPhase::Move,
+    });
+    settle(&mut h);
+    let moved = offset(&h);
+    assert!(moved > 50.0, "scrolled sideways: {moved}");
+    screenshot(&mut h, "62-wide-graph");
+    // Dragging the bar too.
+    drag(&mut h, bar.center(), bar.center() - egui::vec2(400.0, 0.0));
+    settle(&mut h);
+    assert_eq!(offset(&h), 0.0, "back to the start");
+    drag(&mut h, bar.center(), bar.center() + egui::vec2(400.0, 0.0));
+    settle(&mut h);
+    assert!(offset(&h) > moved, "all the way along: {}", offset(&h));
+}
+
+#[test]
 fn opens_a_terminal_in_the_repository() {
     let sample = Sample::build();
     // A stand-in terminal that leaves a mark where it's started.

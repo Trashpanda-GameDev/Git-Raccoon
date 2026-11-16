@@ -26,6 +26,19 @@ fn lane_x(left: f32, lane: usize) -> f32 {
     left + GRAPH_PADDING + lane as f32 * LANE_WIDTH
 }
 
+/// How wide all the lanes are, which can be more than the graph's column.
+#[expect(clippy::cast_precision_loss, reason = "lane counts are small")]
+fn lanes_width(lanes: usize) -> f32 {
+    // As the column measures them, before it's held to its widest.
+    lanes.max(1) as f32 * LANE_WIDTH + GRAPH_PADDING
+}
+
+/// How far the graph is scrolled sideways (when its lanes are wider than
+/// its column), kept per repository.
+fn graph_scroll_id(repo: &RepoView) -> egui::Id {
+    egui::Id::new(("graph-x", repo.path()))
+}
+
 #[expect(clippy::cast_precision_loss, reason = "lane counts are small")]
 pub fn graph_column_width(lanes: usize) -> f32 {
     (lanes.max(1) as f32 * LANE_WIDTH + GRAPH_PADDING).clamp(64.0, MAX_GRAPH_COLUMN)
@@ -183,6 +196,56 @@ fn headings(ui: &mut egui::Ui, header: Rect, cols: &Columns, width: f32) -> Opti
     moved
 }
 
+/// A thin scrollbar along the bottom of the graph's heading, for a graph
+/// wider than its column. Returns where the graph is scrolled to.
+fn graph_scrollbar(
+    ui: &mut egui::Ui,
+    header: Rect,
+    cols: &Columns,
+    width: f32,
+    graph_x: f32,
+    spare: f32,
+) -> f32 {
+    let left = header.left() + cols.x(Column::Graph, width) + 4.0;
+    let track = Rect::from_min_max(
+        Pos2::new(left, header.bottom() - 7.0),
+        Pos2::new(left + cols.graph - 8.0, header.bottom() - 2.0),
+    );
+    let response = ui.interact(
+        track.expand2(egui::vec2(0.0, 3.0)),
+        ui.id().with("graph-scrollbar"),
+        Sense::click_and_drag(),
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Slider, true, "Scroll the graph sideways")
+    });
+    let content = cols.graph + spare;
+    let thumb_w = (track.width() * cols.graph / content).max(16.0);
+    let travel = (track.width() - thumb_w).max(1.0);
+    let mut x = graph_x;
+    if response.dragged() {
+        x += response.drag_delta().x * spare / travel;
+    } else if response.clicked()
+        && let Some(p) = response.interact_pointer_pos()
+    {
+        x = (p.x - track.left() - thumb_w / 2.0) / travel * spare;
+    }
+    let x = x.clamp(0.0, spare);
+    let painter = ui.painter();
+    painter.rect_filled(track, 3, theme::bg_hover());
+    let thumb = Rect::from_min_size(
+        Pos2::new(track.left() + x / spare * travel, track.top()),
+        egui::vec2(thumb_w, track.height()),
+    );
+    let colour = if response.hovered() || response.dragged() {
+        theme::text()
+    } else {
+        theme::muted()
+    };
+    painter.rect_filled(thumb, 3, colour);
+    x
+}
+
 fn draw_heading(painter: &egui::Painter, cell: Rect, text: &str, colour: Color32) {
     let r = Rect::from_min_size(
         Pos2::new(cell.left() + 8.0, cell.top()),
@@ -314,14 +377,24 @@ pub fn show(
     let total = repo.history.total();
     let width = ui.available_width();
     let cols = Columns::new(width, repo.history.width(), order);
+    // A graph wider than its column scrolls sideways.
+    let scroll_id = graph_scroll_id(repo);
+    let spare = (lanes_width(repo.history.width()) - cols.graph).max(0.0);
+    let mut graph_x: f32 = ui
+        .data(|d| d.get_temp::<f32>(scroll_id))
+        .unwrap_or(0.0)
+        .clamp(0.0, spare);
 
     // Column headings: drag one to move its column.
     let (header, _) = ui.allocate_exact_size(egui::vec2(width, 28.0), Sense::hover());
     if let Some(moved) = headings(ui, header, &cols, width) {
         *order = moved;
     }
+    if spare > 0.0 {
+        graph_x = graph_scrollbar(ui, header, &cols, width, graph_x, spare);
+    }
 
-    if working_row(ui, repo, &cols, width) {
+    if working_row(ui, repo, &cols, width, graph_x) {
         return Some(Click::Working);
     }
 
@@ -338,6 +411,7 @@ pub fn show(
     let mut area = egui::ScrollArea::vertical()
         .id_salt("history")
         .auto_shrink([false, false]);
+    let jumped = repo.scroll_to;
     if let Some(row) = repo.scroll_to.take() {
         let top = row_top(row);
         let target = if top < scroll.offset {
@@ -525,11 +599,31 @@ pub fn show(
         }
 
         // The graph: edges from each row to the next, then the dots.
-        let graph_left = origin.x + cols.x(Column::Graph, full);
+        let column_left = origin.x + cols.x(Column::Graph, full);
         let clip = Rect::from_x_y_ranges(
-            graph_left..=graph_left + cols.graph,
+            column_left..=column_left + cols.graph,
             ui.clip_rect().y_range(),
         );
+        // Sideways: the horizontal wheel (or Shift and the wheel) over the
+        // graph moves it, rather than the list.
+        if spare > 0.0 && ui.rect_contains_pointer(clip) {
+            let dx = ui.input(|i| i.smooth_scroll_delta.x);
+            if dx != 0.0 {
+                graph_x = (graph_x - dx).clamp(0.0, spare);
+                ui.ctx().request_repaint();
+            }
+        }
+        // A jump to a commit brings its lane into view.
+        if let Some(row) = jumped
+            && let Some(c) = repo.rows.get(row)
+        {
+            let at = lane_x(0.0, c.column);
+            if at - graph_x < GRAPH_PADDING || at - graph_x > cols.graph - GRAPH_PADDING {
+                graph_x = (at - cols.graph / 2.0).clamp(0.0, spare);
+            }
+        }
+        ui.data_mut(|d| d.insert_temp(scroll_id, graph_x));
+        let graph_left = column_left - graph_x;
         let graph = ui.painter().with_clip_rect(clip);
         let centre = |row: usize| origin.y + row_top(row) + ROW_HEIGHT / 2.0;
         for row in first.saturating_sub(1)..last {
@@ -722,7 +816,13 @@ pub fn show(
 
 /// The "Working changes" row above the commits, shown while there are
 /// uncommitted changes. Returns whether it was clicked.
-fn working_row(ui: &mut egui::Ui, repo: &mut RepoView, cols: &Columns, width: f32) -> bool {
+fn working_row(
+    ui: &mut egui::Ui,
+    repo: &mut RepoView,
+    cols: &Columns,
+    width: f32,
+    graph_x: f32,
+) -> bool {
     let Some(status) = repo.status.as_ref().filter(|s| !s.is_clean()) else {
         return false;
     };
@@ -767,11 +867,15 @@ fn working_row(ui: &mut egui::Ui, repo: &mut RepoView, cols: &Columns, width: f3
         false,
     );
 
-    // A hollow, dashed node with a dashed line down towards HEAD.
-    let centre = Pos2::new(
-        lane_x(rect.left() + cols.x(Column::Graph, width), lane),
-        rect.center().y,
+    // A hollow, dashed node with a dashed line down towards HEAD (kept in
+    // the graph's column, scrolled with it).
+    let column = Rect::from_x_y_ranges(
+        rect.left() + cols.x(Column::Graph, width)
+            ..=rect.left() + cols.x(Column::Graph, width) + cols.graph,
+        rect.y_range(),
     );
+    let painter = &painter.with_clip_rect(column.intersect(painter.clip_rect()));
+    let centre = Pos2::new(lane_x(column.left() - graph_x, lane), rect.center().y);
     let dashed = Stroke::new(2.0, theme::muted());
     painter.extend(egui::Shape::dashed_line(
         &[
