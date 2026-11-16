@@ -55,6 +55,10 @@ pub struct App {
     restart_to_update: bool,
     /// The licenses window, while open.
     licenses: Option<crate::ui::licenses::Tab>,
+    /// The notes shown in "What's new", while it's open.
+    whats_new: Vec<crate::changelog::Notes>,
+    /// The feedback form, while it's open.
+    feedback: Option<crate::ui::feedback::Form>,
     /// Reports of earlier crashes, offered one at a time.
     crash_reports: Vec<crate::crash::Report>,
 }
@@ -110,8 +114,17 @@ impl App {
     }
 
     /// Creates the app with the given settings and no repo open.
-    pub fn with_settings(ctx: &egui::Context, settings: Settings) -> Self {
+    pub fn with_settings(ctx: &egui::Context, mut settings: Settings) -> Self {
         theme::apply(ctx);
+        // Updated since the last run: what's new in the versions since.
+        let current = env!("CARGO_PKG_VERSION");
+        let whats_new = settings
+            .last_version
+            .as_deref()
+            .filter(|last| *last != current)
+            .map(|last| crate::changelog::since(last, current))
+            .unwrap_or_default();
+        settings.last_version = Some(current.to_string());
         // Zooming is the app's own (see `zoom_input`), so it's remembered.
         ctx.options_mut(|o| o.zoom_with_keyboard = false);
         App {
@@ -140,6 +153,8 @@ impl App {
             restart_to_update: false,
             crash_reports: Vec::new(),
             licenses: None,
+            whats_new,
+            feedback: None,
         }
     }
 
@@ -675,6 +690,8 @@ impl App {
             | Command::ZoomIn
             | Command::ZoomOut
             | Command::ZoomReset
+            | Command::Feedback
+            | Command::WhatsNew
             | Command::ShowWorking
             | Command::WriteCommit
             | Command::AddRemote
@@ -757,6 +774,8 @@ impl App {
         add(Command::ZoomIn, "Zoom in (bigger)".into());
         add(Command::ZoomOut, "Zoom out (smaller)".into());
         add(Command::ZoomReset, "Actual size".into());
+        add(Command::Feedback, "Send feedback, a bug or an idea…".into());
+        add(Command::WhatsNew, "What's new in this version".into());
         add(
             Command::ToggleSplitDiff,
             "Switch diffs between unified and side by side".into(),
@@ -843,6 +862,12 @@ impl App {
             Command::ZoomIn => self.settings.zoom_step(true),
             Command::ZoomOut => self.settings.zoom_step(false),
             Command::ZoomReset => self.settings.zoom = None,
+            Command::Feedback => self.feedback = Some(crate::ui::feedback::Form::default()),
+            Command::WhatsNew => {
+                self.whats_new = crate::changelog::of(env!("CARGO_PKG_VERSION"))
+                    .into_iter()
+                    .collect();
+            }
             command => {
                 let Some(repo) = &mut self.repo else { return };
                 let head = repo.head_branch().unwrap_or("HEAD").to_string();
@@ -965,6 +990,8 @@ impl App {
             || self.clone_form.is_some()
             || self.settings_open
             || self.licenses.is_some()
+            || !self.whats_new.is_empty()
+            || self.feedback.is_some()
             || dialog_open
         {
             return;
@@ -1120,6 +1147,7 @@ impl App {
             Some(toolbar::Action::NewBranch) => self.run_command(&ctx, Command::NewBranch),
             Some(toolbar::Action::Palette) => self.run_command(&ctx, Command::Palette),
             Some(toolbar::Action::Settings) => self.run_command(&ctx, Command::Settings),
+            Some(toolbar::Action::Feedback) => self.run_command(&ctx, Command::Feedback),
             Some(toolbar::Action::RestartToUpdate) => self.restart_to_update = true,
             Some(toolbar::Action::Fetch) => self.run(&ctx, Op::Fetch),
             Some(toolbar::Action::Pull) => {
@@ -1663,6 +1691,20 @@ impl eframe::App for App {
             && !crate::ui::licenses::show(&ctx, tab)
         {
             self.licenses = None;
+        }
+        if !self.whats_new.is_empty() && !crate::ui::whats_new::show(&ctx, &self.whats_new) {
+            self.whats_new.clear();
+        }
+        if let Some(form) = &mut self.feedback {
+            match crate::ui::feedback::show(&ctx, form) {
+                Some(crate::ui::feedback::Action::Send) => {
+                    let url = crate::feedback::issue_url(form.kind, &form.title, &form.details);
+                    ctx.open_url(egui::OpenUrl::new_tab(url));
+                    self.feedback = None;
+                }
+                Some(crate::ui::feedback::Action::Close) => self.feedback = None,
+                None => {}
+            }
         }
         self.crash_dialog(&ctx);
         self.questions(&ctx);

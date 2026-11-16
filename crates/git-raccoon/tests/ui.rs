@@ -2594,6 +2594,44 @@ fn zooms_with_ctrl_and_the_keys_or_the_wheel() {
 }
 
 #[test]
+fn shows_whats_new_after_an_update_and_takes_feedback() {
+    let current = env!("CARGO_PKG_VERSION");
+    // A fresh install: nothing to show, but the version is noted.
+    let h = harness(Settings::default());
+    assert!(h.query_by_label("Close what's new").is_none());
+    assert_eq!(h.state().settings().last_version.as_deref(), Some(current));
+    drop(h);
+
+    // Updated from an older version: what's new, once.
+    let mut h = harness(Settings {
+        last_version: Some("0.4.0".into()),
+        ..Settings::default()
+    });
+    h.run_ok();
+    h.get_by_label(&format!("Version {current}"));
+    screenshot(&mut h, "48-whats-new");
+    h.get_by_label("Nice").click();
+    h.run_ok();
+    assert!(h.query_by_label("Close what's new").is_none());
+    assert_eq!(h.state().settings().last_version.as_deref(), Some(current));
+
+    // Feedback, from the toolbar: kind, title, details, then on to GitHub.
+    let sample = Sample::build();
+    open(&mut h, sample.path());
+    h.get_by_label("Send feedback: a bug, a thought or an idea")
+        .click();
+    h.run_ok();
+    h.get_by_label("Idea").click();
+    h.run_ok();
+    type_into(&mut h, "Feedback title", "Raccoon-shaped cursor");
+    type_into(&mut h, "Feedback details", "For fun.");
+    screenshot(&mut h, "49-feedback");
+    h.get_by_label("Continue on GitHub").click();
+    h.run_ok();
+    assert!(h.query_by_label("Feedback title").is_none(), "closed");
+}
+
+#[test]
 fn renders_every_theme() {
     use git_raccoon::settings::{ThemeChoice, ThemeMode};
     let sample = Sample::build();

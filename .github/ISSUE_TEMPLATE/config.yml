@@ -1,0 +1,2 @@
+# Crash reports from the app open a plain issue, so those stay allowed.
+blank_issues_enabled: true

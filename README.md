@@ -45,7 +45,7 @@ Installers for Windows, macOS (Apple Silicon) and Linux (an AppImage) are publis
 
 ### Making a release
 
-1. Set the version in the root `Cargo.toml` (for example `0.5.1`), and commit it.
+1. Set the version in the root `Cargo.toml` (for example `0.5.1`), add a `## 0.5.1` section to [CHANGELOG.md](CHANGELOG.md) (the app shows it as "What's new" after updating, and it becomes the release's notes), and commit them. A test checks the version has its section.
 2. Tag that commit and push the tag:
 
    ```bash

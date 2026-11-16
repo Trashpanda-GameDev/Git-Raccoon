@@ -55,6 +55,8 @@ pub struct Settings {
     pub zoom: Option<f32>,
     /// Don't look for updates.
     pub no_update_checks: bool,
+    /// The version last run, to show what's new after an update.
+    pub last_version: Option<String>,
     /// Changed files shown as a tree of folders, rather than by path.
     pub file_tree: bool,
     /// Which defaults these settings were saved with (see `upgrade`):
@@ -149,6 +151,7 @@ impl Default for Settings {
             theme_mode: ThemeMode::default(),
             zoom: None,
             no_update_checks: false,
+            last_version: None,
             file_tree: false,
             defaults: DEFAULTS,
         }

@@ -1,0 +1,12 @@
+name: Feedback
+description: What you think of Git Raccoon, good or bad.
+labels: ["feedback"]
+projects: ["Trashpanda-GameDev/5"]
+body:
+  - type: textarea
+    id: details
+    attributes:
+      label: Your feedback
+      description: What you like, what's awkward, anything at all.
+    validations:
+      required: true

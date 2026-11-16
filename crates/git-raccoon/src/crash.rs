@@ -12,7 +12,7 @@ pub fn folder() -> Option<PathBuf> {
 }
 
 /// Where reports can be posted: the project's GitHub issues.
-const ISSUES: &str = "https://github.com/Trashpanda-GameDev/Git-Raccoon/issues/new";
+pub const ISSUES: &str = "https://github.com/Trashpanda-GameDev/Git-Raccoon/issues/new";
 
 /// Writes a report whenever anything panics, then carries on as before.
 pub fn install() {
@@ -114,7 +114,7 @@ pub fn issue_url(report: &Report) -> String {
 }
 
 /// Percent-encodes text for a URL query.
-fn encode(text: &str) -> String {
+pub fn encode(text: &str) -> String {
     let mut out = String::new();
     for b in text.bytes() {
         match b {

@@ -1,0 +1,18 @@
+name: Bug report
+description: Something in Git Raccoon doesn't work as it should.
+labels: ["bug"]
+projects: ["Trashpanda-GameDev/5"]
+body:
+  - type: textarea
+    id: details
+    attributes:
+      label: What happened
+      description: What you did, what happened, and what you expected instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version and system
+      description: Filled in by Git Raccoon's Feedback button.
+      placeholder: Git Raccoon 0.5.2 on windows (x86_64)

@@ -1,0 +1,12 @@
+name: Idea
+description: Something Git Raccoon could do.
+labels: ["enhancement"]
+projects: ["Trashpanda-GameDev/5"]
+body:
+  - type: textarea
+    id: details
+    attributes:
+      label: The idea
+      description: What it would do, and what it would help with.
+    validations:
+      required: true

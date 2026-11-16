@@ -21,6 +21,7 @@ pub enum Action {
     CancelSync,
     Palette,
     Settings,
+    Feedback,
     RestartToUpdate,
 }
 
@@ -180,6 +181,11 @@ pub fn show(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if widgets::icon_button(ui, icon::GEAR_SIX, "Settings").clicked() {
                 action = Some(Action::Settings);
+            }
+            if widgets::icon_button(ui, icon::CHAT_CIRCLE_TEXT, "Send feedback: a bug, a thought or an idea")
+                .clicked()
+            {
+                action = Some(Action::Feedback);
             }
             if let Some(version) = update {
                 let button = egui::Button::new(

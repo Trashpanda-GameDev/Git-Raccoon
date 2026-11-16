@@ -71,6 +71,11 @@ jobs:
         if: needs.version.outputs.publish == 'true'
         continue-on-error: true # the first release has nothing before it
         run: vpk download github --repoUrl ${{ env.RELEASES_REPO }} --token ${{ secrets.GITHUB_TOKEN }} --channel win --outputDir releases
+      - name: Release notes (this version's part of CHANGELOG.md)
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: awk -v v="$VERSION" '/^## /{p = ($2 == v); next} p' CHANGELOG.md > notes.md
       - name: Package
         run: >
           vpk pack
@@ -83,6 +88,7 @@ jobs:
           --packAuthors Trashpanda-GameDev
           --icon crates/git-raccoon/assets/icon.ico
           --splashImage crates/git-raccoon/assets/splash.png
+          --releaseNotes notes.md
           --channel win
           --outputDir releases
       # An installer that asks where to install, and runs Velopack's (which
@@ -148,6 +154,11 @@ jobs:
         if: needs.version.outputs.publish == 'true'
         continue-on-error: true
         run: vpk download github --repoUrl ${{ env.RELEASES_REPO }} --token ${{ secrets.GITHUB_TOKEN }} --channel osx --outputDir releases
+      - name: Release notes (this version's part of CHANGELOG.md)
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: awk -v v="$VERSION" '/^## /{p = ($2 == v); next} p' CHANGELOG.md > notes.md
       - name: Package
         run: >
           vpk pack
@@ -163,6 +174,7 @@ jobs:
           --instWelcome installer/macos-welcome.txt
           --instLicense license.md
           --instConclusion installer/macos-conclusion.txt
+          --releaseNotes notes.md
           --channel osx
           --outputDir releases
       - uses: actions/upload-artifact@v4
@@ -198,6 +210,11 @@ jobs:
         if: needs.version.outputs.publish == 'true'
         continue-on-error: true
         run: vpk download github --repoUrl ${{ env.RELEASES_REPO }} --token ${{ secrets.GITHUB_TOKEN }} --channel linux --outputDir releases
+      - name: Release notes (this version's part of CHANGELOG.md)
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: awk -v v="$VERSION" '/^## /{p = ($2 == v); next} p' CHANGELOG.md > notes.md
       - name: Package
         run: >
           vpk pack
@@ -210,6 +227,7 @@ jobs:
           --packAuthors Trashpanda-GameDev
           --icon crates/git-raccoon/assets/icon.png
           --categories Development
+          --releaseNotes notes.md
           --channel linux
           --outputDir releases
       - uses: actions/upload-artifact@v4

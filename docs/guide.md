@@ -152,6 +152,10 @@ After most actions, the toolbar shows exactly what **Undo** would do ("Undo comm
 
 **Updates.** An installed Git Raccoon checks for a new version now and then and downloads it in the background. When it's ready, the toolbar shows **Restart to update**; your tabs and settings are kept.
 
+**What's new.** After an update, Git Raccoon shows what changed since the version you had (and "What's new in this version" in the command palette shows it again).
+
+**Feedback.** The speech-bubble button in the toolbar (or "Send feedback" in the command palette) takes a bug report, feedback or an idea: write a title and a few details, and it continues on GitHub as an issue you can check and post (with a GitHub account). Bug reports include the version and system.
+
 **Crash reports.** If Git Raccoon runs into a bug, it writes a report on your computer — nothing is sent. Next time you start it, it shows you the report and lets you choose: **Report on GitHub…** opens an issue you can read and add to before posting, **Copy report**, or **Don't send**.
 
 ## Troubleshooting
