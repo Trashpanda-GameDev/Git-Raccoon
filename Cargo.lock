@@ -1048,6 +1048,7 @@ dependencies = [
  "serde",
  "smithay-clipboard",
  "web-time",
+ "webbrowser",
  "winit",
 ]
 
@@ -1457,7 +1458,7 @@ dependencies = [
 
 [[package]]
 name = "git-raccoon"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "chrono",
  "eframe",
@@ -1482,7 +1483,7 @@ dependencies = [
 
 [[package]]
 name = "git-raccoon-core"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "git2",
  "notify",
@@ -4484,6 +4485,22 @@ checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "webbrowser"
+version = "1.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73e91ccd4698f2647d6137e8eb17a3f1dcfd63810be9029fb2398f507279b95b"
+dependencies = [
+ "jni",
+ "log",
+ "ndk-context",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "url",
+ "web-sys",
 ]
 
 [[package]]

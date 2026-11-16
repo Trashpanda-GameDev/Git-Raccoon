@@ -9,7 +9,7 @@ publish = false
 
 [dependencies]
 git-raccoon-core = { path = "../git-raccoon-core" }
-eframe = { version = "0.36", default-features = false, features = ["accesskit", "default_fonts", "persistence", "wayland", "wgpu", "x11"] }
+eframe = { version = "0.36", default-features = false, features = ["accesskit", "default_fonts", "links", "persistence", "wayland", "wgpu", "x11"] }
 egui-phosphor = "0.14"
 serde = { version = "1.0.229", features = ["derive"] }
 rfd = "0.18"

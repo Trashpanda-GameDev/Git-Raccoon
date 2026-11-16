@@ -3,6 +3,11 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.4
+
+- **Feedback is sent straight from the app**: no browser or GitHub account needed.
+- **Links open again**: "Report on GitHub" for crash reports, and other links in the app, open your browser.
+
 ## 0.5.3
 
 - **Every look comes dark and light.** Pick a look (Raccoon, Classic, Pastel, Forest, Paper or High contrast) and Dark, Light or System in Settings.
