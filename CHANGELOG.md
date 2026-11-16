@@ -5,6 +5,7 @@ release page). Newest first; a version's heading is just its number.
 
 ## 0.5.5
 
+- **Folders that hold just one folder share its row** in the folder view ("game/assets/localisation"), so deep paths take less room.
 - **Open on GitHub/GitLab** from the right-click menu of a commit, branch, remote, tag, pull/merge request or issue (or copy its link).
 - **Pull requests, merge requests and issues** from GitHub, GitLab.com and self-managed GitLab, in the sidebar: see a request's reviews and checks, check it out (forks too), open a new one from your branch, and read issues. Sign in under Settings → Accounts, with the browser (a self-managed server too, with an app registered on it) or a token, to several at once; tokens stay in your system's keychain.
 - **Delete a branch on the remote**: right-click it under Remote in the sidebar (it asks first, and Undo puts it back).
