@@ -156,3 +156,45 @@ impl ForgeView {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::forge::Kind;
+
+    fn account(kind: Kind, base: &str, login: &str) -> Account {
+        Account {
+            kind,
+            base: base.into(),
+            login: login.into(),
+            oauth: false,
+        }
+    }
+
+    #[test]
+    fn signed_in_to_several_forges_at_once() {
+        let accounts = [
+            account(Kind::GitHub, "https://github.com", "milo"),
+            account(Kind::GitLab, "https://gitlab.com", "milo"),
+            account(Kind::GitLab, "https://git.example.com", "rocky"),
+        ];
+        let login = |url: &str| {
+            let remotes = [("origin".to_string(), Some(url.to_string()))];
+            ForgeView::find(&remotes, &accounts)
+                .and_then(|f| f.account)
+                .map(|a| (a.base, a.login))
+        };
+        assert_eq!(
+            login("git@github.com:a/b.git"),
+            Some(("https://github.com".into(), "milo".into()))
+        );
+        assert_eq!(
+            login("https://gitlab.com/g/p.git"),
+            Some(("https://gitlab.com".into(), "milo".into()))
+        );
+        assert_eq!(
+            login("git@git.example.com:team/app.git"),
+            Some(("https://git.example.com".into(), "rocky".into()))
+        );
+    }
+}
