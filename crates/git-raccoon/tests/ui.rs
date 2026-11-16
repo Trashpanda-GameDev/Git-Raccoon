@@ -435,13 +435,19 @@ fn searches_the_whole_history() {
         "graph.rs: two commits and the merge"
     );
 
-    // Esc closes it, and the search with it.
+    // Esc closes it, and the search with it, but nothing else (#4): the
+    // commit picked stays open beside it.
+    assert!(h.state().repo().unwrap().selected.is_some());
     h.get_by_label("Search commits").click();
     h.run_ok();
     h.key_press(Key::Escape);
     h.run_ok();
     assert!(h.query_by_label("Search commits").is_none());
     assert!(h.state().repo().unwrap().search_rows().is_empty());
+    assert!(
+        h.state().repo().unwrap().selected.is_some(),
+        "the commit's details stay open"
+    );
     // So does its close button.
     h.key_press_modifiers(egui::Modifiers::COMMAND, Key::F);
     h.run_ok();

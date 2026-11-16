@@ -1045,7 +1045,12 @@ impl App {
         }
         let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
         if escape {
-            if repo.file_view.is_some() {
+            // The innermost thing first: an open search bar closes on its
+            // own (Esc also takes the focus from it, so it doesn't count
+            // as typing by now).
+            if repo.search.open {
+                repo.search.close();
+            } else if repo.file_view.is_some() {
                 repo.file_view = None;
             } else if repo.planner.is_some() {
                 repo.planner = None;
