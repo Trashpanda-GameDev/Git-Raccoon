@@ -35,8 +35,18 @@ fn issue(kind: Kind, title: &str, details: &str) -> serde_json::Value {
         Kind::Feedback => ("Feedback", "feedback"),
         Kind::Idea => ("Idea", "enhancement"),
     };
-    let title: String = title.trim().chars().take(120).collect();
-    let mut body: String = details.trim().chars().take(8000).collect();
+    // A long title is shortened; the whole of it starts the body.
+    let full = title.trim();
+    let title: String = if full.chars().count() > 100 {
+        full.chars().take(99).chain(['…']).collect()
+    } else {
+        full.to_string()
+    };
+    let mut body = String::new();
+    if title != full {
+        body.push_str(&format!("**{full}**\n\n"));
+    }
+    body.extend(details.trim().chars().take(8000));
     if kind == Kind::Bug {
         body.push_str(&format!("\n\n**Version and system:** {}", system()));
     }
@@ -201,6 +211,16 @@ mod tests {
         let body = bug["body"].as_str().unwrap();
         assert!(body.starts_with("When I clicked.\n\n**Version and system:** Git Raccoon "));
         assert!(body.ends_with("_Sent from the feedback form in Git Raccoon._"));
+        let long = "word ".repeat(40);
+        let long_one = issue(Kind::Idea, &long, "Details.");
+        let title = long_one["title"].as_str().unwrap();
+        assert!(title.chars().count() <= 106 && title.ends_with('…'));
+        assert!(
+            long_one["body"]
+                .as_str()
+                .unwrap()
+                .starts_with(&format!("**{}**", long.trim()))
+        );
         let idea = issue(Kind::Idea, "More raccoons", "");
         assert_eq!(idea["labels"][0], "enhancement");
         assert!(!idea["body"].as_str().unwrap().contains("Version"));
