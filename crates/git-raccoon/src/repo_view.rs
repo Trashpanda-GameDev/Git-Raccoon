@@ -1138,6 +1138,8 @@ pub struct RepoView {
     pub file_selection: crate::ui::working::FileSelection,
     /// The forge it's on (GitHub, GitLab), with its requests and issues.
     pub forge: Option<crate::forge_view::ForgeView>,
+    /// The web pages of its remotes on forges.
+    pub web: crate::forge::Web,
     /// Which forge, and what's on it, should be found out (again).
     pub forge_stale: bool,
     committing: Option<Task<Result<Option<Undoable>, String>>>,
@@ -1228,6 +1230,7 @@ impl RepoView {
             draft: CommitDraft::default(),
             file_selection: crate::ui::working::FileSelection::default(),
             forge: None,
+            web: crate::forge::Web::default(),
             forge_stale: true,
             committing: None,
             undo: None,

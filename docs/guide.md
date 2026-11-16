@@ -98,6 +98,8 @@ For a repository on **GitHub**, **GitLab.com** or a **self-managed GitLab**, the
 
 **A new request.** The **+** next to *Pull requests* (or *Merge requests*) opens one from the checked-out branch: pick the branch it goes into, give it a title and a description, and whether it's a draft. If the branch has commits the remote doesn't, push them first (there's a Push button right there).
 
+**Open on GitHub/GitLab.** Right-click a commit, a branch (a local one opens its upstream), a remote, a tag, a pull/merge request or an issue to open its page in the browser, or to copy its link. This works for any remote on GitHub or GitLab.com, and for self-managed GitLab servers you've signed in to; no sign-in is needed for the pages themselves.
+
 **Issues** open in the details pane the same way. Esc closes what's open. The lists reload when you fetch or refresh.
 
 ## Merging, rebasing and conflicts

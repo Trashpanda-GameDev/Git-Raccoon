@@ -1934,6 +1934,48 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     h.get_by_label_contains("Approved: rocky");
     h.get_by_label_contains("1 running");
     screenshot(&mut h, "50-merge-request");
+
+    // Right-click to open things on the forge.
+    let opened = |h: &mut Harness<'_, App>, row: &str| -> String {
+        h.get_all_by_label(row).next().unwrap().click_secondary();
+        h.run_ok();
+        if row == "Add icon" {
+            screenshot(h, "54-open-on-forge");
+        }
+        // The menu's (the details pane has a button too).
+        h.get_all_by_label_contains("Open on GitLab")
+            .last()
+            .unwrap()
+            .click();
+        h.step();
+        let url = h
+            .output()
+            .platform_output
+            .commands
+            .iter()
+            .find_map(|c| match c {
+                egui::OutputCommand::OpenUrl(u) => Some(u.url.clone()),
+                _ => None,
+            })
+            .expect("a page opened");
+        h.run_ok();
+        url
+    };
+    assert_eq!(
+        opened(&mut h, "!12 Pipeline cache"),
+        "https://example.com/mr/12"
+    );
+    assert_eq!(opened(&mut h, "#4 Slow start"), "u");
+    assert_eq!(opened(&mut h, "origin"), format!("{base}/team/app"));
+    assert_eq!(
+        opened(&mut h, "cache"),
+        format!("{base}/team/app/-/tree/cache")
+    );
+    let commit = opened(&mut h, "Add icon");
+    assert!(
+        commit.starts_with(&format!("{base}/team/app/-/commit/")),
+        "{commit}"
+    );
     let seen_now = seen.lock().unwrap().clone();
     assert!(
         seen_now

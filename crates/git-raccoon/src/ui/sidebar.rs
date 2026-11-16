@@ -397,6 +397,14 @@ fn forge_sections(
                     if response.clicked() {
                         c.action = Some(Action::OpenRequest(r.number));
                     }
+                    let page = (format!("Open on {}", kind.name()), r.url.clone());
+                    response.context_menu(|ui| {
+                        web_items(ui, &mut c.action, Some(&page));
+                        if ui.button("Show here").clicked() {
+                            c.action = Some(Action::OpenRequest(r.number));
+                            ui.close();
+                        }
+                    });
                 }
             }
         }
@@ -436,6 +444,17 @@ fn forge_sections(
                     if response.clicked() {
                         c.action = Some(Action::OpenIssue(i.number));
                     }
+                    let page = (
+                        format!("Open on {}", forge.project.kind.name()),
+                        i.url.clone(),
+                    );
+                    response.context_menu(|ui| {
+                        web_items(ui, &mut c.action, Some(&page));
+                        if ui.button("Show here").clicked() {
+                            c.action = Some(Action::OpenIssue(i.number));
+                            ui.close();
+                        }
+                    });
                 }
             }
         }
@@ -482,6 +501,8 @@ pub enum Action {
     SignInToForge,
     /// Open a new pull/merge request.
     NewRequest,
+    /// Open a page on the forge.
+    OpenWeb(String),
     StashApply(String),
     StashPop(String),
     StashDrop(String),
@@ -581,6 +602,26 @@ pub fn drag_label(ctx: &egui::Context) {
 }
 
 /// Adds the items of a context menu; the chosen one becomes the action.
+/// "Open on GitHub" (and copying the link) at the top of a context menu.
+fn web_items(ui: &mut egui::Ui, action: &mut Option<Action>, web: Option<&(String, String)>) {
+    let Some((text, url)) = web else { return };
+    if ui
+        .button(format!("{}  {text}", icon::ARROW_SQUARE_OUT))
+        .clicked()
+    {
+        *action = Some(Action::OpenWeb(url.clone()));
+        ui.close();
+    }
+    if ui
+        .button(format!("{}  Copy its link", icon::LINK))
+        .clicked()
+    {
+        ui.ctx().copy_text(url.clone());
+        ui.close();
+    }
+    ui.separator();
+}
+
 fn menu(ui: &mut egui::Ui, action: &mut Option<Action>, items: Vec<(&str, bool, Action)>) {
     for (label, enabled, act) in items {
         if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
@@ -596,6 +637,8 @@ pub struct Shown<'a> {
     /// The selected commit.
     pub selected: Option<&'a str>,
     pub forge: Option<&'a crate::forge_view::ForgeView>,
+    /// The remotes' web pages.
+    pub web: &'a crate::forge::Web,
 }
 
 pub fn show(
@@ -607,7 +650,11 @@ pub fn show(
     collapsed: &mut HashSet<String>,
     shown: Shown<'_>,
 ) -> Option<Action> {
-    let Shown { selected, forge } = shown;
+    let Shown {
+        selected,
+        forge,
+        web,
+    } = shown;
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.add_space(4.0);
@@ -760,7 +807,14 @@ pub fn show(
                         let merge_label = format!("Merge into {}", head.unwrap_or("HEAD"));
                         let rebase_label =
                             format!("Rebase {} onto {}", head.unwrap_or("HEAD"), b.name);
+                        // On the forge, as its upstream.
+                        let page = b
+                            .upstream
+                            .as_ref()
+                            .filter(|u| !u.gone)
+                            .and_then(|u| web.branch(&u.name));
                         response.context_menu(|ui| {
+                            web_items(ui, &mut c.action, page.as_ref());
                             let items = vec![
                                 ("Check out", !b.is_head, Action::Checkout(b.name.clone())),
                                 (
@@ -814,7 +868,9 @@ pub fn show(
                     if response.clicked() {
                         c.toggle(&key);
                     }
+                    let page = web.remote_page(name);
                     response.context_menu(|ui| {
+                        web_items(ui, &mut c.action, page.as_ref());
                         let items = vec![
                             ("Edit…", true, Action::EditRemote(Some((*name).to_string()))),
                             ("Remove…", true, Action::RemoveRemote((*name).to_string())),
@@ -855,7 +911,9 @@ pub fn show(
                                     head.unwrap_or("HEAD"),
                                     b.full_name
                                 );
+                                let page = web.branch(&b.full_name);
                                 response.context_menu(|ui| {
+                                    web_items(ui, &mut c.action, page.as_ref());
                                     let items = vec![
                                         (
                                             merge_label.as_str(),
@@ -931,7 +989,9 @@ pub fn show(
                     if response.clicked() {
                         c.action = Some(Action::Jump(t.target.clone()));
                     }
+                    let page = web.tag(&t.name);
                     response.context_menu(|ui| {
+                        web_items(ui, &mut c.action, page.as_ref());
                         let items = vec![
                             (
                                 "Create branch here…",

@@ -81,6 +81,8 @@ fn row_top(row: usize) -> f32 {
 pub enum Click {
     Row(usize),
     Working,
+    /// Open a page on the forge (from a commit's context menu).
+    OpenWeb(String),
     /// From a commit's context menu; `label` describes the commit.
     NewBranch {
         id: String,
@@ -305,7 +307,25 @@ pub fn show(
             }
             if let Some(c) = commit {
                 let (id, label) = (c.id.clone(), commit_label(&c.id, &c.summary));
+                let web = repo.web.commit(&c.id);
                 response.context_menu(|ui| {
+                    if let Some((text, url)) = &web {
+                        if ui
+                            .button(format!("{}  {text}", icon::ARROW_SQUARE_OUT))
+                            .clicked()
+                        {
+                            clicked = Some(Click::OpenWeb(url.clone()));
+                            ui.close();
+                        }
+                        if ui
+                            .button(format!("{}  Copy its link", icon::LINK))
+                            .clicked()
+                        {
+                            ui.ctx().copy_text(url.clone());
+                            ui.close();
+                        }
+                        ui.separator();
+                    }
                     let on_branch = head.is_some();
                     let target = head.as_deref().unwrap_or("HEAD");
                     let items = [

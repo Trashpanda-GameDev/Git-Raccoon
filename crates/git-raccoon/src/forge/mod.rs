@@ -63,6 +63,98 @@ impl Project {
     pub fn url(&self) -> String {
         format!("{}/{}", self.base, self.path)
     }
+
+    /// GitLab puts a project's own pages under "/-/".
+    fn pages(&self) -> String {
+        match self.kind {
+            Kind::GitHub => self.url(),
+            Kind::GitLab => format!("{}/-", self.url()),
+        }
+    }
+
+    /// A commit's page.
+    pub fn commit_url(&self, id: &str) -> String {
+        format!("{}/commit/{id}", self.pages())
+    }
+
+    /// A branch's or tag's files.
+    pub fn tree_url(&self, name: &str) -> String {
+        format!("{}/tree/{}", self.pages(), path_encode(name))
+    }
+}
+
+/// A ref name made safe for a URL path (its slashes kept).
+fn path_encode(name: &str) -> String {
+    name.split('/')
+        .map(http::encode)
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// The web pages of a repository's remotes that are on a forge.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Web {
+    /// Remote name and project, "origin" first.
+    remotes: Vec<(String, Project)>,
+}
+
+impl Web {
+    /// From the remotes (name, URL); `self_managed` as for [`project`].
+    pub fn new(remotes: &[(String, Option<String>)], self_managed: &[String]) -> Web {
+        let mut remotes: Vec<(String, Project)> = remotes
+            .iter()
+            .filter_map(|(name, url)| {
+                project(url.as_deref()?, self_managed).map(|p| (name.clone(), p))
+            })
+            .collect();
+        remotes.sort_by_key(|(name, _)| name != "origin");
+        Web { remotes }
+    }
+
+    /// "Open on GitHub" and the like.
+    pub fn label(project: &Project) -> String {
+        format!("Open on {}", project.kind.name())
+    }
+
+    /// A remote's project.
+    pub fn remote(&self, name: &str) -> Option<&Project> {
+        self.remotes.iter().find(|(n, _)| n == name).map(|(_, p)| p)
+    }
+
+    /// The main remote's project ("origin", or else the first).
+    pub fn main(&self) -> Option<&Project> {
+        self.remotes.first().map(|(_, p)| p)
+    }
+
+    /// A commit's page, on the main remote.
+    pub fn commit(&self, id: &str) -> Option<(String, String)> {
+        let p = self.main()?;
+        Some((Web::label(p), p.commit_url(id)))
+    }
+
+    /// A remote branch's page ("origin/feature").
+    pub fn branch(&self, full_name: &str) -> Option<(String, String)> {
+        // The longest remote name that prefixes it (names can hold "/").
+        let (remote, p) = self
+            .remotes
+            .iter()
+            .filter(|(n, _)| full_name.starts_with(&format!("{n}/")))
+            .max_by_key(|(n, _)| n.len())?;
+        let branch = &full_name[remote.len() + 1..];
+        Some((Web::label(p), p.tree_url(branch)))
+    }
+
+    /// A remote's page.
+    pub fn remote_page(&self, name: &str) -> Option<(String, String)> {
+        let p = self.remote(name)?;
+        Some((Web::label(p), p.url()))
+    }
+
+    /// A tag's page, on the main remote.
+    pub fn tag(&self, name: &str) -> Option<(String, String)> {
+        let p = self.main()?;
+        Some((Web::label(p), p.tree_url(name)))
+    }
 }
 
 /// The host and path in a remote URL: "https://github.com/a/b.git",
@@ -317,6 +409,51 @@ mod tests {
         assert_eq!(found("/home/me/repo.git", &[]), None);
         assert_eq!(found("http://github.com/a/b", &[]), None, "plain http");
         assert_eq!(found("https://github.com/justone", &[]), None);
+    }
+
+    #[test]
+    fn finds_the_web_pages_of_commits_branches_and_remotes() {
+        let remotes = [
+            (
+                "mirror".to_string(),
+                Some("git@gitlab.com:team/app.git".to_string()),
+            ),
+            (
+                "origin".to_string(),
+                Some("https://github.com/a/b.git".to_string()),
+            ),
+            (
+                "team/fork".to_string(),
+                Some("git@git.example.com:t/app.git".to_string()),
+            ),
+            ("local".to_string(), Some("/srv/app.git".to_string())),
+        ];
+        let web = Web::new(&remotes, &["https://git.example.com".to_string()]);
+        assert_eq!(
+            web.commit("abc"),
+            Some((
+                "Open on GitHub".into(),
+                "https://github.com/a/b/commit/abc".into()
+            ))
+        );
+        assert_eq!(
+            web.branch("mirror/fix/ui#2").map(|w| w.1),
+            Some("https://gitlab.com/team/app/-/tree/fix/ui%232".into())
+        );
+        assert_eq!(
+            web.branch("team/fork/main").map(|w| w.1),
+            Some("https://git.example.com/t/app/-/tree/main".into())
+        );
+        assert_eq!(web.branch("local/main"), None);
+        assert_eq!(
+            web.remote_page("mirror").map(|w| w.1),
+            Some("https://gitlab.com/team/app".into())
+        );
+        assert_eq!(
+            web.tag("v1.0").map(|w| w.1),
+            Some("https://github.com/a/b/tree/v1.0".into())
+        );
+        assert_eq!(Web::new(&remotes[3..], &[]).commit("abc"), None);
     }
 
     #[test]

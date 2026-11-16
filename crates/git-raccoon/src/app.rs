@@ -976,13 +976,21 @@ impl App {
     /// loaded.
     fn keep_forge(&mut self, ctx: &egui::Context) {
         let Some(repo) = &mut self.repo else { return };
+        let remotes: Vec<(String, Option<String>)> = repo
+            .refs
+            .remotes
+            .iter()
+            .map(|r| (r.name.clone(), r.url.clone()))
+            .collect();
+        let managed: Vec<String> = self
+            .settings
+            .accounts
+            .iter()
+            .filter(|a| a.kind == crate::forge::Kind::GitLab)
+            .map(|a| a.base.clone())
+            .collect();
+        repo.web = crate::forge::Web::new(&remotes, &managed);
         if std::mem::take(&mut repo.forge_stale) {
-            let remotes: Vec<(String, Option<String>)> = repo
-                .refs
-                .remotes
-                .iter()
-                .map(|r| (r.name.clone(), r.url.clone()))
-                .collect();
             let found = crate::forge_view::ForgeView::find(&remotes, &self.settings.accounts);
             match (&mut repo.forge, found) {
                 (Some(now), Some(found)) if now.same_as(&found) => now.load(ctx),
@@ -1525,6 +1533,7 @@ impl App {
                         sidebar::Shown {
                             selected: selected.as_deref(),
                             forge: repo.forge.as_ref(),
+                            web: &repo.web,
                         },
                     )
                 })
@@ -1551,6 +1560,7 @@ impl App {
                     }
                 }
                 Some(sidebar::Action::NewRequest) => self.new_request = new_form(repo),
+                Some(sidebar::Action::OpenWeb(url)) => ctx.open_url(egui::OpenUrl::new_tab(url)),
                 Some(sidebar::Action::Jump(id)) => repo.select(&id),
                 Some(sidebar::Action::StashApply(id)) => repo.run(&ctx, Op::StashApply(id)),
                 Some(sidebar::Action::StashPop(id)) => repo.run(&ctx, Op::StashPop(id)),
@@ -1870,6 +1880,9 @@ impl App {
                         repo.scroll_to = None;
                     }
                     Some(history::Click::Working) => repo.select_working(),
+                    Some(history::Click::OpenWeb(url)) => {
+                        ctx.open_url(egui::OpenUrl::new_tab(url));
+                    }
                     Some(history::Click::NewBranch { id, label }) => repo.new_branch(id, label),
                     Some(history::Click::NewTag { id, label }) => repo.new_tag(id, label),
                     Some(history::Click::CheckoutDetached { id, label }) => {
