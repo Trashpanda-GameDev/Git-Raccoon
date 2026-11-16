@@ -1724,6 +1724,52 @@ fn upstream_counts(app: &App) -> Option<(usize, usize)> {
 }
 
 #[test]
+fn deletes_a_branch_on_the_remote_and_undoes_it() {
+    use egui::accesskit::Role;
+    let sample = Sample::build();
+    let base = std::env::temp_dir().join(format!("git-raccoon-remote-{}", rand_suffix()));
+    std::fs::create_dir_all(&base).unwrap();
+    let ok = std::process::Command::new("git")
+        .args(["init", "-q", "--bare", "remote.git"])
+        .current_dir(&base)
+        .status()
+        .unwrap();
+    assert!(ok.success());
+    let url = base.join("remote.git").to_str().unwrap().replace('\\', "/");
+    git(&sample, &["remote", "set-url", "origin", &url]);
+    git(&sample, &["push", "-q", "origin", "main", "main:topic"]);
+    git(&sample, &["fetch", "-q", "origin"]);
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    let remote_branches = |app: &App| -> Vec<String> {
+        app.repo().unwrap().refs.remotes[0]
+            .branches
+            .iter()
+            .map(|b| b.name.clone())
+            .collect()
+    };
+    assert!(remote_branches(h.state()).contains(&"topic".to_string()));
+
+    // Right-click origin's topic in the sidebar; delete it there, after asking.
+    menu_item(&mut h, "topic", "Delete on the remote");
+    h.get_by_label("Delete origin/topic?");
+    h.get_by_role_and_label(Role::Button, "Delete on the remote")
+        .click();
+    wait_for(&mut h, "the delete", |app| {
+        !remote_branches(app).contains(&"topic".to_string())
+    });
+    // Undo puts it back.
+    wait_for(&mut h, "the undo", |app| {
+        undo_label(app).as_deref() == Some("Undo delete origin/topic")
+    });
+    h.get_by_label("Undo").click();
+    wait_for(&mut h, "it's back", |app| {
+        remote_branches(app).contains(&"topic".to_string())
+    });
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
 fn fetches_pulls_and_pushes() {
     let sample = Sample::build();
     let base = std::env::temp_dir().join(format!("git-raccoon-remote-{}", rand_suffix()));

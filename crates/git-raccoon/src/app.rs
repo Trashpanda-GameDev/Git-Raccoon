@@ -1324,6 +1324,9 @@ impl App {
                 Some(sidebar::Action::NewBranch { start, label }) => repo.new_branch(start, label),
                 Some(sidebar::Action::Rename(name)) => repo.rename_branch(name),
                 Some(sidebar::Action::DeleteBranch(name)) => repo.confirm_delete_branch(name),
+                Some(sidebar::Action::DeleteRemoteBranch(name)) => {
+                    repo.confirm_delete_remote_branch(name);
+                }
                 Some(sidebar::Action::DeleteTag(name)) => repo.confirm_delete_tag(name),
                 Some(sidebar::Action::EditRemote(name)) => repo.edit_remote(name),
                 Some(sidebar::Action::RemoveRemote(name)) => repo.confirm_remove_remote(name),

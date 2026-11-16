@@ -111,6 +111,38 @@ pub fn fetch(path: &str, on: &mut dyn FnMut(Progress), cancel: &AtomicBool) -> R
     .map(drop)
 }
 
+/// Deletes `branch` on `remote` ("origin", "feature"), for everyone (like
+/// `git push origin --delete feature`); its remote-tracking branch here
+/// goes too.
+pub fn delete_remote_branch(
+    path: &str,
+    remote: &str,
+    branch: &str,
+    on: &mut dyn FnMut(Progress),
+    cancel: &AtomicBool,
+) -> Result<()> {
+    run(
+        path,
+        &["push", "--progress", remote, "--delete", branch],
+        on,
+        cancel,
+    )
+    .map(drop)
+}
+
+/// Puts `branch` back on `remote` at commit `id` (undoing a delete).
+pub fn restore_remote_branch(
+    path: &str,
+    remote: &str,
+    branch: &str,
+    id: &str,
+    on: &mut dyn FnMut(Progress),
+    cancel: &AtomicBool,
+) -> Result<()> {
+    let refspec = format!("{id}:refs/heads/{branch}");
+    run(path, &["push", "--progress", remote, &refspec], on, cancel).map(drop)
+}
+
 /// The checked-out branch and its upstream remote, if it has one.
 struct Current {
     branch: String,
@@ -336,6 +368,36 @@ mod tests {
 
     fn head(t: &TempRepo) -> String {
         crate::undo::head_id(t.path()).unwrap().unwrap()
+    }
+
+    #[test]
+    fn deletes_a_branch_on_the_remote_and_puts_it_back() {
+        let s = setup();
+        let none = AtomicBool::new(false);
+        let remote_has = |name: &str| {
+            cli::run(s.a.path(), &["ls-remote", "--heads", "origin", name], None)
+                .unwrap()
+                .contains(name)
+        };
+        cli::run(
+            s.a.path(),
+            &["push", "-q", "origin", "HEAD:refs/heads/topic"],
+            None,
+        )
+        .unwrap();
+        fetch(s.a.path(), &mut |_| {}, &none).unwrap();
+        assert!(remote_has("topic"));
+        let id = crate::undo::ref_target(s.a.path(), "refs/remotes/origin/topic").unwrap();
+
+        delete_remote_branch(s.a.path(), "origin", "topic", &mut |_| {}, &none).unwrap();
+        assert!(!remote_has("topic"), "gone from the remote");
+        assert!(
+            crate::undo::ref_target(s.a.path(), "refs/remotes/origin/topic").is_err(),
+            "and its remote-tracking branch here"
+        );
+
+        restore_remote_branch(s.a.path(), "origin", "topic", &id, &mut |_| {}, &none).unwrap();
+        assert!(remote_has("topic"), "back");
     }
 
     #[test]

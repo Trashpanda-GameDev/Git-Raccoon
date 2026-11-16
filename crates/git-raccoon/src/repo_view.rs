@@ -236,6 +236,13 @@ pub enum Op {
     /// Fetch one remote.
     FetchRemote(String),
     Pull(PullMode),
+    /// Delete a branch on its remote ("origin/feature"), for everyone.
+    DeleteRemoteBranch(String),
+    /// Put a deleted remote branch back at a commit (undoing the delete).
+    RestoreRemoteBranch {
+        remote_branch: String,
+        id: String,
+    },
     /// Push the checked-out branch; `force` only with lease.
     Push {
         force: bool,
@@ -405,6 +412,14 @@ impl Op {
             Op::FetchRemote(name) => sync::fetch_remote(path, &name, report, &ctl.cancel),
             Op::Pull(mode) => sync::pull(path, mode, report, &ctl.cancel),
             Op::Push { force } => sync::push(path, force, report, &ctl.cancel),
+            Op::DeleteRemoteBranch(name) => {
+                let (remote, branch) = split_remote(&name)?;
+                sync::delete_remote_branch(path, remote, branch, report, &ctl.cancel)
+            }
+            Op::RestoreRemoteBranch { remote_branch, id } => {
+                let (remote, branch) = split_remote(&remote_branch)?;
+                sync::restore_remote_branch(path, remote, branch, &id, report, &ctl.cancel)
+            }
             Op::AddRemote { name, url } => remote::add(path, &name, &url),
             Op::RenameRemote { old, new } => remote::rename(path, &old, &new),
             Op::SetRemoteUrl { name, url } => remote::set_url(path, &name, &url),
@@ -474,6 +489,8 @@ impl Op {
             Op::Fetch | Op::FetchRemote(_) => "fetch",
             Op::Pull(_) => "pull",
             Op::Push { .. } => "push",
+            Op::DeleteRemoteBranch(_) => "delete the remote branch",
+            Op::RestoreRemoteBranch { .. } => "undo",
             Op::AddRemote { .. } => "add the remote",
             Op::RenameRemote { .. } | Op::SetRemoteUrl { .. } => "change the remote",
             Op::RemoveRemote(_) => "remove the remote",
@@ -592,6 +609,9 @@ impl Before {
                         .map(|s| s.message)
                 });
             }
+            Op::DeleteRemoteBranch(name) => {
+                b.tip = undo::ref_target(path, &format!("refs/remotes/{name}")).ok();
+            }
             Op::CheckoutRemote(name) => {
                 b.tip = branch::tip(path, local_name(name)).ok();
                 b.branch_existed = b.tip.is_some();
@@ -625,6 +645,12 @@ fn remote_checkout(op: &Op) -> Option<&str> {
         Op::StashThen(inner) => remote_checkout(inner),
         _ => None,
     }
+}
+
+/// ("origin", "feature") for the remote branch "origin/feature".
+fn split_remote(name: &str) -> Result<(&str, &str), Error> {
+    name.split_once('/')
+        .ok_or_else(|| Error::Unsupported(format!("{name} isn't a remote branch")))
 }
 
 /// "feature" for the remote branch "origin/feature".
@@ -696,6 +722,13 @@ fn undo_for(op: &Op, before: Before, path: &str) -> Option<Undoable> {
             }
             (format!("Undo check out {name}"), ops)
         }
+        Op::DeleteRemoteBranch(name) => (
+            format!("Undo delete {name}"),
+            vec![Op::RestoreRemoteBranch {
+                remote_branch: name.clone(),
+                id: before.tip?,
+            }],
+        ),
         Op::RenameBranch { old, new } => (
             format!("Undo rename {old} to {new}"),
             vec![Op::RenameBranch {
@@ -1398,7 +1431,13 @@ impl RepoView {
         let running = self.op.as_ref()?;
         if !matches!(
             running.op,
-            Op::Fetch | Op::FetchRemote(_) | Op::Pull(_) | Op::Push { .. } | Op::UpdateSubmodule(_)
+            Op::Fetch
+                | Op::FetchRemote(_)
+                | Op::Pull(_)
+                | Op::Push { .. }
+                | Op::UpdateSubmodule(_)
+                | Op::DeleteRemoteBranch(_)
+                | Op::RestoreRemoteBranch { .. }
         ) {
             return None;
         }
@@ -1535,6 +1574,23 @@ impl RepoView {
 
     /// Asks before deleting a branch. Git itself refuses if its work isn't
     /// merged anywhere; that refusal leads to a second, stronger question.
+    /// Asks before deleting a branch on its remote.
+    pub fn confirm_delete_remote_branch(&mut self, name: String) {
+        let remote = name
+            .split_once('/')
+            .map_or("the remote", |(r, _)| r)
+            .to_string();
+        self.dialog = Some(Dialog::Confirm {
+            title: format!("Delete {name}?"),
+            body: format!(
+                "The branch is deleted on {remote}, for everyone who uses it; your own branches and its commits here stay. Undo puts it back on {remote}."
+            ),
+            button: "Delete on the remote".into(),
+            danger: true,
+            op: Op::DeleteRemoteBranch(name),
+        });
+    }
+
     pub fn confirm_delete_branch(&mut self, name: String) {
         self.dialog = Some(Dialog::Confirm {
             title: format!("Delete branch {name}?"),

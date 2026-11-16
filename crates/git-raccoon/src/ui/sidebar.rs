@@ -343,6 +343,8 @@ pub enum Action {
     Checkout(String),
     /// Check out a remote branch ("origin/x") through a local tracking branch.
     CheckoutRemote(String),
+    /// Delete a branch on its remote ("origin/feature"), after asking.
+    DeleteRemoteBranch(String),
     /// Open the new-branch dialog at `start` ("HEAD" or a commit id).
     NewBranch {
         start: String,
@@ -726,6 +728,11 @@ pub fn show(
                                                 start: b.target.clone(),
                                                 label: b.full_name.clone(),
                                             },
+                                        ),
+                                        (
+                                            "Delete on the remote…",
+                                            true,
+                                            Action::DeleteRemoteBranch(b.full_name.clone()),
                                         ),
                                     ];
                                     menu(ui, &mut c.action, items);
