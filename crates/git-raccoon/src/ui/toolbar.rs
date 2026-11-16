@@ -1,5 +1,7 @@
-//! The bar across the top: sidebar toggle, repo menu, branch, refresh,
-//! sync, undo. (The app's name and icon are in the window's title bar.)
+//! The bar across the top: sidebar toggle, repo menu, branch, refresh and
+//! undo; branch, fetch, pull and push in the middle; the palette, feedback
+//! and settings at the right. (The app's name and icon are in the window's
+//! title bar.)
 
 use eframe::egui::{self, RichText};
 use egui_phosphor::regular as icon;
@@ -135,25 +137,6 @@ pub fn show(
                 pill.on_hover_text(tip);
             }
             ui.add_space(6.0);
-            let branch = ui.add_enabled(
-                !repo.busy,
-                egui::Button::new(RichText::new(format!("{}  Branch", icon::GIT_BRANCH)).size(12.0)),
-            );
-            ui.ctx()
-                .accesskit_node_builder(branch.id, |n| n.set_label("Branch"));
-            let shortcut = crate::commands::shortcut(&crate::commands::Command::NewBranch)
-                .map(|s| ui.ctx().format_shortcut(&s))
-                .unwrap_or_default();
-            if branch
-                .on_hover_text(format!("Create a branch from the checked-out commit ({shortcut})"))
-                .clicked()
-            {
-                action = Some(Action::NewBranch);
-            }
-            if let Some(a) = sync_buttons(ui, &repo) {
-                action = Some(a);
-            }
-            ui.add_space(6.0);
             // Says what it would undo, so there are no surprises.
             match repo.undo {
                 Some(what) => {
@@ -176,6 +159,44 @@ pub fn show(
                         .on_disabled_hover_text("Nothing to undo");
                 }
             }
+                    // Branch, fetch, pull and push in the middle of the bar (#5), or
+            // just after the rest when the window is too narrow for that.
+            let bar = ui.max_rect();
+            let after = ui.cursor().left() + 12.0;
+            let width_id = ui.id().with("centre width");
+            let width: f32 = ui.data(|d| d.get_temp(width_id)).unwrap_or(320.0);
+            let left = (bar.center().x - width / 2.0).max(after);
+            let mut centre = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(egui::Rect::from_min_max(
+                        egui::pos2(left, bar.top()),
+                        egui::pos2(bar.right(), bar.bottom()),
+                    ))
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            );
+            {
+                let ui = &mut centre;
+                let branch = ui.add_enabled(
+                    !repo.busy,
+                    egui::Button::new(RichText::new(format!("{}  Branch", icon::GIT_BRANCH)).size(12.0)),
+                );
+                ui.ctx()
+                    .accesskit_node_builder(branch.id, |n| n.set_label("Branch"));
+                let shortcut = crate::commands::shortcut(&crate::commands::Command::NewBranch)
+                    .map(|s| ui.ctx().format_shortcut(&s))
+                    .unwrap_or_default();
+                if branch
+                    .on_hover_text(format!("Create a branch from the checked-out commit ({shortcut})"))
+                    .clicked()
+                {
+                    action = Some(Action::NewBranch);
+                }
+                if let Some(a) = sync_buttons(ui, &repo) {
+                    action = Some(a);
+                }
+            }
+            let used = centre.min_rect().width();
+            ui.data_mut(|d| d.insert_temp(width_id, used));
         }
         // Settings and the command palette, at the far right.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
