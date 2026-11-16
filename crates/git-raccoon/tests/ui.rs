@@ -1447,6 +1447,67 @@ fn merges_by_dragging_labels_on_the_graph() {
 }
 
 #[test]
+fn sidebar_sections_scroll_on_their_own_and_resize() {
+    let sample = Sample::build();
+    for i in 0..80 {
+        git(&sample, &["branch", &format!("topic-{i:02}"), "HEAD~1"]);
+    }
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    settle(&mut h);
+    let screen = h.ctx.content_rect().bottom();
+    // Every section's heading stays in view, with 80 branches above them.
+    for heading in ["Worktrees", "Stashes", "Tags", "Remote"] {
+        let r = h.get_by_label(heading).rect();
+        assert!(r.bottom() <= screen, "{heading} is in view: {r:?}");
+    }
+    screenshot(&mut h, "57-sidebar-sections");
+    // Local scrolls inside itself: its last branch isn't drawn yet.
+    assert!(
+        h.query_by_label("topic-79")
+            .is_none_or(|n| n.rect().top() > screen
+                || n.rect().bottom() < h.get_by_label("Remote").rect().top())
+    );
+    // Dragging the handle under it makes it shorter.
+    let handle = h.get_by_label("Resize Local").rect().center();
+    let remote_before = h.get_by_label("Remote").rect().top();
+    drag(&mut h, handle, handle - egui::vec2(0.0, 150.0));
+    settle(&mut h);
+    let remote_after = h.get_by_label("Remote").rect().top();
+    assert!(
+        remote_after < remote_before - 100.0,
+        "{remote_before} -> {remote_after}"
+    );
+}
+
+#[test]
+fn a_label_cut_short_shows_its_whole_name_on_hover() {
+    let sample = Sample::build();
+    let long = "feature/a-branch-name-much-too-long-to-fit-in-the-column";
+    git(&sample, &["branch", long, "HEAD~1"]);
+    git(&sample, &["branch", "short", ":/Reject bare"]);
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    let hover = |h: &mut Harness<'_, App>, summary: &str| {
+        let row = h.get_by_label(summary).rect();
+        h.event(egui::Event::PointerMoved(egui::pos2(
+            row.left() + 30.0,
+            row.center().y,
+        )));
+        for _ in 0..30 {
+            h.step();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    hover(&mut h, "Add icon");
+    assert!(h.query_by_value(long).is_some(), "the whole name");
+    screenshot(&mut h, "56-long-label");
+    // A name that fits has no tooltip.
+    hover(&mut h, "Reject bare repositories when loading");
+    assert!(h.query_by_value("short").is_none());
+}
+
+#[test]
 fn double_clicking_a_remote_branch_brings_the_local_one_up_to_it() {
     let sample = Sample::build();
     // A local branch behind its remote copy: "sync" at the merge, the
