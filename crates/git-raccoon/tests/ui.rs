@@ -1113,9 +1113,12 @@ fn picks_several_files_and_acts_on_them_together() {
     h.get_by_label("Working changes").click();
     settle(&mut h);
 
-    // Ctrl+click picks a second file; right-click stages both.
+    // One file picked is just the one open: the buttons stay as they are.
     h.get_by_label("notes/00.txt").click();
     h.run_ok();
+    h.get_by_label_contains("Stage all");
+    h.get_by_label("Discard all changes");
+    // Ctrl+click picks a second file; right-click stages both.
     h.get_by_label("notes/02.txt")
         .click_modifiers(egui::Modifiers::COMMAND);
     h.run_ok();

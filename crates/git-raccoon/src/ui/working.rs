@@ -245,6 +245,8 @@ pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
                     .collect(),
                 _ => Vec::new(),
             };
+            // One picked file is just the open one: still discard all.
+            let picked = if picked.len() > 1 { picked } else { Vec::new() };
             let n = picked.len();
             let (count, name) = if n == 0 {
                 (changed, "Discard all changes".to_string())
@@ -445,7 +447,8 @@ fn file_list(
     let mut action = None;
     let mut fold = false;
     let files = status.files(side);
-    // The files picked in this list (that are still in it).
+    // The files picked in this list (that are still in it); one alone is
+    // just the file open, so the buttons stay as they are for it.
     let picked: Vec<String> = if selection.side == Some(side) {
         files
             .iter()
@@ -455,6 +458,7 @@ fn file_list(
     } else {
         Vec::new()
     };
+    let picked = if picked.len() > 1 { picked } else { Vec::new() };
     let (title, all_label, all_glyph, all_action) = match side {
         Side::Unstaged => (
             "Unstaged files",
