@@ -5,11 +5,11 @@ release page). Newest first; a version's heading is just its number.
 
 ## 0.5.6
 
-- **Feedback can include a screenshot** of the window, if you tick the box (it's shown first, as it's public with the issue).
-- **Pick several branches** in the sidebar with Ctrl+click (Cmd+click on a Mac) and right-click to delete them together, here or on the remote. It asks once; Undo brings them all back.
 - **Stashes show in the graph**, with a stash icon and a dotted line to the commit they were made on; right-click one to apply, pop or delete it. ("Drop" is now called "Delete".)
+- **Pick several branches** in the sidebar with Ctrl+click (Cmd+click on a Mac) and right-click to delete them together, here or on the remote. It asks once; Undo brings them all back.
 - **The checked-out branch runs down the left of the graph**, with the other branches beside it.
 - **Labels on light colours have dark text**, so they stay readable in every look.
+- **Feedback can include a screenshot** of the window, if you tick the box (it's shown first, as it's public with the issue).
 
 ## 0.5.5
 
