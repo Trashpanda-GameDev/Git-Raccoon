@@ -3,6 +3,11 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.6
+
+- **The checked-out branch runs down the left of the graph**, with the other branches beside it.
+- **Labels on light colours have dark text**, so they stay readable in every look.
+
 ## 0.5.5
 
 - **Pull requests, merge requests and issues** from GitHub, GitLab.com and self-managed GitLab, in the sidebar: see a request's reviews and checks, check it out (forks too), open a new one from your branch, and read issues. Sign in under Settings → Accounts with a token (or, on a self-managed server, with the browser through an app registered there), to several at once; tokens stay in your system's keychain.

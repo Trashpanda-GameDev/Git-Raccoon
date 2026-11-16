@@ -755,6 +755,26 @@ pub fn hunk_bg() -> Color32 {
     palette().hunk_bg
 }
 
+/// Text that reads on `fill`: dark on light colours, white on dark ones.
+pub fn text_on(fill: Color32) -> Color32 {
+    // Relative luminance (WCAG). White is kept up to medium colours (the
+    // looks' oranges and reds), which still read at 3:1 or better.
+    let linear = |c: u8| {
+        let c = f32::from(c) / 255.0;
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let l = 0.2126 * linear(fill.r()) + 0.7152 * linear(fill.g()) + 0.0722 * linear(fill.b());
+    if l > 0.3 {
+        Color32::from_rgb(0x10, 0x13, 0x1a)
+    } else {
+        Color32::WHITE
+    }
+}
+
 pub fn lane_color(lane: usize) -> Color32 {
     let lanes = &palette().lanes;
     lanes[lane % lanes.len()]
@@ -842,4 +862,44 @@ pub fn set(ctx: &egui::Context, look: Look) {
         v.widgets.active.bg_fill = bg_selected();
         v.widgets.open.weak_bg_fill = bg_hover();
     });
+}
+
+#[cfg(test)]
+mod contrast_tests {
+    use super::*;
+
+    fn luminance(c: Color32) -> f32 {
+        let linear = |c: u8| {
+            let c = f32::from(c) / 255.0;
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(c.r()) + 0.7152 * linear(c.g()) + 0.0722 * linear(c.b())
+    }
+
+    fn contrast(a: Color32, b: Color32) -> f32 {
+        let (a, b) = (luminance(a), luminance(b));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    #[test]
+    fn label_text_reads_on_every_lane_colour() {
+        assert_eq!(text_on(Color32::WHITE), Color32::from_rgb(0x10, 0x13, 0x1a));
+        assert_eq!(text_on(Color32::BLACK), Color32::WHITE);
+        // Raccoon's orange keeps white; its cream (the screenshot) turns dark.
+        assert_eq!(text_on(Color32::from_rgb(0xc4, 0x55, 0x3a)), Color32::WHITE);
+        assert_ne!(text_on(Color32::from_rgb(0xf5, 0xea, 0xdb)), Color32::WHITE);
+        for family in Family::ALL {
+            for light in [false, true] {
+                let p = family.look(light).palette();
+                for (i, &lane) in p.lanes.iter().chain([&p.accent]).enumerate() {
+                    let c = contrast(lane, text_on(lane));
+                    assert!(c >= 3.0, "{} {light} colour {i}: {c:.1}", family.name());
+                }
+            }
+        }
+    }
 }

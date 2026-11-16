@@ -217,7 +217,9 @@ impl History {
         if pairs.len() >= COMMIT_GRAPH_AT {
             offer_commit_graph(repo.path(), &workdir.to_string_lossy());
         }
-        let layout = graph::layout(&pairs);
+        // The checked-out commit on the left.
+        let checked_out = head.as_ref().and_then(git2::Reference::target);
+        let layout = graph::layout(&pairs, checked_out.as_ref());
         let ids: Vec<Oid> = pairs.into_iter().map(|(id, _)| id).collect();
         let mut index = HashMap::with_capacity_and_hasher(ids.len(), BuildHasherDefault::default());
         index.extend(ids.iter().enumerate().map(|(i, id)| (*id, i)));

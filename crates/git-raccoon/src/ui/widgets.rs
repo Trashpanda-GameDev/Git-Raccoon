@@ -180,7 +180,7 @@ pub fn pill(
         text,
         font,
         if filled {
-            Color32::WHITE
+            theme::text_on(outline)
         } else {
             theme::text()
         },
