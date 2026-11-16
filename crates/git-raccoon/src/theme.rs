@@ -367,11 +367,262 @@ const HIGHCONTRAST: Palette = Palette {
     syntax: EmbeddedThemeName::MonokaiExtendedBright,
 };
 
-/// The looks to choose from.
+/// Raccoon in the light: cream and rust.
+const RACCOON_LIGHT: Palette = Palette {
+    light: true,
+    bg: Color32::from_rgb(0xf6, 0xf0, 0xe7),
+    bg_raised: Color32::from_rgb(0xff, 0xfa, 0xf2),
+    bg_hover: Color32::from_rgb(0xee, 0xe5, 0xd8),
+    bg_selected: Color32::from_rgb(0xe7, 0xd5, 0xc4),
+    border: Color32::from_rgb(0xe0, 0xd3, 0xc2),
+    text: Color32::from_rgb(0x2c, 0x27, 0x23),
+    muted: Color32::from_rgb(0x7a, 0x6d, 0x61),
+    accent: Color32::from_rgb(0xc0, 0x53, 0x2f),
+    on_accent: Color32::from_rgb(0xff, 0xfa, 0xf2),
+    danger: Color32::from_rgb(0xb8, 0x38, 0x2a),
+    danger_bg: Color32::from_rgb(0xf8, 0xe0, 0xd8),
+    add: Color32::from_rgb(0x3f, 0x7f, 0x2a),
+    del: Color32::from_rgb(0xb8, 0x38, 0x2a),
+    modified: Color32::from_rgb(0x8a, 0x62, 0x00),
+    renamed: Color32::from_rgb(0x2e, 0x5f, 0x9a),
+    typechange: Color32::from_rgb(0x7a, 0x4a, 0x9a),
+    hunk: Color32::from_rgb(0x6a, 0x5a, 0x4a),
+    add_bg: Color32::from_rgba_premultiplied(7, 24, 10, 38),
+    add_bg_strong: Color32::from_rgba_premultiplied(14, 48, 20, 77),
+    del_bg: Color32::from_rgba_premultiplied(25, 4, 6, 31),
+    del_bg_strong: Color32::from_rgba_premultiplied(52, 9, 12, 64),
+    word_add: Color32::from_rgba_premultiplied(16, 56, 23, 89),
+    word_del: Color32::from_rgba_premultiplied(62, 10, 14, 77),
+    hunk_bg: Color32::from_rgba_premultiplied(1, 8, 17, 20),
+    lanes: [
+        Color32::from_rgb(0xc0, 0x53, 0x2f),
+        Color32::from_rgb(0x4a, 0x44, 0x40),
+        Color32::from_rgb(0x8a, 0x85, 0x80),
+        Color32::from_rgb(0xc0, 0x8a, 0x20),
+        Color32::from_rgb(0x3a, 0x8a, 0x7a),
+        Color32::from_rgb(0x5a, 0x70, 0x90),
+        Color32::from_rgb(0xb0, 0x56, 0x6a),
+        Color32::from_rgb(0x7a, 0x8a, 0x3a),
+        Color32::from_rgb(0x7a, 0x5a, 0x9a),
+        Color32::from_rgb(0xa0, 0x82, 0x5a),
+    ],
+    syntax: EmbeddedThemeName::GruvboxLight,
+};
+
+/// Pastel at night.
+const PASTEL_DARK: Palette = Palette {
+    light: false,
+    bg: Color32::from_rgb(0x22, 0x1f, 0x2b),
+    bg_raised: Color32::from_rgb(0x2a, 0x26, 0x35),
+    bg_hover: Color32::from_rgb(0x33, 0x2e, 0x40),
+    bg_selected: Color32::from_rgb(0x3e, 0x36, 0x50),
+    border: Color32::from_rgb(0x3a, 0x34, 0x47),
+    text: Color32::from_rgb(0xec, 0xe6, 0xf5),
+    muted: Color32::from_rgb(0xa4, 0x9c, 0xb4),
+    accent: Color32::from_rgb(0xb9, 0xa0, 0xf0),
+    on_accent: Color32::from_rgb(0x1d, 0x18, 0x28),
+    danger: Color32::from_rgb(0xf0, 0x8a, 0xa0),
+    danger_bg: Color32::from_rgb(0x3d, 0x25, 0x30),
+    add: Color32::from_rgb(0x7f, 0xd4, 0xa8),
+    del: Color32::from_rgb(0xf0, 0x8a, 0xa0),
+    modified: Color32::from_rgb(0xe8, 0xc0, 0x70),
+    renamed: Color32::from_rgb(0x8a, 0xb8, 0xf0),
+    typechange: Color32::from_rgb(0xc8, 0xa0, 0xf0),
+    hunk: Color32::from_rgb(0xb0, 0xa0, 0xd8),
+    add_bg: Color32::from_rgba_premultiplied(9, 23, 17, 31),
+    add_bg_strong: Color32::from_rgba_premultiplied(17, 43, 30, 56),
+    del_bg: Color32::from_rgba_premultiplied(29, 13, 13, 31),
+    del_bg_strong: Color32::from_rgba_premultiplied(53, 24, 24, 56),
+    word_add: Color32::from_rgba_premultiplied(29, 74, 52, 97),
+    word_del: Color32::from_rgba_premultiplied(97, 44, 44, 102),
+    hunk_bg: Color32::from_rgba_premultiplied(9, 13, 20, 20),
+    lanes: [
+        Color32::from_rgb(0xe8, 0x8a, 0xa3),
+        Color32::from_rgb(0x7f, 0xb2, 0xec),
+        Color32::from_rgb(0x6f, 0xc7, 0x9a),
+        Color32::from_rgb(0xf0, 0xa8, 0x68),
+        Color32::from_rgb(0xa9, 0x8b, 0xe0),
+        Color32::from_rgb(0xd9, 0xb8, 0x4f),
+        Color32::from_rgb(0x5c, 0xc0, 0xc0),
+        Color32::from_rgb(0xd9, 0x89, 0xcf),
+        Color32::from_rgb(0x9c, 0xc4, 0x6a),
+        Color32::from_rgb(0xe8, 0x90, 0x7e),
+    ],
+    syntax: EmbeddedThemeName::CatppuccinMocha,
+};
+
+/// Abyss in daylight: ink blues and teal.
+const ABYSS_LIGHT: Palette = Palette {
+    light: true,
+    bg: Color32::from_rgb(0xee, 0xf2, 0xf8),
+    bg_raised: Color32::from_rgb(0xfb, 0xfc, 0xfe),
+    bg_hover: Color32::from_rgb(0xe2, 0xe8, 0xf2),
+    bg_selected: Color32::from_rgb(0xd0, 0xdd, 0xf2),
+    border: Color32::from_rgb(0xcc, 0xd6, 0xe6),
+    text: Color32::from_rgb(0x18, 0x20, 0x2e),
+    muted: Color32::from_rgb(0x58, 0x67, 0x80),
+    accent: Color32::from_rgb(0x0f, 0x8f, 0x96),
+    on_accent: Color32::from_rgb(0xff, 0xff, 0xff),
+    danger: Color32::from_rgb(0xc8, 0x32, 0x4a),
+    danger_bg: Color32::from_rgb(0xfb, 0xe3, 0xe8),
+    add: Color32::from_rgb(0x1a, 0x8a, 0x5e),
+    del: Color32::from_rgb(0xc8, 0x3a, 0x4e),
+    modified: Color32::from_rgb(0x8a, 0x64, 0x00),
+    renamed: Color32::from_rgb(0x2a, 0x5f, 0xd0),
+    typechange: Color32::from_rgb(0x7a, 0x4a, 0xd0),
+    hunk: Color32::from_rgb(0x3a, 0x5a, 0x9a),
+    add_bg: Color32::from_rgba_premultiplied(7, 24, 10, 38),
+    add_bg_strong: Color32::from_rgba_premultiplied(14, 48, 20, 77),
+    del_bg: Color32::from_rgba_premultiplied(25, 4, 6, 31),
+    del_bg_strong: Color32::from_rgba_premultiplied(52, 9, 12, 64),
+    word_add: Color32::from_rgba_premultiplied(16, 56, 23, 89),
+    word_del: Color32::from_rgba_premultiplied(62, 10, 14, 77),
+    hunk_bg: Color32::from_rgba_premultiplied(1, 8, 17, 20),
+    lanes: [
+        Color32::from_rgb(0x0f, 0x8f, 0x96),
+        Color32::from_rgb(0x2a, 0x6a, 0xd8),
+        Color32::from_rgb(0x7a, 0x45, 0xd8),
+        Color32::from_rgb(0xd0, 0x3a, 0x7e),
+        Color32::from_rgb(0xd0, 0x66, 0x1a),
+        Color32::from_rgb(0xb0, 0x8a, 0x00),
+        Color32::from_rgb(0x2f, 0x9a, 0x4a),
+        Color32::from_rgb(0x1a, 0x7a, 0xc8),
+        Color32::from_rgb(0xa8, 0x3a, 0xc0),
+        Color32::from_rgb(0x1a, 0x9a, 0x80),
+    ],
+    syntax: EmbeddedThemeName::Base16OceanLight,
+};
+
+/// Forest in daylight: sage and amber.
+const FOREST_LIGHT: Palette = Palette {
+    light: true,
+    bg: Color32::from_rgb(0xf1, 0xf4, 0xec),
+    bg_raised: Color32::from_rgb(0xfb, 0xfc, 0xf8),
+    bg_hover: Color32::from_rgb(0xe6, 0xeb, 0xdf),
+    bg_selected: Color32::from_rgb(0xd6, 0xe2, 0xcc),
+    border: Color32::from_rgb(0xd2, 0xdb, 0xc8),
+    text: Color32::from_rgb(0x1f, 0x2a, 0x1f),
+    muted: Color32::from_rgb(0x5f, 0x6e, 0x5a),
+    accent: Color32::from_rgb(0xa8, 0x6a, 0x00),
+    on_accent: Color32::from_rgb(0xff, 0xfb, 0xf0),
+    danger: Color32::from_rgb(0xb8, 0x40, 0x2e),
+    danger_bg: Color32::from_rgb(0xf6, 0xe2, 0xdc),
+    add: Color32::from_rgb(0x3a, 0x7a, 0x2a),
+    del: Color32::from_rgb(0xb8, 0x40, 0x2e),
+    modified: Color32::from_rgb(0x8a, 0x62, 0x00),
+    renamed: Color32::from_rgb(0x2a, 0x6a, 0x8a),
+    typechange: Color32::from_rgb(0x7a, 0x4a, 0x8a),
+    hunk: Color32::from_rgb(0x5a, 0x70, 0x50),
+    add_bg: Color32::from_rgba_premultiplied(7, 24, 10, 38),
+    add_bg_strong: Color32::from_rgba_premultiplied(14, 48, 20, 77),
+    del_bg: Color32::from_rgba_premultiplied(25, 4, 6, 31),
+    del_bg_strong: Color32::from_rgba_premultiplied(52, 9, 12, 64),
+    word_add: Color32::from_rgba_premultiplied(16, 56, 23, 89),
+    word_del: Color32::from_rgba_premultiplied(62, 10, 14, 77),
+    hunk_bg: Color32::from_rgba_premultiplied(1, 8, 17, 20),
+    lanes: [
+        Color32::from_rgb(0x4a, 0x8a, 0x3a),
+        Color32::from_rgb(0xb0, 0x7a, 0x10),
+        Color32::from_rgb(0x2f, 0x80, 0x70),
+        Color32::from_rgb(0x7a, 0x8a, 0x20),
+        Color32::from_rgb(0xb0, 0x5a, 0x40),
+        Color32::from_rgb(0x4a, 0x62, 0xa8),
+        Color32::from_rgb(0x8a, 0x5a, 0xa0),
+        Color32::from_rgb(0xa0, 0x8a, 0x30),
+        Color32::from_rgb(0x2a, 0x80, 0xa0),
+        Color32::from_rgb(0x5a, 0x8a, 0x50),
+    ],
+    syntax: EmbeddedThemeName::SolarizedLight,
+};
+
+/// Paper by lamplight.
+const PAPER_DARK: Palette = Palette {
+    light: false,
+    bg: Color32::from_rgb(0x26, 0x22, 0x1c),
+    bg_raised: Color32::from_rgb(0x2e, 0x29, 0x22),
+    bg_hover: Color32::from_rgb(0x38, 0x32, 0x2a),
+    bg_selected: Color32::from_rgb(0x46, 0x3d, 0x30),
+    border: Color32::from_rgb(0x3e, 0x37, 0x2d),
+    text: Color32::from_rgb(0xee, 0xe5, 0xd3),
+    muted: Color32::from_rgb(0xa6, 0x9a, 0x85),
+    accent: Color32::from_rgb(0xe0, 0x8a, 0x5a),
+    on_accent: Color32::from_rgb(0x2a, 0x1a, 0x0e),
+    danger: Color32::from_rgb(0xf0, 0x7a, 0x68),
+    danger_bg: Color32::from_rgb(0x45, 0x26, 0x1f),
+    add: Color32::from_rgb(0x9f, 0xc0, 0x7a),
+    del: Color32::from_rgb(0xf0, 0x7a, 0x68),
+    modified: Color32::from_rgb(0xe0, 0xb8, 0x60),
+    renamed: Color32::from_rgb(0x7f, 0xa8, 0xd8),
+    typechange: Color32::from_rgb(0xc0, 0x9a, 0xd8),
+    hunk: Color32::from_rgb(0xb0, 0xa0, 0x80),
+    add_bg: Color32::from_rgba_premultiplied(9, 23, 17, 31),
+    add_bg_strong: Color32::from_rgba_premultiplied(17, 43, 30, 56),
+    del_bg: Color32::from_rgba_premultiplied(29, 13, 13, 31),
+    del_bg_strong: Color32::from_rgba_premultiplied(53, 24, 24, 56),
+    word_add: Color32::from_rgba_premultiplied(29, 74, 52, 97),
+    word_del: Color32::from_rgba_premultiplied(97, 44, 44, 102),
+    hunk_bg: Color32::from_rgba_premultiplied(9, 13, 20, 20),
+    lanes: [
+        Color32::from_rgb(0xe0, 0x8a, 0x5a),
+        Color32::from_rgb(0x6a, 0xa8, 0xc8),
+        Color32::from_rgb(0xa8, 0xc0, 0x6a),
+        Color32::from_rgb(0xc8, 0x8a, 0xb0),
+        Color32::from_rgb(0xe0, 0xb8, 0x50),
+        Color32::from_rgb(0x6a, 0xc0, 0xa8),
+        Color32::from_rgb(0xc0, 0x9a, 0x7a),
+        Color32::from_rgb(0x9a, 0x9a, 0xe0),
+        Color32::from_rgb(0xe0, 0x7a, 0x7a),
+        Color32::from_rgb(0x8a, 0xc0, 0x8a),
+    ],
+    syntax: EmbeddedThemeName::GruvboxDark,
+};
+
+/// High contrast, black on white.
+const HIGHCONTRAST_LIGHT: Palette = Palette {
+    light: true,
+    bg: Color32::from_rgb(0xff, 0xff, 0xff),
+    bg_raised: Color32::from_rgb(0xf4, 0xf4, 0xf4),
+    bg_hover: Color32::from_rgb(0xe0, 0xe0, 0xe0),
+    bg_selected: Color32::from_rgb(0xb8, 0xd8, 0xff),
+    border: Color32::from_rgb(0x5a, 0x5a, 0x5a),
+    text: Color32::from_rgb(0x00, 0x00, 0x00),
+    muted: Color32::from_rgb(0x2a, 0x2a, 0x2a),
+    accent: Color32::from_rgb(0x00, 0x40, 0xc0),
+    on_accent: Color32::from_rgb(0xff, 0xff, 0xff),
+    danger: Color32::from_rgb(0xb0, 0x00, 0x00),
+    danger_bg: Color32::from_rgb(0xff, 0xd8, 0xd8),
+    add: Color32::from_rgb(0x00, 0x6a, 0x1a),
+    del: Color32::from_rgb(0xb0, 0x00, 0x00),
+    modified: Color32::from_rgb(0x7a, 0x50, 0x00),
+    renamed: Color32::from_rgb(0x00, 0x50, 0xb0),
+    typechange: Color32::from_rgb(0x6a, 0x00, 0xa0),
+    hunk: Color32::from_rgb(0x00, 0x3a, 0x80),
+    add_bg: Color32::from_rgba_premultiplied(11, 36, 15, 57),
+    add_bg_strong: Color32::from_rgba_premultiplied(21, 72, 30, 115),
+    del_bg: Color32::from_rgba_premultiplied(38, 6, 9, 47),
+    del_bg_strong: Color32::from_rgba_premultiplied(78, 14, 18, 96),
+    word_add: Color32::from_rgba_premultiplied(24, 84, 35, 133),
+    word_del: Color32::from_rgba_premultiplied(93, 15, 21, 115),
+    hunk_bg: Color32::from_rgba_premultiplied(2, 12, 26, 30),
+    lanes: [
+        Color32::from_rgb(0x00, 0x60, 0xd0),
+        Color32::from_rgb(0xc0, 0x50, 0x00),
+        Color32::from_rgb(0xa0, 0x00, 0xa0),
+        Color32::from_rgb(0x00, 0x7a, 0x20),
+        Color32::from_rgb(0xb0, 0x70, 0x00),
+        Color32::from_rgb(0x00, 0x90, 0xa0),
+        Color32::from_rgb(0xc0, 0x00, 0x30),
+        Color32::from_rgb(0x50, 0x7a, 0x00),
+        Color32::from_rgb(0x6a, 0x30, 0xd0),
+        Color32::from_rgb(0x00, 0x00, 0x00),
+    ],
+    syntax: EmbeddedThemeName::InspiredGithub,
+};
+
+/// A family of looks, each with a dark and a light version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Look {
-    Dark,
-    Light,
+pub enum Family {
+    Classic,
     Raccoon,
     Pastel,
     Abyss,
@@ -380,55 +631,82 @@ pub enum Look {
     HighContrast,
 }
 
-impl Look {
-    pub const ALL: [Look; 8] = [
-        Look::Dark,
-        Look::Light,
-        Look::Raccoon,
-        Look::Pastel,
-        Look::Abyss,
-        Look::Forest,
-        Look::Paper,
-        Look::HighContrast,
+impl Family {
+    /// In the order they're offered: Git Raccoon's own first.
+    pub const ALL: [Family; 7] = [
+        Family::Raccoon,
+        Family::Classic,
+        Family::Pastel,
+        Family::Abyss,
+        Family::Forest,
+        Family::Paper,
+        Family::HighContrast,
     ];
 
     pub fn name(self) -> &'static str {
         match self {
-            Look::Dark => "Dark",
-            Look::Light => "Light",
-            Look::Raccoon => "Raccoon",
-            Look::Pastel => "Pastel",
-            Look::Abyss => "Abyss",
-            Look::Forest => "Forest",
-            Look::Paper => "Paper",
-            Look::HighContrast => "High contrast",
+            Family::Classic => "Classic",
+            Family::Raccoon => "Raccoon",
+            Family::Pastel => "Pastel",
+            Family::Abyss => "Abyss",
+            Family::Forest => "Forest",
+            Family::Paper => "Paper",
+            Family::HighContrast => "High contrast",
         }
     }
 
+    /// Its dark or light version.
+    pub fn look(self, light: bool) -> Look {
+        Look {
+            family: self,
+            light,
+        }
+    }
+}
+
+/// One look: a family's dark or light version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Look {
+    pub family: Family,
+    pub light: bool,
+}
+
+impl Look {
     fn palette(self) -> &'static Palette {
-        match self {
-            Look::Dark => &DARK,
-            Look::Light => &LIGHT,
-            Look::Raccoon => &RACCOON,
-            Look::Pastel => &PASTEL,
-            Look::Abyss => &ABYSS,
-            Look::Forest => &FOREST,
-            Look::Paper => &PAPER,
-            Look::HighContrast => &HIGHCONTRAST,
+        match (self.family, self.light) {
+            (Family::Classic, false) => &DARK,
+            (Family::Classic, true) => &LIGHT,
+            (Family::Raccoon, false) => &RACCOON,
+            (Family::Raccoon, true) => &RACCOON_LIGHT,
+            (Family::Pastel, false) => &PASTEL_DARK,
+            (Family::Pastel, true) => &PASTEL,
+            (Family::Abyss, false) => &ABYSS,
+            (Family::Abyss, true) => &ABYSS_LIGHT,
+            (Family::Forest, false) => &FOREST,
+            (Family::Forest, true) => &FOREST_LIGHT,
+            (Family::Paper, false) => &PAPER_DARK,
+            (Family::Paper, true) => &PAPER,
+            (Family::HighContrast, false) => &HIGHCONTRAST,
+            (Family::HighContrast, true) => &HIGHCONTRAST_LIGHT,
         }
     }
 
     fn index(self) -> u8 {
-        match self {
-            Look::Dark => 0,
-            Look::Light => 1,
-            Look::Raccoon => 2,
-            Look::Pastel => 3,
-            Look::Abyss => 4,
-            Look::Forest => 5,
-            Look::Paper => 6,
-            Look::HighContrast => 7,
-        }
+        let family = Family::ALL
+            .iter()
+            .position(|f| *f == self.family)
+            .unwrap_or(0);
+        #[expect(clippy::cast_possible_truncation, reason = "seven families")]
+        let family = family as u8;
+        family * 2 + u8::from(self.light)
+    }
+
+    fn from_index(i: u8) -> Look {
+        let family = Family::ALL
+            .get(usize::from(i / 2))
+            .copied()
+            .unwrap_or(Family::Raccoon);
+        family.look(i % 2 == 1)
     }
 
     /// Whether it's a light look.
@@ -450,15 +728,12 @@ impl Look {
     }
 }
 
+/// The current look, by [`Look::index`]: Raccoon's dark one to start with.
 static CURRENT: AtomicU8 = AtomicU8::new(0);
 
 fn palette() -> &'static Palette {
     let i = CURRENT.load(Ordering::Relaxed);
-    Look::ALL
-        .into_iter()
-        .find(|l| l.index() == i)
-        .unwrap_or(Look::Dark)
-        .palette()
+    Look::from_index(i).palette()
 }
 
 /// The syntax colours for diffs in the current look.
@@ -584,12 +859,12 @@ pub fn mono(size: f32) -> FontId {
     FontId::new(size, FontFamily::Monospace)
 }
 
-/// Installs fonts (with Phosphor icons) and the dark theme.
+/// Installs fonts (with Phosphor icons) and the default look.
 pub fn apply(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
     ctx.set_fonts(fonts);
-    set(ctx, Look::Dark);
+    set(ctx, Family::Raccoon.look(false));
 }
 
 /// Switches to a look.

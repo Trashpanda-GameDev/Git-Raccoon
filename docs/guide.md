@@ -142,7 +142,7 @@ After most actions, the toolbar shows exactly what **Undo** would do ("Undo comm
 
 **Settings** (the gear, or Ctrl+,) has:
 
-- **Theme:** Raccoon (the default), System (light or dark, following your computer), Dark, Light, Pastel, Abyss, Forest, Paper, or High contrast.
+- **Theme:** a look (Raccoon, the default, Classic, Pastel, Abyss, Forest, Paper or High contrast), each **Dark** or **Light**, or **System** to follow your computer's light and dark.
 - **Interface size**, from 90% to 150%.
 - **Diffs:** unified or side by side.
 - **Updates:** whether to check automatically.

@@ -235,17 +235,37 @@ pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
                 paths.dedup();
                 paths.len()
             });
+            // The picked files', if there are any; otherwise everything.
+            let picked: Vec<String> = match (status, selection.side) {
+                (Some(s), Some(side)) => s
+                    .files(side)
+                    .iter()
+                    .filter(|f| selection.paths.contains(&f.path))
+                    .map(|f| f.path.clone())
+                    .collect(),
+                _ => Vec::new(),
+            };
+            let n = picked.len();
+            let (count, name) = if n == 0 {
+                (changed, "Discard all changes".to_string())
+            } else {
+                let files = if n == 1 { "file" } else { "files" };
+                (n, format!("Discard changes to the {n} picked {files}"))
+            };
             if widgets::count_button(
                 ui,
                 icon::TRASH,
-                changed,
-                "Discard all changes",
+                count,
+                &name,
                 has_changes && !conflicts && !staging && !committing,
                 true,
             )
             .clicked()
             {
-                action = Some(Action::DiscardAll);
+                action = Some(match selection.side {
+                    Some(side) if n > 0 => Action::Bulk(Bulk::Discard(side, picked)),
+                    _ => Action::DiscardAll,
+                });
             }
             if details::tree_toggle(ui, tree) {
                 action = Some(Action::ToggleTree);
@@ -511,18 +531,6 @@ fn file_list(
                         Side::Unstaged => Bulk::Stage(picked.clone()),
                         Side::Staged => Bulk::Unstage(picked.clone()),
                     }));
-                }
-                if widgets::count_button(
-                    ui,
-                    icon::TRASH,
-                    n,
-                    &format!("Discard changes to the {n} picked {files_word}"),
-                    !busy,
-                    true,
-                )
-                .clicked()
-                {
-                    action = Some(Action::Bulk(Bulk::Discard(side, picked.clone())));
                 }
             }
         });

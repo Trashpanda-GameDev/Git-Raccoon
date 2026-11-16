@@ -49,6 +49,8 @@ pub struct Settings {
     /// Where the last clone went; new clones start there.
     pub clone_dir: Option<String>,
     pub theme: ThemeChoice,
+    /// Dark, light, or following the system.
+    pub theme_mode: ThemeMode,
     /// How big everything is drawn; `None` for normal (100%).
     pub zoom: Option<f32>,
     /// Don't look for updates.
@@ -61,14 +63,20 @@ pub struct Settings {
     pub defaults: u32,
 }
 
-/// The current defaults: 1 since Raccoon became the default look.
-const DEFAULTS: u32 = 1;
+/// The current defaults: 1 since Raccoon became the default look, 2 since
+/// every look comes dark and light.
+const DEFAULTS: u32 = 2;
 
-/// A look, or light or dark following the system.
+/// The look: which family of colours (each comes dark and light; see
+/// [`ThemeMode`]).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ThemeChoice {
+    /// From settings before 0.5.3 only, where it meant Classic following
+    /// the system ([`Settings::upgrade`] turns it into that).
     System,
+    /// From settings before 0.5.3 only: Classic, dark.
     Dark,
+    /// From settings before 0.5.3 only: Classic, light.
     Light,
     /// Git Raccoon's own look, and the default.
     #[default]
@@ -78,6 +86,45 @@ pub enum ThemeChoice {
     Forest,
     Paper,
     HighContrast,
+    /// The original look: slate and teal.
+    Classic,
+}
+
+impl ThemeChoice {
+    /// The choices offered, in order.
+    pub const ALL: [ThemeChoice; 7] = [
+        ThemeChoice::Raccoon,
+        ThemeChoice::Classic,
+        ThemeChoice::Pastel,
+        ThemeChoice::Abyss,
+        ThemeChoice::Forest,
+        ThemeChoice::Paper,
+        ThemeChoice::HighContrast,
+    ];
+
+    pub fn family(self) -> crate::theme::Family {
+        use crate::theme::Family;
+        match self {
+            ThemeChoice::System | ThemeChoice::Dark | ThemeChoice::Light | ThemeChoice::Classic => {
+                Family::Classic
+            }
+            ThemeChoice::Raccoon => Family::Raccoon,
+            ThemeChoice::Pastel => Family::Pastel,
+            ThemeChoice::Abyss => Family::Abyss,
+            ThemeChoice::Forest => Family::Forest,
+            ThemeChoice::Paper => Family::Paper,
+            ThemeChoice::HighContrast => Family::HighContrast,
+        }
+    }
+}
+
+/// Whether the look is shown dark, light, or as the system is.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ThemeMode {
+    #[default]
+    Dark,
+    Light,
+    System,
 }
 
 /// The interface sizes offered.
@@ -94,6 +141,7 @@ impl Default for Settings {
             hide_sidebar: false,
             clone_dir: None,
             theme: ThemeChoice::default(),
+            theme_mode: ThemeMode::default(),
             zoom: None,
             no_update_checks: false,
             file_tree: false,
@@ -112,6 +160,19 @@ impl Settings {
     pub fn upgrade(mut self) -> Self {
         if self.defaults < 1 && self.theme == ThemeChoice::System {
             self.theme = ThemeChoice::Raccoon;
+        }
+        // Before 0.5.3 each look was dark or light, and System, Dark and
+        // Light were the original look: now a look and a mode.
+        if self.defaults < 2 {
+            let (theme, mode) = match self.theme {
+                ThemeChoice::System => (ThemeChoice::Classic, ThemeMode::System),
+                ThemeChoice::Dark => (ThemeChoice::Classic, ThemeMode::Dark),
+                ThemeChoice::Light => (ThemeChoice::Classic, ThemeMode::Light),
+                light @ (ThemeChoice::Pastel | ThemeChoice::Paper) => (light, ThemeMode::Light),
+                other => (other, ThemeMode::Dark),
+            };
+            self.theme = theme;
+            self.theme_mode = mode;
         }
         self.defaults = DEFAULTS;
         self
@@ -157,23 +218,44 @@ mod tests {
     }
 
     #[test]
-    fn older_settings_move_to_the_raccoon_look_once() {
+    fn older_settings_move_to_a_look_and_a_mode_once() {
         // Saved by 0.5.1 (as eframe saves it, in RON), with the old default.
         let old: Settings = ron::from_str("(theme: System, split_diff: true)").unwrap();
         assert_eq!(old.defaults, 0);
         let new = old.upgrade();
-        assert_eq!(new.theme, ThemeChoice::Raccoon);
+        assert_eq!(
+            (new.theme, new.theme_mode),
+            (ThemeChoice::Raccoon, ThemeMode::Dark)
+        );
         assert!(new.split_diff, "the rest is kept");
-        // A look chosen before is kept.
+        // Looks chosen before: the original light one, and a light look.
         let chose: Settings = ron::from_str("(theme: Light)").unwrap();
-        assert_eq!(chose.upgrade().theme, ThemeChoice::Light);
-        // System chosen after the change is kept too.
+        let chose = chose.upgrade();
+        assert_eq!(
+            (chose.theme, chose.theme_mode),
+            (ThemeChoice::Classic, ThemeMode::Light)
+        );
+        let paper: Settings = ron::from_str("(theme: Paper, defaults: 1)").unwrap();
+        assert_eq!(paper.upgrade().theme_mode, ThemeMode::Light);
+        // System chosen in 0.5.2: the original look, following the system.
+        let system: Settings = ron::from_str("(theme: System, defaults: 1)").unwrap();
+        let system = system.upgrade();
+        assert_eq!(
+            (system.theme, system.theme_mode),
+            (ThemeChoice::Classic, ThemeMode::System)
+        );
+        // Saved now: kept as it is.
         let now = Settings {
-            theme: ThemeChoice::System,
+            theme: ThemeChoice::Forest,
+            theme_mode: ThemeMode::System,
             ..Settings::default()
         };
         let saved: Settings = ron::from_str(&ron::to_string(&now).unwrap()).unwrap();
-        assert_eq!(saved.upgrade().theme, ThemeChoice::System);
+        let saved = saved.upgrade();
+        assert_eq!(
+            (saved.theme, saved.theme_mode),
+            (ThemeChoice::Forest, ThemeMode::System)
+        );
     }
 
     #[test]

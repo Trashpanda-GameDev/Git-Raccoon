@@ -3,7 +3,7 @@
 use eframe::egui::{self, Frame, Margin, Panel, RichText};
 
 use crate::repo_view::{self, Loaded, Op, RepoView, Source};
-use crate::settings::{self, Settings, ThemeChoice};
+use crate::settings::{self, Settings, ThemeChoice, ThemeMode};
 use crate::task::Task;
 use crate::theme;
 use std::path::PathBuf;
@@ -270,7 +270,11 @@ impl App {
     /// Applies the chosen theme (following the system's, if asked) and size,
     /// when they change.
     fn apply_look(&mut self, ctx: &egui::Context) {
-        let look = look_for(self.settings.theme, ctx.system_theme());
+        let look = look_for(
+            self.settings.theme,
+            self.settings.theme_mode,
+            ctx.system_theme(),
+        );
         let zoom = self.settings.zoom.unwrap_or(1.0);
         if self.applied == Some((look, zoom)) {
             return;
@@ -279,7 +283,7 @@ impl App {
         self.applied = Some((look, zoom));
         if theme_changed {
             theme::set(ctx, look);
-            let light = (self.settings.theme != ThemeChoice::System).then(|| look.is_light());
+            let light = (self.settings.theme_mode != ThemeMode::System).then(|| look.is_light());
             crate::title_bar::follow(ctx, light);
             self.title_bar_stale = true;
             // Diffs carry their colours: draw them again.
@@ -1638,17 +1642,17 @@ impl eframe::App for App {
 }
 
 /// The look a theme choice means now (System follows the system's light or dark).
-pub(crate) fn look_for(choice: ThemeChoice, system: Option<egui::Theme>) -> theme::Look {
-    use theme::Look;
-    match choice {
-        ThemeChoice::System if system == Some(egui::Theme::Light) => Look::Light,
-        ThemeChoice::System | ThemeChoice::Dark => Look::Dark,
-        ThemeChoice::Light => Look::Light,
-        ThemeChoice::Raccoon => Look::Raccoon,
-        ThemeChoice::Pastel => Look::Pastel,
-        ThemeChoice::Abyss => Look::Abyss,
-        ThemeChoice::Forest => Look::Forest,
-        ThemeChoice::Paper => Look::Paper,
-        ThemeChoice::HighContrast => Look::HighContrast,
-    }
+/// The look to show: the chosen family, dark or light as the mode (or
+/// the system) says.
+pub(crate) fn look_for(
+    choice: ThemeChoice,
+    mode: ThemeMode,
+    system: Option<egui::Theme>,
+) -> theme::Look {
+    let light = match mode {
+        ThemeMode::Dark => false,
+        ThemeMode::Light => true,
+        ThemeMode::System => system == Some(egui::Theme::Light),
+    };
+    choice.family().look(light)
 }

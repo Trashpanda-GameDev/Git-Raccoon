@@ -2515,7 +2515,7 @@ fn shows_a_files_history_and_blame() {
 
 #[test]
 fn switches_theme_and_size_in_settings() {
-    use git_raccoon::settings::ThemeChoice;
+    use git_raccoon::settings::{ThemeChoice, ThemeMode};
     let sample = Sample::build();
     let mut h = harness(Settings::default());
     open(&mut h, sample.path());
@@ -2534,9 +2534,11 @@ fn switches_theme_and_size_in_settings() {
     settle(&mut h);
 
     press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    // The same look, light.
     h.get_by_label("Light").click();
     h.run_ok();
-    assert_eq!(h.state().settings().theme, ThemeChoice::Light);
+    assert_eq!(h.state().settings().theme, ThemeChoice::Raccoon);
+    assert_eq!(h.state().settings().theme_mode, ThemeMode::Light);
     assert!(h.ctx.theme() == egui::Theme::Light);
     h.get_by_label("Done").click();
     settle(&mut h);
@@ -2563,7 +2565,7 @@ fn switches_theme_and_size_in_settings() {
 
 #[test]
 fn renders_every_theme() {
-    use git_raccoon::settings::ThemeChoice;
+    use git_raccoon::settings::{ThemeChoice, ThemeMode};
     let sample = Sample::build();
     let mut h = harness(Settings::default());
     open(&mut h, sample.path());
@@ -2573,30 +2575,51 @@ fn renders_every_theme() {
     h.get_by_label("src/loader.rs").click();
     settle(&mut h);
     press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
-    for (choice, name) in [
-        (ThemeChoice::Raccoon, "Raccoon"),
-        (ThemeChoice::Pastel, "Pastel"),
-        (ThemeChoice::Abyss, "Abyss"),
-        (ThemeChoice::Forest, "Forest"),
-        (ThemeChoice::Paper, "Paper"),
-        (ThemeChoice::HighContrast, "High contrast"),
-        (ThemeChoice::Light, "Light"),
-        (ThemeChoice::Dark, "Dark"),
-    ] {
-        h.get_by_label(name).click();
+    // Every look, dark and light.
+    for (mode, mode_name) in [(ThemeMode::Light, "Light"), (ThemeMode::Dark, "Dark")] {
+        h.get_by_label(mode_name).click();
         h.run_ok();
-        assert_eq!(h.state().settings().theme, choice);
-        if name == "Raccoon" {
-            screenshot(&mut h, "38-theme-picker");
+        assert_eq!(h.state().settings().theme_mode, mode);
+        for (choice, name) in [
+            (ThemeChoice::Raccoon, "Raccoon"),
+            (ThemeChoice::Classic, "Classic"),
+            (ThemeChoice::Pastel, "Pastel"),
+            (ThemeChoice::Abyss, "Abyss"),
+            (ThemeChoice::Forest, "Forest"),
+            (ThemeChoice::Paper, "Paper"),
+            (ThemeChoice::HighContrast, "High contrast"),
+        ] {
+            h.get_by_label(name).click();
+            h.run_ok();
+            assert_eq!(h.state().settings().theme, choice);
+            assert_eq!(
+                h.ctx.theme() == egui::Theme::Light,
+                mode == ThemeMode::Light
+            );
+            if name == "Raccoon" {
+                screenshot(
+                    &mut h,
+                    &format!("38-theme-picker-{}", mode_name.to_lowercase()),
+                );
+            }
+            h.get_by_label("Done").click();
+            settle(&mut h);
+            screenshot(
+                &mut h,
+                &format!(
+                    "39-theme-{}-{}",
+                    name.replace(' ', "-").to_lowercase(),
+                    mode_name.to_lowercase()
+                ),
+            );
+            press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
         }
-        h.get_by_label("Done").click();
-        settle(&mut h);
-        screenshot(
-            &mut h,
-            &format!("39-theme-{}", name.replace(' ', "-").to_lowercase()),
-        );
-        press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
     }
+    // Following the system.
+    h.get_by_label("System").click();
+    h.run_ok();
+    assert_eq!(h.state().settings().theme_mode, ThemeMode::System);
+    screenshot(&mut h, "38-theme-picker-system");
 }
 
 fn tab_names(h: &Harness<'_, App>) -> (Vec<String>, usize) {

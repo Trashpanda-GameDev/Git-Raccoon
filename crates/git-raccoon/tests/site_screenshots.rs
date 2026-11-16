@@ -17,7 +17,7 @@ use egui::Key;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable as _;
 use git_raccoon::App;
-use git_raccoon::settings::{Settings, ThemeChoice};
+use git_raccoon::settings::{Settings, ThemeChoice, ThemeMode};
 use git2::{Oid, Repository, Signature, Time, build::CheckoutBuilder};
 
 const DAY: i64 = 86_400;
@@ -199,9 +199,10 @@ impl Drop for Demo {
     }
 }
 
-fn harness(theme: ThemeChoice) -> Harness<'static, App> {
+fn harness(theme: ThemeChoice, theme_mode: ThemeMode) -> Harness<'static, App> {
     let settings = Settings {
         theme,
+        theme_mode,
         split_diff: true,
         no_update_checks: true,
         ..Settings::default()
@@ -280,7 +281,7 @@ fn website_screenshots() {
     let demo = Demo::build();
 
     // The graph, with a commit's details.
-    let mut h = harness(ThemeChoice::Raccoon);
+    let mut h = harness(ThemeChoice::Raccoon, ThemeMode::Dark);
     open(&mut h, &demo.dir);
     click(&mut h, INDEX_COMMIT);
     shot(&mut h, "history");
@@ -327,22 +328,22 @@ fn website_screenshots() {
     drop(h);
 
     // The same view in other themes (before the edits below).
-    for (theme, name) in [
-        (ThemeChoice::Dark, "dark"),
-        (ThemeChoice::Light, "light"),
-        (ThemeChoice::Pastel, "pastel"),
-        (ThemeChoice::Abyss, "abyss"),
-        (ThemeChoice::Forest, "forest"),
-        (ThemeChoice::Paper, "paper"),
+    for (theme, mode, name) in [
+        (ThemeChoice::Raccoon, ThemeMode::Light, "raccoon-light"),
+        (ThemeChoice::Classic, ThemeMode::Dark, "classic"),
+        (ThemeChoice::Pastel, ThemeMode::Light, "pastel"),
+        (ThemeChoice::Abyss, ThemeMode::Dark, "abyss"),
+        (ThemeChoice::Forest, ThemeMode::Dark, "forest"),
+        (ThemeChoice::Paper, ThemeMode::Light, "paper"),
     ] {
-        let mut h = harness(theme);
+        let mut h = harness(theme, mode);
         open(&mut h, &demo.dir);
         click(&mut h, INDEX_COMMIT);
         small_shot(&mut h, &format!("theme-{name}"));
     }
 
     // Working changes, back in the Raccoon theme: stage some lines of an edit.
-    let mut h = harness(ThemeChoice::Raccoon);
+    let mut h = harness(ThemeChoice::Raccoon, ThemeMode::Dark);
     open(&mut h, &demo.dir);
     demo.write("src/cache.rs", CACHE_2);
     demo.write(
