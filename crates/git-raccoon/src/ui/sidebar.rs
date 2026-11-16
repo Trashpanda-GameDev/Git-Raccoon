@@ -970,438 +970,515 @@ pub fn show(
         action: None,
         picked: ui.data(|d| d.get_temp::<Vec<Picked>>(picked_id).unwrap_or_default()),
     };
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            let empty = |ui: &mut egui::Ui, text: &str| {
-                ui.add_space(2.0);
-                // Wrapped, so a long note doesn't widen the sidebar.
-                egui::Frame::new()
-                    .inner_margin(egui::Margin {
-                        left: 28,
-                        right: 4,
-                        ..egui::Margin::ZERO
-                    })
-                    .show(ui, |ui| {
-                        ui.add(
-                            egui::Label::new(RichText::new(text).size(12.0).color(theme::muted()))
-                                .wrap(),
-                        );
-                    });
-                ui.add_space(6.0);
-            };
-            let none = if f.is_empty() { "" } else { "No matches" };
-
-            // Local branches.
-            let open = c.is_open("local");
-            let (toggled, add) = section_header(ui, "Local", local.len(), open, Some("New branch"));
-            if toggled {
-                c.toggle("local");
-            }
-            if add {
-                let label = head.map_or_else(|| "HEAD".to_string(), |b| format!("{b} (HEAD)"));
-                c.action = Some(Action::NewBranch {
-                    start: "HEAD".into(),
-                    label,
-                });
-            }
-            if open {
-                body(ui, &mut c, "local", "Local", |ui, c| {
-                    if local.is_empty() {
-                        empty(ui, if none.is_empty() { "No branches" } else { none });
-                    }
-                    let nodes =
-                        build_tree(local.iter().copied(), |b: &LocalBranch| b.name.as_str());
-                    tree(
-                        ui,
-                        c,
-                        &nodes,
-                        "local",
-                        0,
-                        &mut |ui, c, b: &LocalBranch, name, depth| {
-                            let mut badges = Vec::new();
-                            let tooltip = match &b.upstream {
-                                Some(up) if up.gone => {
-                                    badges.push(Badge {
-                                        text: "gone".into(),
-                                        colour: theme::muted(),
-                                    });
-                                    format!("{}\nUpstream {} is gone", b.name, up.name)
-                                }
-                                Some(up) => {
-                                    if up.ahead > 0 {
-                                        badges.push(Badge {
-                                            text: format!("{} {}", icon::ARROW_UP, up.ahead),
-                                            colour: theme::add(),
-                                        });
-                                    }
-                                    if up.behind > 0 {
-                                        badges.push(Badge {
-                                            text: format!("{} {}", icon::ARROW_DOWN, up.behind),
-                                            colour: theme::modified(),
-                                        });
-                                    }
-                                    format!(
-                                        "{}\nTracking {}: {} ahead, {} behind",
-                                        b.name, up.name, up.ahead, up.behind
-                                    )
-                                }
-                                None => format!("{}\nNo upstream", b.name),
-                            };
-                            let glyph = if b.is_head {
-                                icon::CHECK
-                            } else {
-                                icon::GIT_BRANCH
-                            };
-                            let response = row(
-                                ui,
-                                depth,
-                                glyph,
-                                name,
-                                &badges,
-                                c.selected == Some(b.target.as_str())
-                                    || c.is_picked(&Picked::Local(b.name.clone())),
-                                b.is_head,
-                                &tooltip,
-                                b.is_head.then(|| {
-                                    b.upstream
-                                        .as_ref()
-                                        .is_some_and(|u| !u.gone && u.ahead == 0 && u.behind == 0)
-                                }),
-                            );
-                            let me = Picked::Local(b.name.clone());
-                            if response.double_clicked() {
-                                c.action = Some(Action::Checkout(b.name.clone()));
-                            } else if c.pick(ui, &response, me.clone()) {
-                            } else if response.clicked() {
-                                c.action = Some(Action::Jump(b.target.clone()));
-                            }
-                            drag_source(&response, &b.name);
-                            if let Some(a) = drop_target(ui, &response, &b.name) {
-                                c.action = Some(a);
-                            }
-                            let merge_label = format!("Merge into {}", head.unwrap_or("HEAD"));
-                            let rebase_label =
-                                format!("Rebase {} onto {}", head.unwrap_or("HEAD"), b.name);
-                            // On the forge, as its upstream.
-                            let page = b
-                                .upstream
-                                .as_ref()
-                                .filter(|u| !u.gone)
-                                .and_then(|u| web.branch(&u.name));
-                            response.context_menu(|ui| {
-                                if c.picked_menu(ui, &me, head) {
-                                    return;
-                                }
-                                web_items(ui, &mut c.action, page.as_ref());
-                                let items = vec![
-                                    ("Check out", !b.is_head, Action::Checkout(b.name.clone())),
-                                    (
-                                        merge_label.as_str(),
-                                        !b.is_head && head.is_some(),
-                                        Action::Merge {
-                                            source: b.name.clone(),
-                                            target: None,
-                                        },
-                                    ),
-                                    (
-                                        rebase_label.as_str(),
-                                        !b.is_head && head.is_some(),
-                                        Action::Rebase(b.name.clone()),
-                                    ),
-                                    (
-                                        "Create branch here…",
-                                        true,
-                                        Action::NewBranch {
-                                            start: b.target.clone(),
-                                            label: b.name.clone(),
-                                        },
-                                    ),
-                                    ("Rename…", true, Action::Rename(b.name.clone())),
-                                    ("Delete…", !b.is_head, Action::DeleteBranch(b.name.clone())),
-                                ];
-                                menu(ui, &mut c.action, items);
-                            });
-                        },
+    // Not one scrolling list: each section scrolls on its own (#13).
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        let empty = |ui: &mut egui::Ui, text: &str| {
+            ui.add_space(2.0);
+            // Wrapped, so a long note doesn't widen the sidebar.
+            egui::Frame::new()
+                .inner_margin(egui::Margin {
+                    left: 28,
+                    right: 4,
+                    ..egui::Margin::ZERO
+                })
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::Label::new(RichText::new(text).size(12.0).color(theme::muted()))
+                            .wrap(),
                     );
                 });
-            }
+            ui.add_space(6.0);
+        };
+        let none = if f.is_empty() { "" } else { "No matches" };
 
-            // Remotes.
-            let count = remotes.iter().map(|r| r.2.len()).sum();
-            let open = c.is_open("remotes");
-            let (toggled, add) = section_header(ui, "Remote", count, open, Some("Add remote"));
-            if toggled {
-                c.toggle("remotes");
-            }
-            if add {
-                c.action = Some(Action::EditRemote(None));
-            }
-            if open {
-                body(ui, &mut c, "remotes", "Remote", |ui, c| {
-                    if remotes.is_empty() {
-                        empty(ui, if none.is_empty() { "No remotes" } else { none });
-                    }
-                    for (name, url, branches) in &remotes {
-                        let key = format!("remote:{name}");
-                        let open = c.is_open(&key);
-                        let response =
-                            folder_row(ui, 0, icon::CLOUD, name, open, url.unwrap_or(name));
-                        if response.clicked() {
-                            c.toggle(&key);
-                        }
-                        let page = web.remote_page(name);
-                        response.context_menu(|ui| {
-                            web_items(ui, &mut c.action, page.as_ref());
-                            let items = vec![
-                                ("Edit…", true, Action::EditRemote(Some((*name).to_string()))),
-                                ("Remove…", true, Action::RemoveRemote((*name).to_string())),
-                            ];
-                            menu(ui, &mut c.action, items);
-                        });
-                        if open {
-                            let nodes = build_tree(branches.iter().copied(), |b: &RemoteBranch| {
-                                b.name.as_str()
-                            });
-                            tree(
-                                ui,
-                                c,
-                                &nodes,
-                                &key,
-                                1,
-                                &mut |ui, c, b: &RemoteBranch, name, depth| {
-                                    let response = row(
-                                        ui,
-                                        depth,
-                                        icon::GIT_BRANCH,
-                                        name,
-                                        &[],
-                                        c.selected == Some(b.target.as_str())
-                                            || c.is_picked(&Picked::Remote(b.full_name.clone())),
-                                        false,
-                                        &b.full_name,
-                                        None,
-                                    );
-                                    let me = Picked::Remote(b.full_name.clone());
-                                    if response.double_clicked() {
-                                        c.action =
-                                            Some(Action::CheckoutRemote(b.full_name.clone()));
-                                    } else if c.pick(ui, &response, me.clone()) {
-                                    } else if response.clicked() {
-                                        c.action = Some(Action::Jump(b.target.clone()));
-                                    }
-                                    drag_source(&response, &b.full_name);
-                                    let merge_label =
-                                        format!("Merge into {}", head.unwrap_or("HEAD"));
-                                    let rebase_label = format!(
-                                        "Rebase {} onto {}",
-                                        head.unwrap_or("HEAD"),
-                                        b.full_name
-                                    );
-                                    let page = web.branch(&b.full_name);
-                                    response.context_menu(|ui| {
-                                        if c.picked_menu(ui, &me, head) {
-                                            return;
-                                        }
-                                        web_items(ui, &mut c.action, page.as_ref());
-                                        let items = vec![
-                                            (
-                                                merge_label.as_str(),
-                                                head.is_some(),
-                                                Action::Merge {
-                                                    source: b.full_name.clone(),
-                                                    target: None,
-                                                },
-                                            ),
-                                            (
-                                                rebase_label.as_str(),
-                                                head.is_some(),
-                                                Action::Rebase(b.full_name.clone()),
-                                            ),
-                                            (
-                                                "Check out",
-                                                true,
-                                                Action::CheckoutRemote(b.full_name.clone()),
-                                            ),
-                                            (
-                                                "Create branch here…",
-                                                true,
-                                                Action::NewBranch {
-                                                    start: b.target.clone(),
-                                                    label: b.full_name.clone(),
-                                                },
-                                            ),
-                                            (
-                                                "Delete on the remote…",
-                                                true,
-                                                Action::DeleteRemoteBranch(b.full_name.clone()),
-                                            ),
-                                        ];
-                                        menu(ui, &mut c.action, items);
+        // Local branches.
+        let open = c.is_open("local");
+        let (toggled, add) = section_header(ui, "Local", local.len(), open, Some("New branch"));
+        if toggled {
+            c.toggle("local");
+        }
+        if add {
+            let label = head.map_or_else(|| "HEAD".to_string(), |b| format!("{b} (HEAD)"));
+            c.action = Some(Action::NewBranch {
+                start: "HEAD".into(),
+                label,
+            });
+        }
+        if open {
+            body(ui, &mut c, "local", "Local", |ui, c| {
+                if local.is_empty() {
+                    empty(ui, if none.is_empty() { "No branches" } else { none });
+                }
+                let nodes = build_tree(local.iter().copied(), |b: &LocalBranch| b.name.as_str());
+                tree(
+                    ui,
+                    c,
+                    &nodes,
+                    "local",
+                    0,
+                    &mut |ui, c, b: &LocalBranch, name, depth| {
+                        let mut badges = Vec::new();
+                        let tooltip = match &b.upstream {
+                            Some(up) if up.gone => {
+                                badges.push(Badge {
+                                    text: "gone".into(),
+                                    colour: theme::muted(),
+                                });
+                                format!("{}\nUpstream {} is gone", b.name, up.name)
+                            }
+                            Some(up) => {
+                                if up.ahead > 0 {
+                                    badges.push(Badge {
+                                        text: format!("{} {}", icon::ARROW_UP, up.ahead),
+                                        colour: theme::add(),
                                     });
-                                },
-                            );
-                        }
-                    }
-                });
-            }
-
-            // The forge's pull/merge requests and issues.
-            if let Some(forge) = forge {
-                forge_sections(ui, &mut c, forge, &matches);
-            }
-
-            // Tags.
-            let open = c.is_open("tags");
-            if section_header(ui, "Tags", tags.len(), open, None).0 {
-                c.toggle("tags");
-            }
-            if open {
-                body(ui, &mut c, "tags", "Tags", |ui, c| {
-                    if tags.is_empty() {
-                        empty(ui, if none.is_empty() { "No tags" } else { none });
-                    }
-                    for t in &tags {
-                        let tip = if t.annotated {
-                            format!("{} (annotated)", t.name)
+                                }
+                                if up.behind > 0 {
+                                    badges.push(Badge {
+                                        text: format!("{} {}", icon::ARROW_DOWN, up.behind),
+                                        colour: theme::modified(),
+                                    });
+                                }
+                                format!(
+                                    "{}\nTracking {}: {} ahead, {} behind",
+                                    b.name, up.name, up.ahead, up.behind
+                                )
+                            }
+                            None => format!("{}\nNo upstream", b.name),
+                        };
+                        let glyph = if b.is_head {
+                            icon::CHECK
                         } else {
-                            t.name.clone()
+                            icon::GIT_BRANCH
                         };
                         let response = row(
                             ui,
-                            0,
-                            icon::TAG,
-                            &t.name,
-                            &[],
-                            c.selected == Some(t.target.as_str()),
-                            false,
-                            &tip,
-                            None,
+                            depth,
+                            glyph,
+                            name,
+                            &badges,
+                            c.selected == Some(b.target.as_str())
+                                || c.is_picked(&Picked::Local(b.name.clone())),
+                            b.is_head,
+                            &tooltip,
+                            b.is_head.then(|| {
+                                b.upstream
+                                    .as_ref()
+                                    .is_some_and(|u| !u.gone && u.ahead == 0 && u.behind == 0)
+                            }),
                         );
-                        if response.clicked() {
-                            c.action = Some(Action::Jump(t.target.clone()));
+                        let me = Picked::Local(b.name.clone());
+                        if response.double_clicked() {
+                            c.action = Some(Action::Checkout(b.name.clone()));
+                        } else if c.pick(ui, &response, me.clone()) {
+                        } else if response.clicked() {
+                            c.action = Some(Action::Jump(b.target.clone()));
                         }
-                        let page = web.tag(&t.name);
+                        drag_source(&response, &b.name);
+                        if let Some(a) = drop_target(ui, &response, &b.name) {
+                            c.action = Some(a);
+                        }
+                        let merge_label = format!("Merge into {}", head.unwrap_or("HEAD"));
+                        let rebase_label =
+                            format!("Rebase {} onto {}", head.unwrap_or("HEAD"), b.name);
+                        // On the forge, as its upstream.
+                        let page = b
+                            .upstream
+                            .as_ref()
+                            .filter(|u| !u.gone)
+                            .and_then(|u| web.branch(&u.name));
                         response.context_menu(|ui| {
+                            if c.picked_menu(ui, &me, head) {
+                                return;
+                            }
                             web_items(ui, &mut c.action, page.as_ref());
                             let items = vec![
+                                ("Check out", !b.is_head, Action::Checkout(b.name.clone())),
+                                (
+                                    merge_label.as_str(),
+                                    !b.is_head && head.is_some(),
+                                    Action::Merge {
+                                        source: b.name.clone(),
+                                        target: None,
+                                    },
+                                ),
+                                (
+                                    rebase_label.as_str(),
+                                    !b.is_head && head.is_some(),
+                                    Action::Rebase(b.name.clone()),
+                                ),
                                 (
                                     "Create branch here…",
                                     true,
                                     Action::NewBranch {
-                                        start: t.target.clone(),
-                                        label: t.name.clone(),
+                                        start: b.target.clone(),
+                                        label: b.name.clone(),
                                     },
                                 ),
-                                ("Delete tag…", true, Action::DeleteTag(t.name.clone())),
+                                ("Rename…", true, Action::Rename(b.name.clone())),
+                                ("Delete…", !b.is_head, Action::DeleteBranch(b.name.clone())),
                             ];
                             menu(ui, &mut c.action, items);
                         });
-                    }
-                });
-            }
+                    },
+                );
+            });
+        }
 
-            // Stashes.
-            let open = c.is_open("stashes");
-            if section_header(ui, "Stashes", stashes.len(), open, None).0 {
-                c.toggle("stashes");
+        // Remotes.
+        let count = remotes.iter().map(|r| r.2.len()).sum();
+        let open = c.is_open("remotes");
+        let (toggled, add) = section_header(ui, "Remote", count, open, Some("Add remote"));
+        if toggled {
+            c.toggle("remotes");
+        }
+        if add {
+            c.action = Some(Action::EditRemote(None));
+        }
+        if open {
+            body(ui, &mut c, "remotes", "Remote", |ui, c| {
+                if remotes.is_empty() {
+                    empty(ui, if none.is_empty() { "No remotes" } else { none });
+                }
+                for (name, url, branches) in &remotes {
+                    let key = format!("remote:{name}");
+                    let open = c.is_open(&key);
+                    let response = folder_row(ui, 0, icon::CLOUD, name, open, url.unwrap_or(name));
+                    if response.clicked() {
+                        c.toggle(&key);
+                    }
+                    let page = web.remote_page(name);
+                    response.context_menu(|ui| {
+                        web_items(ui, &mut c.action, page.as_ref());
+                        let items = vec![
+                            ("Edit…", true, Action::EditRemote(Some((*name).to_string()))),
+                            ("Remove…", true, Action::RemoveRemote((*name).to_string())),
+                        ];
+                        menu(ui, &mut c.action, items);
+                    });
+                    if open {
+                        let nodes = build_tree(branches.iter().copied(), |b: &RemoteBranch| {
+                            b.name.as_str()
+                        });
+                        tree(
+                            ui,
+                            c,
+                            &nodes,
+                            &key,
+                            1,
+                            &mut |ui, c, b: &RemoteBranch, name, depth| {
+                                let response = row(
+                                    ui,
+                                    depth,
+                                    icon::GIT_BRANCH,
+                                    name,
+                                    &[],
+                                    c.selected == Some(b.target.as_str())
+                                        || c.is_picked(&Picked::Remote(b.full_name.clone())),
+                                    false,
+                                    &b.full_name,
+                                    None,
+                                );
+                                let me = Picked::Remote(b.full_name.clone());
+                                if response.double_clicked() {
+                                    c.action = Some(Action::CheckoutRemote(b.full_name.clone()));
+                                } else if c.pick(ui, &response, me.clone()) {
+                                } else if response.clicked() {
+                                    c.action = Some(Action::Jump(b.target.clone()));
+                                }
+                                drag_source(&response, &b.full_name);
+                                let merge_label = format!("Merge into {}", head.unwrap_or("HEAD"));
+                                let rebase_label = format!(
+                                    "Rebase {} onto {}",
+                                    head.unwrap_or("HEAD"),
+                                    b.full_name
+                                );
+                                let page = web.branch(&b.full_name);
+                                response.context_menu(|ui| {
+                                    if c.picked_menu(ui, &me, head) {
+                                        return;
+                                    }
+                                    web_items(ui, &mut c.action, page.as_ref());
+                                    let items = vec![
+                                        (
+                                            merge_label.as_str(),
+                                            head.is_some(),
+                                            Action::Merge {
+                                                source: b.full_name.clone(),
+                                                target: None,
+                                            },
+                                        ),
+                                        (
+                                            rebase_label.as_str(),
+                                            head.is_some(),
+                                            Action::Rebase(b.full_name.clone()),
+                                        ),
+                                        (
+                                            "Check out",
+                                            true,
+                                            Action::CheckoutRemote(b.full_name.clone()),
+                                        ),
+                                        (
+                                            "Create branch here…",
+                                            true,
+                                            Action::NewBranch {
+                                                start: b.target.clone(),
+                                                label: b.full_name.clone(),
+                                            },
+                                        ),
+                                        (
+                                            "Delete on the remote…",
+                                            true,
+                                            Action::DeleteRemoteBranch(b.full_name.clone()),
+                                        ),
+                                    ];
+                                    menu(ui, &mut c.action, items);
+                                });
+                            },
+                        );
+                    }
+                }
+            });
+        }
+
+        // The forge's pull/merge requests and issues.
+        if let Some(forge) = forge {
+            forge_sections(ui, &mut c, forge, &matches);
+        }
+
+        // Tags.
+        let open = c.is_open("tags");
+        if section_header(ui, "Tags", tags.len(), open, None).0 {
+            c.toggle("tags");
+        }
+        if open {
+            body(ui, &mut c, "tags", "Tags", |ui, c| {
+                if tags.is_empty() {
+                    empty(ui, if none.is_empty() { "No tags" } else { none });
+                }
+                for t in &tags {
+                    let tip = if t.annotated {
+                        format!("{} (annotated)", t.name)
+                    } else {
+                        t.name.clone()
+                    };
+                    let response = row(
+                        ui,
+                        0,
+                        icon::TAG,
+                        &t.name,
+                        &[],
+                        c.selected == Some(t.target.as_str()),
+                        false,
+                        &tip,
+                        None,
+                    );
+                    if response.clicked() {
+                        c.action = Some(Action::Jump(t.target.clone()));
+                    }
+                    let page = web.tag(&t.name);
+                    response.context_menu(|ui| {
+                        web_items(ui, &mut c.action, page.as_ref());
+                        let items = vec![
+                            (
+                                "Create branch here…",
+                                true,
+                                Action::NewBranch {
+                                    start: t.target.clone(),
+                                    label: t.name.clone(),
+                                },
+                            ),
+                            ("Delete tag…", true, Action::DeleteTag(t.name.clone())),
+                        ];
+                        menu(ui, &mut c.action, items);
+                    });
+                }
+            });
+        }
+
+        // Stashes.
+        let open = c.is_open("stashes");
+        if section_header(ui, "Stashes", stashes.len(), open, None).0 {
+            c.toggle("stashes");
+        }
+        if open {
+            body(ui, &mut c, "stashes", "Stashes", |ui, c| {
+                if stashes.is_empty() {
+                    empty(ui, if none.is_empty() { "No stashes" } else { none });
+                }
+                for s in &stashes {
+                    let tip = format!("stash@{{{}}}: {}", s.index, s.message);
+                    let response = row(
+                        ui,
+                        0,
+                        icon::STACK,
+                        &s.message,
+                        &[],
+                        c.selected == Some(s.target.as_str()),
+                        false,
+                        &tip,
+                        None,
+                    );
+                    if response.clicked() {
+                        c.action = Some(Action::Jump(s.target.clone()));
+                    }
+                    response.context_menu(|ui| {
+                        let items = vec![
+                            ("Apply", true, Action::StashApply(s.target.clone())),
+                            ("Pop", true, Action::StashPop(s.target.clone())),
+                            ("Delete…", true, Action::StashDrop(s.target.clone())),
+                        ];
+                        menu(ui, &mut c.action, items);
+                    });
+                }
+            });
+        }
+        // Worktrees.
+        let open = c.is_open("worktrees");
+        let (toggled, add) = section_header(
+            ui,
+            "Worktrees",
+            extras.worktrees.len(),
+            open,
+            Some("Add worktree"),
+        );
+        if toggled {
+            c.toggle("worktrees");
+        }
+        if add {
+            c.action = Some(Action::AddWorktree);
+        }
+        if open {
+            body(ui, &mut c, "worktrees", "Worktrees", |ui, c| {
+                for w in &extras.worktrees {
+                    let folder = std::path::Path::new(&w.path)
+                        .file_name()
+                        .map_or_else(|| w.path.clone(), |n| n.to_string_lossy().into_owned());
+                    let branch = w.branch.clone().unwrap_or_else(|| "detached".into());
+                    let mut badges = vec![Badge {
+                        text: branch,
+                        colour: theme::muted(),
+                    }];
+                    if w.missing {
+                        badges.push(Badge {
+                            text: "missing".into(),
+                            colour: theme::danger(),
+                        });
+                    }
+                    let tip = format!(
+                        "{}{}",
+                        w.path,
+                        if w.current { "\nThis worktree" } else { "" }
+                    );
+                    let glyph = if w.current {
+                        icon::CHECK
+                    } else {
+                        icon::FOLDER_SIMPLE
+                    };
+                    let response =
+                        row(ui, 0, glyph, &folder, &badges, false, w.current, &tip, None);
+                    if response.double_clicked() && !w.current {
+                        c.action = Some(Action::OpenPath(w.path.clone()));
+                    }
+                    response.context_menu(|ui| {
+                        let items = vec![
+                            (
+                                "Open in a tab",
+                                !w.current && !w.missing,
+                                Action::OpenPath(w.path.clone()),
+                            ),
+                            (
+                                "Open a terminal here",
+                                !w.missing,
+                                Action::Terminal(w.path.clone()),
+                            ),
+                            (
+                                "Remove…",
+                                !w.main && !w.current,
+                                Action::RemoveWorktree(w.path.clone()),
+                            ),
+                        ];
+                        menu(ui, &mut c.action, items);
+                    });
+                }
+            });
+        }
+
+        // Submodules, if there are any.
+        if !extras.submodules.is_empty() {
+            let open = c.is_open("submodules");
+            if section_header(ui, "Submodules", extras.submodules.len(), open, None).0 {
+                c.toggle("submodules");
             }
             if open {
-                body(ui, &mut c, "stashes", "Stashes", |ui, c| {
-                    if stashes.is_empty() {
-                        empty(ui, if none.is_empty() { "No stashes" } else { none });
-                    }
-                    for s in &stashes {
-                        let tip = format!("stash@{{{}}}: {}", s.index, s.message);
+                body(ui, &mut c, "submodules", "Submodules", |ui, c| {
+                    use git_raccoon_core::modules::SubmoduleState;
+                    for s in &extras.submodules {
+                        let (badge, colour, about) = match s.state {
+                            SubmoduleState::UpToDate => ("", theme::muted(), "Up to date"),
+                            SubmoduleState::Uninitialized => (
+                                "not cloned",
+                                theme::modified(),
+                                "Not cloned yet: update it to get its files",
+                            ),
+                            SubmoduleState::OtherCommit => (
+                                "other commit",
+                                theme::modified(),
+                                "A different commit is checked out than the one recorded here",
+                            ),
+                            SubmoduleState::Changed => {
+                                ("changed", theme::modified(), "It has uncommitted changes")
+                            }
+                        };
+                        let badges: Vec<Badge> = if badge.is_empty() {
+                            Vec::new()
+                        } else {
+                            vec![Badge {
+                                text: badge.into(),
+                                colour,
+                            }]
+                        };
+                        let tip = format!(
+                            "{}\n{}{}",
+                            s.path,
+                            about,
+                            s.url
+                                .as_deref()
+                                .map(|u| format!("\n{u}"))
+                                .unwrap_or_default()
+                        );
+                        let full = std::path::Path::new(root)
+                            .join(&s.path)
+                            .to_string_lossy()
+                            .into_owned();
+                        let cloned = s.state != SubmoduleState::Uninitialized;
                         let response = row(
                             ui,
                             0,
-                            icon::STACK,
-                            &s.message,
-                            &[],
-                            c.selected == Some(s.target.as_str()),
+                            icon::PACKAGE,
+                            &s.path,
+                            &badges,
+                            false,
                             false,
                             &tip,
                             None,
                         );
-                        if response.clicked() {
-                            c.action = Some(Action::Jump(s.target.clone()));
+                        if response.double_clicked() && cloned {
+                            c.action = Some(Action::OpenPath(full.clone()));
                         }
                         response.context_menu(|ui| {
                             let items = vec![
-                                ("Apply", true, Action::StashApply(s.target.clone())),
-                                ("Pop", true, Action::StashPop(s.target.clone())),
-                                ("Delete…", true, Action::StashDrop(s.target.clone())),
-                            ];
-                            menu(ui, &mut c.action, items);
-                        });
-                    }
-                });
-            }
-            // Worktrees.
-            let open = c.is_open("worktrees");
-            let (toggled, add) = section_header(
-                ui,
-                "Worktrees",
-                extras.worktrees.len(),
-                open,
-                Some("Add worktree"),
-            );
-            if toggled {
-                c.toggle("worktrees");
-            }
-            if add {
-                c.action = Some(Action::AddWorktree);
-            }
-            if open {
-                body(ui, &mut c, "worktrees", "Worktrees", |ui, c| {
-                    for w in &extras.worktrees {
-                        let folder = std::path::Path::new(&w.path)
-                            .file_name()
-                            .map_or_else(|| w.path.clone(), |n| n.to_string_lossy().into_owned());
-                        let branch = w.branch.clone().unwrap_or_else(|| "detached".into());
-                        let mut badges = vec![Badge {
-                            text: branch,
-                            colour: theme::muted(),
-                        }];
-                        if w.missing {
-                            badges.push(Badge {
-                                text: "missing".into(),
-                                colour: theme::danger(),
-                            });
-                        }
-                        let tip = format!(
-                            "{}{}",
-                            w.path,
-                            if w.current { "\nThis worktree" } else { "" }
-                        );
-                        let glyph = if w.current {
-                            icon::CHECK
-                        } else {
-                            icon::FOLDER_SIMPLE
-                        };
-                        let response =
-                            row(ui, 0, glyph, &folder, &badges, false, w.current, &tip, None);
-                        if response.double_clicked() && !w.current {
-                            c.action = Some(Action::OpenPath(w.path.clone()));
-                        }
-                        response.context_menu(|ui| {
-                            let items = vec![
+                                ("Open in a tab", cloned, Action::OpenPath(full.clone())),
                                 (
-                                    "Open in a tab",
-                                    !w.current && !w.missing,
-                                    Action::OpenPath(w.path.clone()),
+                                    if cloned { "Update" } else { "Clone and update" },
+                                    true,
+                                    Action::UpdateSubmodule(s.path.clone()),
                                 ),
                                 (
                                     "Open a terminal here",
-                                    !w.missing,
-                                    Action::Terminal(w.path.clone()),
-                                ),
-                                (
-                                    "Remove…",
-                                    !w.main && !w.current,
-                                    Action::RemoveWorktree(w.path.clone()),
+                                    cloned,
+                                    Action::Terminal(full.clone()),
                                 ),
                             ];
                             menu(ui, &mut c.action, items);
@@ -1409,91 +1486,8 @@ pub fn show(
                     }
                 });
             }
-
-            // Submodules, if there are any.
-            if !extras.submodules.is_empty() {
-                let open = c.is_open("submodules");
-                if section_header(ui, "Submodules", extras.submodules.len(), open, None).0 {
-                    c.toggle("submodules");
-                }
-                if open {
-                    body(ui, &mut c, "submodules", "Submodules", |ui, c| {
-                        use git_raccoon_core::modules::SubmoduleState;
-                        for s in &extras.submodules {
-                            let (badge, colour, about) = match s.state {
-                                SubmoduleState::UpToDate => ("", theme::muted(), "Up to date"),
-                                SubmoduleState::Uninitialized => (
-                                    "not cloned",
-                                    theme::modified(),
-                                    "Not cloned yet: update it to get its files",
-                                ),
-                                SubmoduleState::OtherCommit => (
-                                    "other commit",
-                                    theme::modified(),
-                                    "A different commit is checked out than the one recorded here",
-                                ),
-                                SubmoduleState::Changed => {
-                                    ("changed", theme::modified(), "It has uncommitted changes")
-                                }
-                            };
-                            let badges: Vec<Badge> = if badge.is_empty() {
-                                Vec::new()
-                            } else {
-                                vec![Badge {
-                                    text: badge.into(),
-                                    colour,
-                                }]
-                            };
-                            let tip = format!(
-                                "{}\n{}{}",
-                                s.path,
-                                about,
-                                s.url
-                                    .as_deref()
-                                    .map(|u| format!("\n{u}"))
-                                    .unwrap_or_default()
-                            );
-                            let full = std::path::Path::new(root)
-                                .join(&s.path)
-                                .to_string_lossy()
-                                .into_owned();
-                            let cloned = s.state != SubmoduleState::Uninitialized;
-                            let response = row(
-                                ui,
-                                0,
-                                icon::PACKAGE,
-                                &s.path,
-                                &badges,
-                                false,
-                                false,
-                                &tip,
-                                None,
-                            );
-                            if response.double_clicked() && cloned {
-                                c.action = Some(Action::OpenPath(full.clone()));
-                            }
-                            response.context_menu(|ui| {
-                                let items = vec![
-                                    ("Open in a tab", cloned, Action::OpenPath(full.clone())),
-                                    (
-                                        if cloned { "Update" } else { "Clone and update" },
-                                        true,
-                                        Action::UpdateSubmodule(s.path.clone()),
-                                    ),
-                                    (
-                                        "Open a terminal here",
-                                        cloned,
-                                        Action::Terminal(full.clone()),
-                                    ),
-                                ];
-                                menu(ui, &mut c.action, items);
-                            });
-                        }
-                    });
-                }
-            }
-            ui.add_space(12.0);
-        });
+        }
+    });
     // Esc unpicks.
     if !c.picked.is_empty() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
         c.picked.clear();

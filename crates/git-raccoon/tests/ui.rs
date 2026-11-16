@@ -1462,6 +1462,19 @@ fn sidebar_sections_scroll_on_their_own_and_resize() {
         assert!(r.bottom() <= screen, "{heading} is in view: {r:?}");
     }
     screenshot(&mut h, "57-sidebar-sections");
+    // The sidebar as a whole doesn't scroll: wheeling over a heading
+    // leaves everything where it is.
+    let tags = h.get_by_label("Tags").rect();
+    h.event(egui::Event::PointerMoved(tags.center()));
+    h.run_ok();
+    h.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, -400.0),
+        modifiers: egui::Modifiers::NONE,
+        phase: egui::TouchPhase::Move,
+    });
+    settle(&mut h);
+    assert_eq!(h.get_by_label("Tags").rect(), tags, "nothing moved");
     // Local scrolls inside itself: its last branch isn't drawn yet.
     assert!(
         h.query_by_label("topic-79")
