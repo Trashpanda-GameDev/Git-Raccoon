@@ -45,7 +45,11 @@ jobs:
           git diff --exit-code -- crates/git-raccoon/assets/THIRD-PARTY-NOTICES.txt \
             || { echo "::error::Run python3 scripts/third-party-notices.py and commit the result."; exit 1; }
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      # Every test; the UI tests (which draw) one at a time, as Mesa's
+      # software Vulkan sometimes crashes when several draw at once.
+      - run: cargo test --workspace --exclude git-raccoon
+      - run: cargo test -p git-raccoon --lib --test askpass
+      - run: cargo test -p git-raccoon --test ui --test render_smoke --test site_screenshots -- --test-threads=1
         env:
           GIT_RACCOON_SCREENSHOTS: ${{ runner.temp }}/screenshots
       - name: Keep the UI screenshots

@@ -1598,7 +1598,7 @@ dependencies = [
 
 [[package]]
 name = "git-raccoon"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "chrono",
  "eframe",
@@ -1624,7 +1624,7 @@ dependencies = [
 
 [[package]]
 name = "git-raccoon-core"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "git2",
  "notify",
