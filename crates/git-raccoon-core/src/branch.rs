@@ -121,6 +121,44 @@ pub fn delete(path: &str, name: &str, force: bool) -> Result<()> {
     }
 }
 
+/// The ones of `names` that Git wouldn't delete without forcing: their
+/// commits aren't in their upstream (or, without one, in HEAD).
+pub fn unmerged(path: &str, names: &[String]) -> Result<Vec<String>> {
+    let repo = Repository::discover(path)?;
+    let head = repo.head().ok().and_then(|h| h.target());
+    let mut out = Vec::new();
+    for name in names {
+        let branch = repo.find_branch(name, git2::BranchType::Local)?;
+        let Some(tip) = branch.get().target() else {
+            continue;
+        };
+        let into = branch
+            .upstream()
+            .ok()
+            .and_then(|u| u.get().target())
+            .or(head);
+        let merged = into.is_some_and(|into| {
+            into == tip || repo.graph_descendant_of(into, tip).unwrap_or(false)
+        });
+        if !merged {
+            out.push(name.clone());
+        }
+    }
+    Ok(out)
+}
+
+/// Deletes several local branches: none of them, unless `force`, if any
+/// has unmerged work (the error names them).
+pub fn delete_many(path: &str, names: &[String], force: bool) -> Result<()> {
+    if !force {
+        let unmerged = unmerged(path, names)?;
+        if !unmerged.is_empty() {
+            return Err(Error::NotMerged(unmerged.join(", ")));
+        }
+    }
+    names.iter().try_for_each(|name| delete(path, name, force))
+}
+
 /// Creates a tag at commit `target`: annotated if a message is given.
 pub fn create_tag(path: &str, name: &str, target: &str, message: &str) -> Result<()> {
     if !is_valid_tag_name(name) {
@@ -160,6 +198,40 @@ mod tests {
         t.write("f.txt", "two\n");
         let second = t.commit_all("second");
         (t, first, second)
+    }
+
+    #[test]
+    fn deletes_several_branches_or_none() {
+        let (t, first, second) = repo();
+        let at = |name: &str, id: git2::Oid| {
+            t.repo
+                .branch(name, &t.repo.find_commit(id).unwrap(), false)
+                .unwrap();
+        };
+        at("old", first);
+        at("same", second);
+        // An unmerged one: a commit only it has.
+        at("side", first);
+        t.commit(Some("refs/heads/side"), "only on side", &[first]);
+        let names = |v: &[&str]| v.iter().map(ToString::to_string).collect::<Vec<_>>();
+
+        let all = names(&["old", "same", "side"]);
+        assert_eq!(unmerged(t.path(), &all).unwrap(), ["side"]);
+        assert!(matches!(
+            delete_many(t.path(), &all, false),
+            Err(Error::NotMerged(n)) if n == "side"
+        ));
+        assert!(branches(&t).contains(&"old".to_string()), "none deleted");
+
+        delete_many(t.path(), &names(&["old", "same"]), false).unwrap();
+        delete_many(t.path(), &names(&["side"]), true).unwrap();
+        let left = branches(&t);
+        assert!(
+            !left
+                .iter()
+                .any(|b| ["old", "same", "side"].contains(&b.as_str())),
+            "{left:?}"
+        );
     }
 
     fn head(t: &TempRepo) -> (Option<String>, String) {

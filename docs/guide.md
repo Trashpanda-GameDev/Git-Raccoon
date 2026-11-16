@@ -79,6 +79,8 @@ Progress shows in the toolbar, with a Cancel button.
 
 **Signing in.** Git Raccoon uses your existing Git setup: Git Credential Manager (included with Git for Windows) and other credential helpers, and keys in your SSH agent. When Git needs a password, a passphrase or confirmation of a new host, Git Raccoon asks in a dialog.
 
+**Several branches at once:** Ctrl+click (Cmd+click on a Mac) branches in the sidebar to pick them, then right-click one to delete them all (local ones, or remote ones on their remote). It asks once, and if any has work that isn't merged anywhere, it asks again before deleting any of them. Undo brings them all back; Esc unpicks.
+
 **Remote branches** can be deleted on the remote: right-click one under *Remote* and choose *Delete on the remote*. It asks first, as it's gone for everyone; Undo puts it back.
 
 **Remotes** are managed in the sidebar: **+** next to *Remote* adds one (and fetches it); right-click one to edit or remove it.

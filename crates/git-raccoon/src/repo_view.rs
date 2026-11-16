@@ -197,6 +197,11 @@ pub enum Op {
         name: String,
         force: bool,
     },
+    /// Several branches (none, unless `force`, if any has unmerged work).
+    DeleteBranches {
+        names: Vec<String>,
+        force: bool,
+    },
     CreateTag {
         name: String,
         target: String,
@@ -238,6 +243,8 @@ pub enum Op {
     Pull(PullMode),
     /// Delete a branch on its remote ("origin/feature"), for everyone.
     DeleteRemoteBranch(String),
+    /// Several of them.
+    DeleteRemoteBranches(Vec<String>),
     /// Fetch a ref on a remote (a pull request's head) into a branch.
     FetchInto {
         remote: String,
@@ -384,6 +391,7 @@ impl Op {
             Op::CheckoutDetached(id) => branch::checkout_detached(path, &id),
             Op::RenameBranch { old, new } => branch::rename(path, &old, &new),
             Op::DeleteBranch { name, force } => branch::delete(path, &name, force),
+            Op::DeleteBranches { names, force } => branch::delete_many(path, &names, force),
             Op::CreateTag {
                 name,
                 target,
@@ -422,6 +430,10 @@ impl Op {
                 let (remote, branch) = split_remote(&name)?;
                 sync::delete_remote_branch(path, remote, branch, report, &ctl.cancel)
             }
+            Op::DeleteRemoteBranches(names) => names.iter().try_for_each(|name| {
+                let (remote, branch) = split_remote(name)?;
+                sync::delete_remote_branch(path, remote, branch, report, &ctl.cancel)
+            }),
             Op::FetchInto {
                 remote,
                 source,
@@ -487,6 +499,7 @@ impl Op {
             Op::CheckoutDetached(_) => "check out the commit",
             Op::RenameBranch { .. } => "rename the branch",
             Op::DeleteBranch { .. } => "delete the branch",
+            Op::DeleteBranches { .. } => "delete the branches",
             Op::CreateTag { .. } => "create the tag",
             Op::DeleteTag(_) => "delete the tag",
             Op::StashThen(op) => op.verb(),
@@ -501,6 +514,7 @@ impl Op {
             Op::Pull(_) => "pull",
             Op::Push { .. } => "push",
             Op::DeleteRemoteBranch(_) => "delete the remote branch",
+            Op::DeleteRemoteBranches(_) => "delete the remote branches",
             Op::FetchInto { .. } => "fetch",
             Op::RestoreRemoteBranch { .. } => "undo",
             Op::AddRemote { .. } => "add the remote",
@@ -598,6 +612,8 @@ struct Before {
     stash_message: Option<String>,
     branch_existed: bool,
     stash_top: Option<String>,
+    /// Several branches' tips (and upstreams), for undoing a bulk delete.
+    tips: Vec<(String, String, Option<String>)>,
     /// HEAD's commit, for operations that move it.
     head: Option<String>,
 }
@@ -623,6 +639,24 @@ impl Before {
             }
             Op::DeleteRemoteBranch(name) => {
                 b.tip = undo::ref_target(path, &format!("refs/remotes/{name}")).ok();
+            }
+            Op::DeleteBranches { names, .. } => {
+                b.tips = names
+                    .iter()
+                    .filter_map(|n| {
+                        let tip = branch::tip(path, n).ok()?;
+                        Some((n.clone(), tip, undo::upstream_of(path, n).ok().flatten()))
+                    })
+                    .collect();
+            }
+            Op::DeleteRemoteBranches(names) => {
+                b.tips = names
+                    .iter()
+                    .filter_map(|n| {
+                        let tip = undo::ref_target(path, &format!("refs/remotes/{n}")).ok()?;
+                        Some((n.clone(), tip, None))
+                    })
+                    .collect();
             }
             Op::CheckoutRemote(name) => {
                 b.tip = branch::tip(path, local_name(name)).ok();
@@ -747,6 +781,22 @@ fn undo_for(op: &Op, before: Before, path: &str) -> Option<Undoable> {
                 old: new.clone(),
                 new: old.clone(),
             }],
+        ),
+        Op::DeleteBranches { names, .. } => (
+            format!("Undo delete {} branches", names.len()),
+            before
+                .tips
+                .into_iter()
+                .map(|(name, id, upstream)| Op::RestoreBranch { name, id, upstream })
+                .collect(),
+        ),
+        Op::DeleteRemoteBranches(names) => (
+            format!("Undo delete {} remote branches", names.len()),
+            before
+                .tips
+                .into_iter()
+                .map(|(remote_branch, id, _)| Op::RestoreRemoteBranch { remote_branch, id })
+                .collect(),
         ),
         Op::DeleteBranch { name, .. } => (
             format!("Undo delete branch {name}"),
@@ -1458,6 +1508,7 @@ impl RepoView {
                 | Op::Push { .. }
                 | Op::UpdateSubmodule(_)
                 | Op::DeleteRemoteBranch(_)
+                | Op::DeleteRemoteBranches(_)
                 | Op::RestoreRemoteBranch { .. }
                 | Op::FetchInto { .. }
         ) {
@@ -1610,6 +1661,37 @@ impl RepoView {
             button: "Delete on the remote".into(),
             danger: true,
             op: Op::DeleteRemoteBranch(name),
+        });
+    }
+
+    /// Asks before deleting several branches.
+    pub fn confirm_delete_branches(&mut self, names: Vec<String>) {
+        self.dialog = Some(Dialog::Confirm {
+            title: format!("Delete {} branches?", names.len()),
+            body: format!(
+                "{}\n\nOnly the branch names are removed; their commits stay. If any has commits that aren't on another branch, none are deleted until you say so.",
+                names.join(", ")
+            ),
+            button: format!("Delete {} branches", names.len()),
+            danger: true,
+            op: Op::DeleteBranches {
+                names,
+                force: false,
+            },
+        });
+    }
+
+    /// Asks before deleting several branches on their remotes.
+    pub fn confirm_delete_remote_branches(&mut self, names: Vec<String>) {
+        self.dialog = Some(Dialog::Confirm {
+            title: format!("Delete {} branches on the remote?", names.len()),
+            body: format!(
+                "{}\n\nThey're deleted on the remote, for everyone who uses it; your own branches and their commits here stay. Undo puts them back.",
+                names.join(", ")
+            ),
+            button: "Delete on the remote".into(),
+            danger: true,
+            op: Op::DeleteRemoteBranches(names),
         });
     }
 
@@ -2098,6 +2180,27 @@ impl RepoView {
                     button,
                     danger: false,
                     op: Op::StashThen(Box::new(op.clone())),
+                });
+                true
+            }
+            (
+                Error::NotMerged(which),
+                Op::DeleteBranches {
+                    names,
+                    force: false,
+                },
+            ) => {
+                self.dialog = Some(Dialog::Confirm {
+                    title: "Some have unmerged work".into(),
+                    body: format!(
+                        "{which}: their commits aren't on any other branch. Nothing was deleted. Deleting them anyway hides those commits from the graph (Undo brings them back)."
+                    ),
+                    button: format!("Delete all {} anyway", names.len()),
+                    danger: true,
+                    op: Op::DeleteBranches {
+                        names: names.clone(),
+                        force: true,
+                    },
                 });
                 true
             }

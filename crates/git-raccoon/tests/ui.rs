@@ -1790,6 +1790,113 @@ fn deletes_a_branch_on_the_remote_and_undoes_it() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+#[test]
+fn picks_several_branches_and_deletes_them_together() {
+    use egui::accesskit::Role;
+    let sample = Sample::build();
+    let base = std::env::temp_dir().join(format!("git-raccoon-remote-{}", rand_suffix()));
+    std::fs::create_dir_all(&base).unwrap();
+    let ok = std::process::Command::new("git")
+        .args(["init", "-q", "--bare", "remote.git"])
+        .current_dir(&base)
+        .status()
+        .unwrap();
+    assert!(ok.success());
+    let url = base.join("remote.git").to_str().unwrap().replace('\\', "/");
+    git(&sample, &["remote", "set-url", "origin", &url]);
+    git(
+        &sample,
+        &["push", "-q", "origin", "main", "main:one", "main:two"],
+    );
+    git(&sample, &["fetch", "-q", "origin"]);
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    let local = |app: &App| -> Vec<String> {
+        app.repo()
+            .unwrap()
+            .refs
+            .local
+            .iter()
+            .map(|b| b.name.clone())
+            .collect()
+    };
+    let remote = |app: &App| -> Vec<String> {
+        app.repo().unwrap().refs.remotes[0]
+            .branches
+            .iter()
+            .map(|b| b.name.clone())
+            .collect()
+    };
+
+    // Ctrl+click two local branches; right-click one of them.
+    h.get_by_label("graph")
+        .click_modifiers(egui::Modifiers::COMMAND);
+    h.run_ok();
+    h.get_by_label("toolbar-glitch")
+        .click_modifiers(egui::Modifiers::COMMAND);
+    h.run_ok();
+    h.get_by_label("graph").click_secondary();
+    h.run_ok();
+    screenshot(&mut h, "55-picked-branches");
+    h.get_by_label("Delete 2 branches…").click();
+    h.run_ok();
+    h.get_by_label("Delete 2 branches?");
+    h.get_by_role_and_label(Role::Button, "Delete 2 branches")
+        .click();
+    // The fix isn't merged anywhere: nothing goes until that's agreed to.
+    wait_for(&mut h, "the question", |app| {
+        app.repo().is_some_and(|r| r.dialog.is_some())
+    });
+    h.run_ok();
+    h.get_by_label("Some have unmerged work");
+    assert!(
+        local(h.state()).contains(&"feature/graph".to_string()),
+        "none deleted yet"
+    );
+    h.get_by_role_and_label(Role::Button, "Delete all 2 anyway")
+        .click();
+    wait_for(&mut h, "the delete", |app| {
+        !local(app)
+            .iter()
+            .any(|b| b == "feature/graph" || b == "fix/ui/toolbar-glitch")
+    });
+    wait_for(&mut h, "the undo", |app| {
+        undo_label(app).as_deref() == Some("Undo delete 2 branches")
+    });
+    h.get_by_label("Undo").click();
+    wait_for(&mut h, "they're back", |app| {
+        let l = local(app);
+        l.contains(&"feature/graph".to_string()) && l.contains(&"fix/ui/toolbar-glitch".to_string())
+    });
+
+    // Two on the remote.
+    h.get_by_label("one")
+        .click_modifiers(egui::Modifiers::COMMAND);
+    h.run_ok();
+    h.get_by_label("two")
+        .click_modifiers(egui::Modifiers::COMMAND);
+    h.run_ok();
+    h.get_by_label("two").click_secondary();
+    h.run_ok();
+    h.get_by_label("Delete 2 on the remote…").click();
+    h.run_ok();
+    h.get_by_label("Delete 2 branches on the remote?");
+    h.get_by_role_and_label(Role::Button, "Delete on the remote")
+        .click();
+    wait_for(&mut h, "the remote delete", |app| {
+        !remote(app).iter().any(|b| b == "one" || b == "two")
+    });
+    wait_for(&mut h, "its undo", |app| {
+        undo_label(app).as_deref() == Some("Undo delete 2 remote branches")
+    });
+    h.get_by_label("Undo").click();
+    wait_for(&mut h, "they're back there", |app| {
+        let r = remote(app);
+        r.contains(&"one".to_string()) && r.contains(&"two".to_string())
+    });
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// What a stand-in forge was sent: the method and path, and the body.
 type Seen = std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>;
 

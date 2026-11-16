@@ -289,9 +289,101 @@ struct Ctx<'s> {
     filtering: bool,
     selected: Option<&'s str>,
     action: Option<Action>,
+    /// Branches picked with Ctrl+click: "origin/x" for remote ones, which
+    /// are kept apart by `Picked`.
+    picked: Vec<Picked>,
+}
+
+/// A branch picked in the sidebar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Picked {
+    Local(String),
+    Remote(String),
 }
 
 impl Ctx<'_> {
+    /// A click on a branch's row: Ctrl (Cmd) picks it, or unpicks it;
+    /// otherwise the picking is over. Returns whether it was picked.
+    fn pick(&mut self, ui: &egui::Ui, response: &egui::Response, branch: Picked) -> bool {
+        if !response.clicked() {
+            return false;
+        }
+        if ui.input(|i| i.modifiers.command) {
+            if let Some(at) = self.picked.iter().position(|p| *p == branch) {
+                self.picked.remove(at);
+            } else {
+                self.picked.push(branch);
+            }
+            true
+        } else {
+            self.picked.clear();
+            false
+        }
+    }
+
+    fn is_picked(&self, branch: &Picked) -> bool {
+        self.picked.contains(branch)
+    }
+
+    /// The context menu's bulk items, when the right-clicked branch is
+    /// among several picked. Returns whether they were shown.
+    fn picked_menu(&mut self, ui: &mut egui::Ui, branch: &Picked, head: Option<&str>) -> bool {
+        if self.picked.len() < 2 || !self.is_picked(branch) {
+            return false;
+        }
+        let local: Vec<String> = self
+            .picked
+            .iter()
+            .filter_map(|p| match p {
+                Picked::Local(n) if Some(n.as_str()) != head => Some(n.clone()),
+                _ => None,
+            })
+            .collect();
+        let remote: Vec<String> = self
+            .picked
+            .iter()
+            .filter_map(|p| match p {
+                Picked::Remote(n) => Some(n.clone()),
+                Picked::Local(_) => None,
+            })
+            .collect();
+        if !local.is_empty() {
+            let label = match local.len() {
+                1 => format!("Delete {}…", local[0]),
+                n => format!("Delete {n} branches…"),
+            };
+            if ui.button(label).clicked() {
+                self.action = Some(if local.len() == 1 {
+                    Action::DeleteBranch(local[0].clone())
+                } else {
+                    Action::DeleteBranches(local)
+                });
+                self.picked.clear();
+                ui.close();
+            }
+        }
+        if !remote.is_empty() {
+            let label = match remote.len() {
+                1 => format!("Delete {} on the remote…", remote[0]),
+                n => format!("Delete {n} on the remote…"),
+            };
+            if ui.button(label).clicked() {
+                self.action = Some(if remote.len() == 1 {
+                    Action::DeleteRemoteBranch(remote[0].clone())
+                } else {
+                    Action::DeleteRemoteBranches(remote)
+                });
+                self.picked.clear();
+                ui.close();
+            }
+        }
+        if ui.button("Unpick all").clicked() {
+            self.picked.clear();
+            ui.close();
+        }
+        true
+    }
+
     fn is_open(&self, key: &str) -> bool {
         self.filtering || !self.collapsed.contains(key)
     }
@@ -512,6 +604,9 @@ pub enum Action {
     CheckoutRemote(String),
     /// Delete a branch on its remote ("origin/feature"), after asking.
     DeleteRemoteBranch(String),
+    /// Delete several local branches, or several on their remotes.
+    DeleteBranches(Vec<String>),
+    DeleteRemoteBranches(Vec<String>),
     /// Open the new-branch dialog at `start` ("HEAD" or a commit id).
     NewBranch {
         start: String,
@@ -701,11 +796,13 @@ pub fn show(
         .filter(|s| matches(&s.message) || matches(&format!("stash@{{{}}}", s.index)))
         .collect();
 
+    let picked_id = egui::Id::new(("sidebar-picked", root));
     let mut c = Ctx {
         collapsed,
         filtering: !f.is_empty(),
         selected,
         action: None,
+        picked: ui.data(|d| d.get_temp::<Vec<Picked>>(picked_id).unwrap_or_default()),
     };
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -786,7 +883,8 @@ pub fn show(
                             glyph,
                             name,
                             &badges,
-                            c.selected == Some(b.target.as_str()),
+                            c.selected == Some(b.target.as_str())
+                                || c.is_picked(&Picked::Local(b.name.clone())),
                             b.is_head,
                             &tooltip,
                             b.is_head.then(|| {
@@ -795,8 +893,10 @@ pub fn show(
                                     .is_some_and(|u| !u.gone && u.ahead == 0 && u.behind == 0)
                             }),
                         );
+                        let me = Picked::Local(b.name.clone());
                         if response.double_clicked() {
                             c.action = Some(Action::Checkout(b.name.clone()));
+                        } else if c.pick(ui, &response, me.clone()) {
                         } else if response.clicked() {
                             c.action = Some(Action::Jump(b.target.clone()));
                         }
@@ -814,6 +914,9 @@ pub fn show(
                             .filter(|u| !u.gone)
                             .and_then(|u| web.branch(&u.name));
                         response.context_menu(|ui| {
+                            if c.picked_menu(ui, &me, head) {
+                                return;
+                            }
                             web_items(ui, &mut c.action, page.as_ref());
                             let items = vec![
                                 ("Check out", !b.is_head, Action::Checkout(b.name.clone())),
@@ -894,13 +997,16 @@ pub fn show(
                                     icon::GIT_BRANCH,
                                     name,
                                     &[],
-                                    c.selected == Some(b.target.as_str()),
+                                    c.selected == Some(b.target.as_str())
+                                        || c.is_picked(&Picked::Remote(b.full_name.clone())),
                                     false,
                                     &b.full_name,
                                     None,
                                 );
+                                let me = Picked::Remote(b.full_name.clone());
                                 if response.double_clicked() {
                                     c.action = Some(Action::CheckoutRemote(b.full_name.clone()));
+                                } else if c.pick(ui, &response, me.clone()) {
                                 } else if response.clicked() {
                                     c.action = Some(Action::Jump(b.target.clone()));
                                 }
@@ -913,6 +1019,9 @@ pub fn show(
                                 );
                                 let page = web.branch(&b.full_name);
                                 response.context_menu(|ui| {
+                                    if c.picked_menu(ui, &me, head) {
+                                        return;
+                                    }
                                     web_items(ui, &mut c.action, page.as_ref());
                                     let items = vec![
                                         (
@@ -1184,6 +1293,11 @@ pub fn show(
             }
             ui.add_space(12.0);
         });
+    // Esc unpicks.
+    if !c.picked.is_empty() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        c.picked.clear();
+    }
+    ui.data_mut(|d| d.insert_temp(picked_id, c.picked.clone()));
     c.action
 }
 

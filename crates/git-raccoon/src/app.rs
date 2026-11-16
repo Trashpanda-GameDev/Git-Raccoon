@@ -1572,6 +1572,10 @@ impl App {
                 Some(sidebar::Action::NewBranch { start, label }) => repo.new_branch(start, label),
                 Some(sidebar::Action::Rename(name)) => repo.rename_branch(name),
                 Some(sidebar::Action::DeleteBranch(name)) => repo.confirm_delete_branch(name),
+                Some(sidebar::Action::DeleteBranches(names)) => repo.confirm_delete_branches(names),
+                Some(sidebar::Action::DeleteRemoteBranches(names)) => {
+                    repo.confirm_delete_remote_branches(names);
+                }
                 Some(sidebar::Action::DeleteRemoteBranch(name)) => {
                     repo.confirm_delete_remote_branch(name);
                 }
