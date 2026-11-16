@@ -41,6 +41,10 @@ pub struct App {
     prompt: Option<crate::ui::askpass::Prompt>,
     /// The clone dialog, and a clone in progress.
     clone_form: Option<clone::Form>,
+    /// Loading an account's repositories (for that account), and making
+    /// a new one there, for the clone dialog.
+    clone_repos: Option<(usize, Task<RepoList>)>,
+    clone_make: Option<Task<Result<crate::forge::accounts::Repo, String>>>,
     cloning: Option<Cloning>,
     /// The command palette, while open.
     palette: Option<palette::State>,
@@ -82,6 +86,9 @@ struct Tab {
     path: Option<String>,
     parked: Option<(Option<RepoView>, history::Scroll)>,
 }
+
+/// An account's repositories, or why they couldn't be listed.
+type RepoList = Result<Vec<crate::forge::accounts::Repo>, String>;
 
 /// A clone running in the background.
 struct Cloning {
@@ -153,6 +160,8 @@ impl App {
             askpass: None,
             prompt: None,
             clone_form: None,
+            clone_repos: None,
+            clone_make: None,
             cloning: None,
             palette: None,
             settings_open: false,
@@ -185,8 +194,11 @@ impl App {
                     .ok()
             })
             .unwrap_or_default();
+        // Signed in somewhere: start with the first account's repositories.
+        let account = (!self.settings.accounts.is_empty()).then_some(0);
         self.clone_form = Some(clone::Form {
             parent,
+            account,
             ..clone::Form::default()
         });
     }
@@ -241,13 +253,81 @@ impl App {
 
     fn clone_dialog(&mut self, ctx: &egui::Context) {
         let Some(form) = &mut self.clone_form else {
+            self.clone_repos = None;
+            self.clone_make = None;
             return;
         };
+        // The picked account's repositories.
+        if let Some((i, task)) = &self.clone_repos
+            && let Some(result) = task.poll()
+        {
+            if form.account == Some(*i) {
+                form.repos = Some(result);
+            }
+            self.clone_repos = None;
+        }
+        if let Some(i) = form.account
+            && form.repos.is_none()
+            && self.clone_repos.as_ref().is_none_or(|(j, _)| *j != i)
+            && let Some(account) = self.settings.accounts.get(i).cloned()
+        {
+            self.clone_repos = Some((
+                i,
+                Task::spawn(ctx, move || crate::forge::accounts::repositories(&account)),
+            ));
+        }
+        // A new repository, made: clone it.
+        let mut made = false;
+        if let Some(result) = self.clone_make.as_ref().and_then(Task::poll) {
+            self.clone_make = None;
+            form.making = false;
+            match result {
+                Ok(repo) => {
+                    form.url = repo.clone_url;
+                    if !form.name_edited {
+                        form.name = create::folder_name(&form.url);
+                    }
+                    form.new_repo = None;
+                    form.repos = None;
+                    made = true;
+                }
+                Err(e) => form.error = Some(format!("Could not make it:\n{e}")),
+            }
+        }
+        if made {
+            self.start_clone(ctx);
+            return;
+        }
         let progress = self
             .cloning
             .as_ref()
             .map(|c| c.progress.lock().ok().and_then(|p| p.clone()));
-        match clone::show(ctx, form, progress) {
+        match clone::show(ctx, form, progress, &self.settings.accounts) {
+            Some(clone::Action::LoadRepos) => {}
+            Some(clone::Action::MakeAndClone) => {
+                if let (Some(account), Some(new)) = (
+                    form.account
+                        .and_then(|i| self.settings.accounts.get(i))
+                        .cloned(),
+                    &form.new_repo,
+                ) {
+                    form.making = true;
+                    form.error = None;
+                    let (name, description, private) = (
+                        new.name.trim().to_string(),
+                        new.description.trim().to_string(),
+                        new.private,
+                    );
+                    self.clone_make = Some(Task::spawn(ctx, move || {
+                        crate::forge::accounts::create_repository(
+                            &account,
+                            &name,
+                            &description,
+                            private,
+                        )
+                    }));
+                }
+            }
             Some(clone::Action::Clone) => self.start_clone(ctx),
             Some(clone::Action::Browse) => {
                 if let Some(dir) = rfd::FileDialog::new()

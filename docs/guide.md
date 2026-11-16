@@ -33,7 +33,7 @@ Git Raccoon needs [Git](https://git-scm.com) installed. Once installed, it keeps
 The welcome screen offers:
 
 - **Open a repository…**: pick a folder with a Git repository (any folder inside one works too).
-- **Clone a repository…**: paste a URL (HTTPS or SSH), choose where it goes, and Git Raccoon clones it with progress and a Cancel button, then opens it.
+- **Clone a repository…**: paste a URL (HTTPS or SSH), choose where it goes, and Git Raccoon clones it with progress and a Cancel button, then opens it. Signed in to GitHub or GitLab (see [Pull requests, merge requests and issues](#pull-requests-merge-requests-and-issues))? Pick the account under **From** and choose one of your repositories from the list (type to find it), or click **New repository on …** to make a new one there (public or private) and clone it straight away.
 - **New repository…**: pick a folder to start a repository in.
 - **Recent** repositories, one click away.
 

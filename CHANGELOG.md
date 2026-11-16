@@ -5,6 +5,7 @@ release page). Newest first; a version's heading is just its number.
 
 ## 0.5.7
 
+- **Clone from your accounts**: pick one of your GitHub or GitLab repositories from a list, or make a new repository there and clone it, in the Clone window.
 - **Sidebar sections keep their headings in view**: each scrolls on its own, and you can drag the line under one to make it taller or shorter (double-click it to let it fit again).
 - **Long branch names show in full** when you hover over a label that's cut short in the graph.
 

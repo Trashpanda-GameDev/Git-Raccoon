@@ -1,4 +1,6 @@
-//! The clone dialog: where from, where to, and progress while cloning.
+//! The clone dialog: where from (a URL, or one of your repositories on an
+//! account you're signed in to, or a new one made there), where to, and
+//! progress while cloning.
 
 use std::path::PathBuf;
 
@@ -11,6 +13,16 @@ use crate::theme;
 /// What has been filled in.
 #[derive(Default)]
 pub struct Form {
+    /// The account being picked from (an index into the accounts), if any.
+    pub account: Option<usize>,
+    /// Its repositories, once loaded (`None` while loading).
+    pub repos: Option<Result<Vec<crate::forge::accounts::Repo>, String>>,
+    /// Narrows the list.
+    pub search: String,
+    /// A new repository to make on the account, while it's being filled in.
+    pub new_repo: Option<NewRepo>,
+    /// Making it.
+    pub making: bool,
     pub url: String,
     /// The folder the clone goes in.
     pub parent: String,
@@ -27,7 +39,19 @@ impl Form {
     }
 }
 
+/// A new repository on an account.
+#[derive(Default)]
+pub struct NewRepo {
+    pub name: String,
+    pub description: String,
+    pub private: bool,
+}
+
 pub enum Action {
+    /// Load the repositories of the account picked.
+    LoadRepos,
+    /// Make the new repository on the account, then clone it.
+    MakeAndClone,
     Clone,
     Browse,
     Cancel,
@@ -35,11 +59,183 @@ pub enum Action {
     Stop,
 }
 
-/// Shows the dialog. `progress` is `Some` while cloning.
+/// Picking one of an account's repositories, or making a new one there.
+fn from_account(
+    ui: &mut egui::Ui,
+    form: &mut Form,
+    accounts: &[crate::forge::Account],
+    action: &mut Option<Action>,
+) {
+    use egui_phosphor::regular as icon;
+    let name = |a: &crate::forge::Account| format!("{} · {}", a.place(), a.login);
+    ui.label(RichText::new("From").size(12.0).color(theme::muted()));
+    let chosen = form
+        .account
+        .and_then(|i| accounts.get(i))
+        .map_or_else(|| "A URL".to_string(), name);
+    let before = form.account;
+    let combo = egui::ComboBox::from_id_salt("clone-from")
+        .selected_text(chosen)
+        .width(ui.available_width())
+        .show_ui(ui, |ui| {
+            ui.selectable_value(&mut form.account, None, "A URL");
+            for (i, a) in accounts.iter().enumerate() {
+                ui.selectable_value(&mut form.account, Some(i), name(a));
+            }
+        });
+    ui.ctx()
+        .accesskit_node_builder(combo.response.id, |n| n.set_label("Clone from"));
+    if form.account != before {
+        form.repos = None;
+        form.search.clear();
+        form.new_repo = None;
+        if form.account.is_some() {
+            *action = Some(Action::LoadRepos);
+        }
+    }
+    let Some(account) = form.account.and_then(|i| accounts.get(i)) else {
+        ui.add_space(4.0);
+        return;
+    };
+    ui.add_space(6.0);
+    if let Some(new) = &mut form.new_repo {
+        // A new repository there.
+        ui.label(
+            RichText::new(format!("A new repository on {}", name(account)))
+                .size(12.0)
+                .color(theme::muted()),
+        );
+        labelled(
+            ui,
+            "Name",
+            "New repository name",
+            &mut new.name,
+            "my-project",
+        );
+        labelled(
+            ui,
+            "Description",
+            "New repository description",
+            &mut new.description,
+            "Optional",
+        );
+        ui.checkbox(
+            &mut new.private,
+            "Private (only you, and who you invite, can see it)",
+        );
+        ui.add_space(4.0);
+        let named = !new.name.trim().is_empty();
+        let making = form.making;
+        let mut back = false;
+        ui.horizontal(|ui| {
+            let label = if making {
+                "Making it…"
+            } else {
+                "Make it and clone it"
+            };
+            if ui
+                .add_enabled(named && !making, egui::Button::new(label))
+                .clicked()
+            {
+                *action = Some(Action::MakeAndClone);
+            }
+            if making {
+                ui.spinner();
+            }
+            back = ui
+                .add_enabled(!making, egui::Button::new("Back to the list"))
+                .clicked();
+        });
+        if back {
+            form.new_repo = None;
+        }
+        ui.add_space(8.0);
+        return;
+    }
+    let search = ui.add(
+        egui::TextEdit::singleline(&mut form.search)
+            .hint_text(format!("{}  Find a repository…", icon::MAGNIFYING_GLASS))
+            .desired_width(f32::INFINITY),
+    );
+    ui.ctx()
+        .accesskit_node_builder(search.id, |n| n.set_label("Find a repository"));
+    ui.add_space(2.0);
+    egui::Frame::new()
+        .stroke(egui::Stroke::new(1.0, theme::border()))
+        .corner_radius(4)
+        .inner_margin(4)
+        .show(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("clone-repos")
+                .max_height(180.0)
+                .min_scrolled_height(180.0)
+                .auto_shrink([false, false])
+                .show(ui, |ui| match &form.repos {
+                    None => {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(RichText::new("Loading…").color(theme::muted()));
+                        });
+                    }
+                    Some(Err(e)) => {
+                        ui.label(RichText::new(e).color(theme::danger()));
+                    }
+                    Some(Ok(repos)) => {
+                        let wanted = form.search.trim().to_lowercase();
+                        let mut shown = 0;
+                        for repo in repos.iter().filter(|r| {
+                            wanted.is_empty() || r.path.to_lowercase().contains(&wanted)
+                        }) {
+                            shown += 1;
+                            let picked = form.url == repo.clone_url;
+                            let lock = if repo.private {
+                                icon::LOCK_SIMPLE
+                            } else {
+                                icon::BOOK_BOOKMARK
+                            };
+                            let row = ui.selectable_label(picked, format!("{lock}  {}", repo.path));
+                            let row = if repo.description.is_empty() {
+                                row
+                            } else {
+                                row.on_hover_text(&repo.description)
+                            };
+                            if row.clicked() {
+                                form.url = repo.clone_url.clone();
+                                if !form.name_edited {
+                                    form.name = create::folder_name(&form.url);
+                                }
+                            }
+                        }
+                        if shown == 0 {
+                            ui.label(RichText::new("No repositories").color(theme::muted()));
+                        }
+                    }
+                });
+        });
+    ui.add_space(2.0);
+    if ui
+        .link(format!(
+            "{}  New repository on {}…",
+            icon::PLUS,
+            account.place()
+        ))
+        .clicked()
+    {
+        form.new_repo = Some(NewRepo {
+            private: true,
+            ..NewRepo::default()
+        });
+    }
+    ui.add_space(8.0);
+}
+
+/// Shows the dialog. `progress` is `Some` while cloning; `accounts` are
+/// the ones signed in to, to pick a repository from.
 pub fn show(
     ctx: &egui::Context,
     form: &mut Form,
     progress: Option<Option<Progress>>,
+    accounts: &[crate::forge::Account],
 ) -> Option<Action> {
     let mut action = None;
     let cloning = progress.is_some();
@@ -48,6 +244,9 @@ pub fn show(
         ui.label(RichText::new("Clone a repository").strong().size(15.0));
         ui.add_space(8.0);
         ui.add_enabled_ui(!cloning, |ui| {
+            if !accounts.is_empty() {
+                from_account(ui, form, accounts, &mut action);
+            }
             let url = labelled(
                 ui,
                 "URL",

@@ -375,6 +375,7 @@ fn body(
                 .min_scrolled_height(height)
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
+                    ui.set_max_width(width);
                     // What's drawn, not the space it's in.
                     let top = ui.cursor().top();
                     add(ui, c);
@@ -527,10 +528,18 @@ fn forge_sections(
     let kind = forge.project.kind;
     let note = |ui: &mut egui::Ui, text: &str| {
         ui.add_space(2.0);
-        ui.horizontal(|ui| {
-            ui.add_space(28.0);
-            ui.label(RichText::new(text).size(12.0).color(theme::muted()));
-        });
+        // Wrapped, so a long note doesn't widen the sidebar.
+        egui::Frame::new()
+            .inner_margin(egui::Margin {
+                left: 28,
+                right: 4,
+                ..egui::Margin::ZERO
+            })
+            .show(ui, |ui| {
+                ui.add(
+                    egui::Label::new(RichText::new(text).size(12.0).color(theme::muted())).wrap(),
+                );
+            });
         ui.add_space(6.0);
     };
     // Before signing in: one link, for both sections.
@@ -965,10 +974,19 @@ pub fn show(
             ui.spacing_mut().item_spacing.y = 0.0;
             let empty = |ui: &mut egui::Ui, text: &str| {
                 ui.add_space(2.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(28.0);
-                    ui.label(RichText::new(text).size(12.0).color(theme::muted()));
-                });
+                // Wrapped, so a long note doesn't widen the sidebar.
+                egui::Frame::new()
+                    .inner_margin(egui::Margin {
+                        left: 28,
+                        right: 4,
+                        ..egui::Margin::ZERO
+                    })
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::Label::new(RichText::new(text).size(12.0).color(theme::muted()))
+                                .wrap(),
+                        );
+                    });
                 ui.add_space(6.0);
             };
             let none = if f.is_empty() { "" } else { "No matches" };

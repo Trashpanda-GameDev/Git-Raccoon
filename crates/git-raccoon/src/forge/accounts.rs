@@ -119,13 +119,18 @@ pub fn forget(account: &Account) {
     }
 }
 
+/// The forge's API address.
+fn api_root(kind: Kind, base: &str) -> String {
+    match (kind, base) {
+        (Kind::GitHub, "https://github.com") => "https://api.github.com".into(),
+        (Kind::GitHub, base) => format!("{base}/api/v3"),
+        (Kind::GitLab, base) => format!("{base}/api/v4"),
+    }
+}
+
 /// The API address for "who am I".
 fn user_url(kind: Kind, base: &str) -> String {
-    match (kind, base) {
-        (Kind::GitHub, "https://github.com") => "https://api.github.com/user".into(),
-        (Kind::GitHub, base) => format!("{base}/api/v3/user"),
-        (Kind::GitLab, base) => format!("{base}/api/v4/user"),
-    }
+    format!("{}/user", api_root(kind, base))
 }
 
 /// Checks a token, and finds whose it is. Returns the account.
@@ -161,6 +166,11 @@ pub fn sign_in(
 /// A session for `project` with `account`, renewing an expired GitLab
 /// sign-in first.
 pub fn session(account: &Account, project: &Project) -> Result<Session, String> {
+    Ok(Session::new(project.clone(), token(account)?))
+}
+
+/// An account's token, renewing an expired GitLab sign-in first.
+fn token(account: &Account) -> Result<String, String> {
     let mut secret = load(account)?;
     let now = crate::settings::now();
     if let (Some(expires), Some(refresh)) = (secret.expires, secret.refresh.clone())
@@ -174,7 +184,87 @@ pub fn session(account: &Account, project: &Project) -> Result<Session, String> 
         secret = oauth::refresh(account.kind, &account.base, client, &refresh)?;
         save(account, &secret)?;
     }
-    Ok(Session::new(project.clone(), secret.token))
+    Ok(secret.token)
+}
+
+/// A repository of an account's (its own, or one it's a member of).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Repo {
+    /// "owner/name", or "group/sub/name" on GitLab.
+    pub path: String,
+    pub description: String,
+    pub private: bool,
+    /// The address to clone it from (HTTPS).
+    pub clone_url: String,
+}
+
+fn repo(kind: Kind, v: &serde_json::Value) -> Repo {
+    match kind {
+        Kind::GitHub => Repo {
+            path: text(v, "full_name"),
+            description: text(v, "description"),
+            private: v["private"].as_bool().unwrap_or(false),
+            clone_url: text(v, "clone_url"),
+        },
+        Kind::GitLab => Repo {
+            path: text(v, "path_with_namespace"),
+            description: text(v, "description"),
+            private: v["visibility"].as_str() != Some("public"),
+            clone_url: text(v, "http_url_to_repo"),
+        },
+    }
+}
+
+/// The account's repositories, most recently active first. Blocks.
+pub fn repositories(account: &Account) -> Result<Vec<Repo>, String> {
+    let token = token(account)?;
+    let root = api_root(account.kind, &account.base);
+    let url = match account.kind {
+        Kind::GitHub => format!(
+            "{root}/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member"
+        ),
+        Kind::GitLab => {
+            format!("{root}/projects?membership=true&per_page=100&order_by=last_activity_at")
+        }
+    };
+    let list = http::get(account.kind.name(), &url, &Auth::Bearer(&token))?;
+    Ok(list
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|v| repo(account.kind, v))
+        .collect())
+}
+
+/// Makes a new, empty repository on the account. Returns it. Blocks.
+pub fn create_repository(
+    account: &Account,
+    name: &str,
+    description: &str,
+    private: bool,
+) -> Result<Repo, String> {
+    let token = token(account)?;
+    let root = api_root(account.kind, &account.base);
+    let (url, body) = match account.kind {
+        Kind::GitHub => (
+            format!("{root}/user/repos"),
+            serde_json::json!({ "name": name, "description": description, "private": private }),
+        ),
+        Kind::GitLab => (
+            format!("{root}/projects"),
+            serde_json::json!({
+                "name": name,
+                "description": description,
+                "visibility": if private { "private" } else { "public" },
+            }),
+        ),
+    };
+    let made = http::post(account.kind.name(), &url, &Auth::Bearer(&token), &body)?;
+    let made = repo(account.kind, &made);
+    if made.clone_url.is_empty() {
+        return Err(format!("{} didn't make it", account.kind.name()));
+    }
+    Ok(made)
 }
 
 #[cfg(test)]
@@ -203,6 +293,69 @@ mod tests {
             ..account
         };
         assert_eq!(place.place(), "git.example.com");
+    }
+
+    #[test]
+    fn lists_and_makes_an_accounts_repositories() {
+        use_memory_store();
+        let (base, seen) = mock::serve(vec![
+            (
+                200,
+                r#"[{"path_with_namespace": "team/app", "description": "The app",
+                     "visibility": "private", "http_url_to_repo": "https://git.example.com/team/app.git"},
+                    {"path_with_namespace": "rocky/notes", "description": null,
+                     "visibility": "public", "http_url_to_repo": "https://git.example.com/rocky/notes.git"}]"#
+                    .into(),
+            ),
+            (
+                201,
+                r#"{"path_with_namespace": "rocky/new-thing", "visibility": "private",
+                    "http_url_to_repo": "https://git.example.com/rocky/new-thing.git"}"#
+                    .into(),
+            ),
+        ]);
+        let account = Account {
+            kind: Kind::GitLab,
+            base: base.clone(),
+            login: "rocky".into(),
+            client: None,
+        };
+        save(
+            &account,
+            &Secret {
+                token: "glpat".into(),
+                refresh: None,
+                expires: None,
+            },
+        )
+        .unwrap();
+        let repos = repositories(&account).unwrap();
+        assert_eq!(repos.len(), 2);
+        assert_eq!(
+            (repos[0].path.as_str(), repos[0].private, repos[1].private),
+            ("team/app", true, false)
+        );
+        assert_eq!(repos[1].description, "");
+        let made = create_repository(&account, "new-thing", "Fresh", true).unwrap();
+        assert_eq!(
+            made.clone_url,
+            "https://git.example.com/rocky/new-thing.git"
+        );
+        let seen = seen.lock().unwrap();
+        assert!(
+            seen[0]
+                .0
+                .starts_with("GET /api/v4/projects?membership=true"),
+            "{}",
+            seen[0].0
+        );
+        assert_eq!(seen[1].0, "POST /api/v4/projects");
+        let sent: serde_json::Value = serde_json::from_str(&seen[1].2).unwrap();
+        assert_eq!(
+            (sent["name"].as_str(), sent["visibility"].as_str()),
+            (Some("new-thing"), Some("private"))
+        );
+        forget(&account);
     }
 
     #[test]

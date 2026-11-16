@@ -1972,10 +1972,12 @@ fn forge_server(routes: Vec<(&'static str, String)>, repo: std::path::PathBuf) -
     let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let log = std::sync::Arc::clone(&seen);
     let routes = std::sync::Arc::new(routes);
+    let here = base.clone();
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
             let (routes, log) = (std::sync::Arc::clone(&routes), std::sync::Arc::clone(&log));
             let repo = repo.clone();
+            let here = here.clone();
             std::thread::spawn(move || {
                 let mut reader = BufReader::new(stream.try_clone().unwrap());
                 let mut first = String::new();
@@ -2016,7 +2018,10 @@ fn forge_server(routes: Vec<(&'static str, String)>, repo: std::path::PathBuf) -
                     .iter()
                     .filter(|(prefix, _)| request.starts_with(prefix))
                     .max_by_key(|(prefix, _)| prefix.len())
-                    .map_or_else(|| (404, "{}".to_string()), |(_, json)| (200, json.clone()));
+                    .map_or_else(
+                        || (404, "{}".to_string()),
+                        |(_, json)| (200, json.replace("{base}", &here)),
+                    );
                 let _ = write!(
                     stream,
                     "HTTP/1.1 {} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -2463,6 +2468,143 @@ fn adds_edits_and_removes_remotes() {
         remote_names(app).iter().all(|(n, _)| n != "mirror")
     });
     assert_eq!(remote_names(h.state()), [("origin".to_string(), 1)]);
+    let _ = std::fs::remove_dir_all(&bare);
+}
+
+#[test]
+fn clones_from_an_account_and_makes_new_repositories_there() {
+    use git_raccoon::forge::{Account, Kind, accounts};
+    let sample = Sample::build();
+    // The forge serves the sample's commits as team/app.git.
+    let bare = sample.dir.with_extension("forge.git");
+    git(&sample, &["init", "-q", "--bare", bare.to_str().unwrap()]);
+    git(&sample, &["push", "-q", bare.to_str().unwrap(), "main"]);
+    let ok = std::process::Command::new("git")
+        .args(["symbolic-ref", "HEAD", "refs/heads/main"])
+        .current_dir(&bare)
+        .status()
+        .unwrap();
+    assert!(ok.success());
+    let served = std::process::Command::new("git")
+        .args(["update-server-info"])
+        .current_dir(&bare)
+        .status()
+        .unwrap();
+    assert!(served.success());
+    let (base, seen) = forge_server(
+        vec![
+            (
+                "GET /api/v4/projects?",
+                r#"[{"path_with_namespace": "team/app", "description": "The app",
+                     "visibility": "private", "http_url_to_repo": "{base}/team/app.git"},
+                    {"path_with_namespace": "rocky/notes", "description": "",
+                     "visibility": "public", "http_url_to_repo": "{base}/rocky/notes.git"}]"#
+                    .into(),
+            ),
+            (
+                "POST /api/v4/projects",
+                r#"{"path_with_namespace": "rocky/fresh", "visibility": "private",
+                    "http_url_to_repo": "{base}/team/app.git"}"#
+                    .into(),
+            ),
+        ],
+        bare.clone(),
+    );
+    accounts::use_memory_store();
+    let account = Account {
+        kind: Kind::GitLab,
+        base: base.clone(),
+        login: "rocky".into(),
+        client: None,
+    };
+    accounts::save(
+        &account,
+        &accounts::Secret {
+            token: "glpat".into(),
+            refresh: None,
+            expires: None,
+        },
+    )
+    .unwrap();
+    let parent = std::env::temp_dir().join(format!("git-raccoon-account-clones-{}", rand_suffix()));
+    std::fs::create_dir_all(&parent).unwrap();
+    let mut h = harness(Settings {
+        accounts: vec![account],
+        clone_dir: Some(parent.to_str().unwrap().replace('\\', "/")),
+        ..Settings::default()
+    });
+    h.run_ok();
+
+    // The account's repositories, to pick from.
+    h.get_by_label("Clone a repository…").click();
+    let mut listed = false;
+    for _ in 0..200 {
+        h.run_ok();
+        if h.query_by_label_contains("team/app").is_some() {
+            listed = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(listed, "the account's repositories are listed");
+    type_into(&mut h, "Find a repository", "app");
+    assert!(
+        h.query_by_label_contains("rocky/notes").is_none(),
+        "narrowed"
+    );
+    h.get_by_label_contains("team/app").click();
+    h.run_ok();
+    assert_eq!(
+        h.get_by_label("Repository URL").value().as_deref(),
+        Some(format!("{base}/team/app.git").as_str())
+    );
+    assert_eq!(h.get_by_label("Clone name").value().as_deref(), Some("app"));
+    screenshot(&mut h, "58-clone-from-account");
+    h.get_by_label("Clone").click();
+    wait_for(&mut h, "the clone to open", |app| app.repo().is_some());
+    assert!(h.state().repo().unwrap().history.total() > 5);
+
+    // A new one, made on the account and cloned.
+    press(&mut h, egui::Modifiers::COMMAND, Key::T);
+    h.run_ok();
+    h.get_by_label("Clone a repository…").click();
+    h.run_ok();
+    h.get_by_label_contains("New repository on").click();
+    h.run_ok();
+    type_into(&mut h, "New repository name", "fresh");
+    type_into(&mut h, "New repository description", "Brand new");
+    h.get_by_label("Clone name").click();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+    h.get_by_label("Clone name").type_text("fresh");
+    h.run_ok();
+    h.get_by_label("Make it and clone it").click();
+    wait_for(&mut h, "the new one to open", |app| {
+        app.repo().is_some_and(|r| {
+            r.path()
+                .replace('\\', "/")
+                .trim_end_matches('/')
+                .ends_with("/fresh")
+        })
+    });
+    settle(&mut h);
+    screenshot(&mut h, "59-made-on-account");
+    let made = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(r, _)| r == "POST /api/v4/projects")
+        .cloned()
+        .expect("asked for a new repository");
+    let sent: serde_json::Value = serde_json::from_str(&made.1).unwrap();
+    assert_eq!(
+        (
+            sent["name"].as_str(),
+            sent["description"].as_str(),
+            sent["visibility"].as_str()
+        ),
+        (Some("fresh"), Some("Brand new"), Some("private"))
+    );
+    let _ = std::fs::remove_dir_all(&parent);
     let _ = std::fs::remove_dir_all(&bare);
 }
 
