@@ -19,6 +19,9 @@ pub enum Command {
     Find,
     ToggleSidebar,
     ToggleSplitDiff,
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
     Undo,
     Fetch,
     Pull,
@@ -94,6 +97,22 @@ pub const SHORTCUTS: &[(Command, Option<KeyboardShortcut>)] = &[
     ),
     (Command::ToggleSplitDiff, None),
     (Command::Undo, Some(KeyboardShortcut::new(CTRL, Key::Z))),
+    (
+        Command::ZoomIn,
+        Some(KeyboardShortcut::new(CTRL, Key::Plus)),
+    ),
+    (
+        Command::ZoomIn,
+        Some(KeyboardShortcut::new(CTRL, Key::Equals)),
+    ),
+    (
+        Command::ZoomOut,
+        Some(KeyboardShortcut::new(CTRL, Key::Minus)),
+    ),
+    (
+        Command::ZoomReset,
+        Some(KeyboardShortcut::new(CTRL, Key::Num0)),
+    ),
     (
         Command::Fetch,
         Some(KeyboardShortcut::new(CTRL_SHIFT, Key::F)),

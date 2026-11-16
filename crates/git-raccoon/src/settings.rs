@@ -130,6 +130,9 @@ pub enum ThemeMode {
 /// The interface sizes offered.
 pub const ZOOMS: [f32; 5] = [0.9, 1.0, 1.1, 1.25, 1.5];
 
+/// The sizes Ctrl+plus and Ctrl+minus step through.
+const ZOOM_STEPS: [f32; 11] = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
+
 impl Default for Settings {
     fn default() -> Self {
         Settings {
@@ -152,6 +155,32 @@ impl Default for Settings {
 
 impl Settings {
     pub const KEY: &'static str = "settings";
+
+    /// How big everything is drawn (1 is normal).
+    pub fn zoom(&self) -> f32 {
+        self.zoom.unwrap_or(1.0)
+    }
+
+    /// Sets the interface size, kept between the smallest and largest steps
+    /// and rounded to a whole percent.
+    pub fn set_zoom(&mut self, zoom: f32) {
+        let zoom =
+            (zoom.clamp(ZOOM_STEPS[0], ZOOM_STEPS[ZOOM_STEPS.len() - 1]) * 100.0).round() / 100.0;
+        self.zoom = ((zoom - 1.0).abs() > 0.001).then_some(zoom);
+    }
+
+    /// One size bigger (Ctrl+plus) or smaller (Ctrl+minus).
+    pub fn zoom_step(&mut self, bigger: bool) {
+        let now = self.zoom();
+        let next = if bigger {
+            ZOOM_STEPS.iter().find(|z| **z > now + 0.001)
+        } else {
+            ZOOM_STEPS.iter().rev().find(|z| **z < now - 0.001)
+        };
+        if let Some(z) = next {
+            self.set_zoom(*z);
+        }
+    }
 
     /// Brings settings saved by an older version up to date. Before 0.5.2
     /// the default look was System, so a saved System then was most
@@ -256,6 +285,27 @@ mod tests {
             (saved.theme, saved.theme_mode),
             (ThemeChoice::Forest, ThemeMode::System)
         );
+    }
+
+    #[test]
+    fn zooms_in_steps_and_by_scrolling() {
+        let mut s = Settings::default();
+        s.zoom_step(true);
+        assert_eq!(s.zoom, Some(1.1));
+        s.zoom_step(false);
+        s.zoom_step(false);
+        assert_eq!(s.zoom, Some(0.9));
+        // From between steps, to the next one.
+        s.set_zoom(1.17);
+        s.zoom_step(true);
+        assert_eq!(s.zoom, Some(1.25));
+        // Scrolling multiplies; there are limits; normal is None.
+        s.set_zoom(s.zoom() * 10.0);
+        assert_eq!(s.zoom, Some(2.0));
+        s.zoom_step(true);
+        assert_eq!(s.zoom, Some(2.0));
+        s.set_zoom(1.0);
+        assert_eq!(s.zoom, None);
     }
 
     #[test]

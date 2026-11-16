@@ -112,6 +112,8 @@ impl App {
     /// Creates the app with the given settings and no repo open.
     pub fn with_settings(ctx: &egui::Context, settings: Settings) -> Self {
         theme::apply(ctx);
+        // Zooming is the app's own (see `zoom_input`), so it's remembered.
+        ctx.options_mut(|o| o.zoom_with_keyboard = false);
         App {
             settings,
             logo: logo(ctx),
@@ -670,6 +672,9 @@ impl App {
             | Command::Find
             | Command::ToggleSidebar
             | Command::ToggleSplitDiff
+            | Command::ZoomIn
+            | Command::ZoomOut
+            | Command::ZoomReset
             | Command::ShowWorking
             | Command::WriteCommit
             | Command::AddRemote
@@ -749,6 +754,9 @@ impl App {
         add(Command::Find, "Search commits".into());
         add(Command::Refresh, "Refresh".into());
         add(Command::ToggleSidebar, "Show or hide the sidebar".into());
+        add(Command::ZoomIn, "Zoom in (bigger)".into());
+        add(Command::ZoomOut, "Zoom out (smaller)".into());
+        add(Command::ZoomReset, "Actual size".into());
         add(
             Command::ToggleSplitDiff,
             "Switch diffs between unified and side by side".into(),
@@ -832,6 +840,9 @@ impl App {
             Command::CloseRepo => self.close(ctx),
             Command::ToggleSidebar => self.settings.hide_sidebar = !self.settings.hide_sidebar,
             Command::ToggleSplitDiff => self.settings.split_diff = !self.settings.split_diff,
+            Command::ZoomIn => self.settings.zoom_step(true),
+            Command::ZoomOut => self.settings.zoom_step(false),
+            Command::ZoomReset => self.settings.zoom = None,
             command => {
                 let Some(repo) = &mut self.repo else { return };
                 let head = repo.head_branch().unwrap_or("HEAD").to_string();
@@ -917,6 +928,31 @@ impl App {
             }
             Some(palette::Outcome::Close) => self.palette = None,
             None => {}
+        }
+    }
+
+    /// Ctrl+scroll, Ctrl+plus, Ctrl+minus and Ctrl+0 size the interface,
+    /// anywhere (even in a dialog or while typing), remembered like the
+    /// size picked in Settings.
+    fn zoom_input(&mut self, ctx: &egui::Context) {
+        use commands::Command::{ZoomIn, ZoomOut, ZoomReset};
+        let (scroll, keys) = ctx.input_mut(|i| {
+            let mut keys = Vec::new();
+            for (command, shortcut) in commands::SHORTCUTS {
+                if matches!(command, ZoomIn | ZoomOut | ZoomReset)
+                    && let Some(s) = shortcut
+                    && i.consume_shortcut(s)
+                {
+                    keys.push(command.clone());
+                }
+            }
+            (i.zoom_delta(), keys)
+        });
+        if (scroll - 1.0).abs() > f32::EPSILON {
+            self.settings.set_zoom(self.settings.zoom() * scroll);
+        }
+        for command in keys {
+            self.run_command(ctx, command);
         }
     }
 
@@ -1566,6 +1602,7 @@ impl App {
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.zoom_input(ctx);
         self.apply_look(ctx);
         self.updater.tick(ctx, !self.settings.no_update_checks);
         self.poll_opening(ctx);

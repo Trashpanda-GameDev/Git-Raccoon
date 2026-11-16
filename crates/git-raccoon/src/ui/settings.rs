@@ -82,8 +82,17 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings) -> Option<Action> {
             if chosen != now {
                 #[expect(clippy::cast_precision_loss, reason = "a small percentage")]
                 let z = chosen as f32 / 100.0;
-                settings.zoom = Some(z).filter(|z| (z - 1.0).abs() > f32::EPSILON);
+                settings.set_zoom(z);
             }
+            // Zoomed to a size between these (Ctrl+scroll, Ctrl+plus/minus).
+            if !labels.iter().any(|(p, _)| *p == now) {
+                ui.label(RichText::new(format!("{now}%")).color(theme::accent()));
+            }
+            ui.label(
+                RichText::new("Ctrl+scroll or Ctrl+plus/minus; Ctrl+0 resets")
+                    .size(11.0)
+                    .color(theme::muted()),
+            );
         });
         row(ui, "Diffs", &mut |ui| {
             settings.split_diff = widgets::segmented(

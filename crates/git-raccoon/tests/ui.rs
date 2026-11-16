@@ -2564,6 +2564,33 @@ fn switches_theme_and_size_in_settings() {
 }
 
 #[test]
+fn zooms_with_ctrl_and_the_keys_or_the_wheel() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    let zoom = |h: &Harness<'_, App>| h.state().settings().zoom;
+
+    press(&mut h, egui::Modifiers::COMMAND, Key::Equals);
+    h.run_ok();
+    assert_eq!(zoom(&h), Some(1.1));
+    assert!((h.ctx.zoom_factor() - 1.1).abs() < 0.001, "applied");
+    press(&mut h, egui::Modifiers::COMMAND, Key::Minus);
+    press(&mut h, egui::Modifiers::COMMAND, Key::Minus);
+    assert_eq!(zoom(&h), Some(0.9));
+    // Ctrl+scroll (egui hands it over as a zoom).
+    h.event(egui::Event::Zoom(1.5));
+    h.run_ok();
+    assert_eq!(zoom(&h), Some(1.35));
+    // In a dialog too; Ctrl+0 for normal size.
+    press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    h.get_by_label("135%");
+    press(&mut h, egui::Modifiers::COMMAND, Key::Num0);
+    h.run_ok();
+    assert_eq!(zoom(&h), None);
+    assert!((h.ctx.zoom_factor() - 1.0).abs() < 0.001);
+}
+
+#[test]
 fn renders_every_theme() {
     use git_raccoon::settings::{ThemeChoice, ThemeMode};
     let sample = Sample::build();

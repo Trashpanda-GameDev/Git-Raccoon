@@ -136,6 +136,7 @@ After most actions, the toolbar shows exactly what **Undo** would do ("Undo comm
 | Stage all / Unstage all | Ctrl+Shift+S / A |
 | Stash | Ctrl+Shift+H |
 | New branch / New tag | Ctrl+Shift+B / T |
+| Zoom in / out / actual size | Ctrl++ / Ctrl+- / Ctrl+0 (or Ctrl+scroll) |
 | Refresh | F5 |
 
 ## Themes and settings
@@ -143,7 +144,7 @@ After most actions, the toolbar shows exactly what **Undo** would do ("Undo comm
 **Settings** (the gear, or Ctrl+,) has:
 
 - **Theme:** a look (Raccoon, the default, Classic, Pastel, Abyss, Forest, Paper or High contrast), each **Dark** or **Light**, or **System** to follow your computer's light and dark.
-- **Interface size**, from 90% to 150%.
+- **Interface size**, from 90% to 150%. Anywhere in the app, Ctrl+scroll or Ctrl+plus and Ctrl+minus zoom in and out (from 50% to 200%), and Ctrl+0 goes back to normal; the size is remembered.
 - **Diffs:** unified or side by side.
 - **Updates:** whether to check automatically.
 
