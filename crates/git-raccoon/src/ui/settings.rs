@@ -10,6 +10,10 @@ pub enum Action {
     Close,
     ClearRecent,
     Licenses,
+    /// Sign in to a forge.
+    AddAccount,
+    /// Sign out of this account (by its place in the list).
+    SignOut(usize),
 }
 
 pub fn show(ctx: &egui::Context, settings: &mut Settings) -> Option<Action> {
@@ -110,6 +114,21 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings) -> Option<Action> {
             let mut check = !settings.no_update_checks;
             ui.checkbox(&mut check, "Check for updates automatically");
             settings.no_update_checks = !check;
+        });
+        row(ui, "Accounts", &mut |ui| {
+            ui.vertical(|ui| {
+                for (i, a) in settings.accounts.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("{}: {}", a.place(), a.login));
+                        if ui.small_button("Sign out").clicked() {
+                            action = Some(Action::SignOut(i));
+                        }
+                    });
+                }
+                if ui.button("Add account…").clicked() {
+                    action = Some(Action::AddAccount);
+                }
+            });
         });
         row(ui, "About", &mut |ui| {
             if ui.button("Licenses…").clicked() {

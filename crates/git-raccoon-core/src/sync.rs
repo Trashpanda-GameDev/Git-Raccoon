@@ -130,6 +130,20 @@ pub fn delete_remote_branch(
     .map(drop)
 }
 
+/// Fetches `source` on `remote` (like a pull request's
+/// "pull/7/head") into the local branch `branch`, made or moved to it.
+pub fn fetch_into(
+    path: &str,
+    remote: &str,
+    source: &str,
+    branch: &str,
+    on: &mut dyn FnMut(Progress),
+    cancel: &AtomicBool,
+) -> Result<()> {
+    let refspec = format!("+{source}:refs/heads/{branch}");
+    run(path, &["fetch", "--progress", remote, &refspec], on, cancel).map(drop)
+}
+
 /// Puts `branch` back on `remote` at commit `id` (undoing a delete).
 pub fn restore_remote_branch(
     path: &str,
@@ -368,6 +382,30 @@ mod tests {
 
     fn head(t: &TempRepo) -> String {
         crate::undo::head_id(t.path()).unwrap().unwrap()
+    }
+
+    #[test]
+    fn fetches_a_remote_ref_into_a_branch() {
+        let s = setup();
+        let none = AtomicBool::new(false);
+        // Something on the remote that isn't a branch, like a pull request's head.
+        let id = crate::undo::head_id(s.a.path()).unwrap().unwrap();
+        cli::run(
+            s.a.path(),
+            &["push", "-q", "origin", &format!("{id}:refs/pull/7/head")],
+            None,
+        )
+        .unwrap();
+        fetch_into(
+            s.b.path(),
+            "origin",
+            "pull/7/head",
+            "pr/7",
+            &mut |_| {},
+            &none,
+        )
+        .unwrap();
+        assert_eq!(crate::branch::tip(s.b.path(), "pr/7").unwrap(), id);
     }
 
     #[test]

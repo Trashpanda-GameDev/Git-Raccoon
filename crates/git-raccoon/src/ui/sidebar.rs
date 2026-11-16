@@ -303,6 +303,145 @@ impl Ctx<'_> {
     }
 }
 
+/// The pull/merge requests and issues sections.
+fn forge_sections(
+    ui: &mut egui::Ui,
+    c: &mut Ctx<'_>,
+    forge: &crate::forge_view::ForgeView,
+    matches: &dyn Fn(&str) -> bool,
+) {
+    use crate::forge_view::Opened;
+    let kind = forge.project.kind;
+    let note = |ui: &mut egui::Ui, text: &str| {
+        ui.add_space(2.0);
+        ui.horizontal(|ui| {
+            ui.add_space(28.0);
+            ui.label(RichText::new(text).size(12.0).color(theme::muted()));
+        });
+        ui.add_space(6.0);
+    };
+    // Before signing in: one link, for both sections.
+    let signed_in = forge.account.is_some();
+    let requests: Vec<&crate::forge::Request> = forge
+        .requests
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .into_iter()
+        .flatten()
+        .filter(|r| matches(&r.title) || matches(&kind.number(r.number)))
+        .collect();
+    let title = format!("{}s", kind.request());
+    let open = c.is_open("requests");
+    let (toggled, add) = section_header(
+        ui,
+        &title,
+        requests.len(),
+        open,
+        signed_in.then_some(match kind {
+            crate::forge::Kind::GitHub => "New pull request",
+            crate::forge::Kind::GitLab => "New merge request",
+        }),
+    );
+    if toggled {
+        c.toggle("requests");
+    }
+    if add {
+        c.action = Some(Action::NewRequest);
+    }
+    let sign_in = |ui: &mut egui::Ui, c: &mut Ctx<'_>| {
+        ui.horizontal(|ui| {
+            ui.add_space(28.0);
+            let link = ui.link(
+                RichText::new(format!(
+                    "Sign in to {} to see them",
+                    forge.project.kind.name()
+                ))
+                .size(12.0),
+            );
+            if link.clicked() {
+                c.action = Some(Action::SignInToForge);
+            }
+        });
+        ui.add_space(6.0);
+    };
+    if open {
+        match &forge.requests {
+            _ if !signed_in => sign_in(ui, c),
+            None => note(ui, "Loading…"),
+            Some(Err(e)) => note(ui, e),
+            Some(Ok(_)) if requests.is_empty() => {
+                note(ui, &format!("No open {}", title.to_lowercase()))
+            }
+            Some(Ok(_)) => {
+                for r in requests {
+                    let badges: Vec<Badge> = r
+                        .draft
+                        .then(|| Badge {
+                            text: "draft".into(),
+                            colour: theme::muted(),
+                        })
+                        .into_iter()
+                        .collect();
+                    let tip = format!("{}\n{} → {} by {}", r.title, r.source, r.target, r.author);
+                    let response = row(
+                        ui,
+                        0,
+                        icon::GIT_PULL_REQUEST,
+                        &format!("{} {}", kind.number(r.number), r.title),
+                        &badges,
+                        forge.open == Some(Opened::Request(r.number)),
+                        false,
+                        &tip,
+                        None,
+                    );
+                    if response.clicked() {
+                        c.action = Some(Action::OpenRequest(r.number));
+                    }
+                }
+            }
+        }
+    }
+    let issues: Vec<&crate::forge::Issue> = forge
+        .issues
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .into_iter()
+        .flatten()
+        .filter(|i| matches(&i.title) || matches(&format!("#{}", i.number)))
+        .collect();
+    let open = c.is_open("issues");
+    if section_header(ui, "Issues", issues.len(), open, None).0 {
+        c.toggle("issues");
+    }
+    if open {
+        match &forge.issues {
+            _ if !signed_in => sign_in(ui, c),
+            None => note(ui, "Loading…"),
+            Some(Err(e)) => note(ui, e),
+            Some(Ok(_)) if issues.is_empty() => note(ui, "No open issues"),
+            Some(Ok(_)) => {
+                for i in issues {
+                    let tip = format!("{}\nby {}", i.title, i.author);
+                    let response = row(
+                        ui,
+                        0,
+                        icon::CIRCLE_DASHED,
+                        &format!("#{} {}", i.number, i.title),
+                        &[],
+                        forge.open == Some(Opened::Issue(i.number)),
+                        false,
+                        &tip,
+                        None,
+                    );
+                    if response.clicked() {
+                        c.action = Some(Action::OpenIssue(i.number));
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn tree<T>(
     ui: &mut egui::Ui,
     c: &mut Ctx<'_>,
@@ -336,6 +475,13 @@ fn tree<T>(
 pub enum Action {
     /// Select this commit.
     Jump(String),
+    /// Show a pull/merge request, or an issue, in the details pane.
+    OpenRequest(u64),
+    OpenIssue(u64),
+    /// Sign in to the repository's forge.
+    SignInToForge,
+    /// Open a new pull/merge request.
+    NewRequest,
     StashApply(String),
     StashPop(String),
     StashDrop(String),
@@ -445,6 +591,13 @@ fn menu(ui: &mut egui::Ui, action: &mut Option<Action>, items: Vec<(&str, bool, 
 }
 
 /// Shows the sidebar.
+/// What's shown as picked, and the forge's sections.
+pub struct Shown<'a> {
+    /// The selected commit.
+    pub selected: Option<&'a str>,
+    pub forge: Option<&'a crate::forge_view::ForgeView>,
+}
+
 pub fn show(
     ui: &mut egui::Ui,
     refs: &Refs,
@@ -452,8 +605,9 @@ pub fn show(
     root: &str,
     filter: &mut String,
     collapsed: &mut HashSet<String>,
-    selected: Option<&str>,
+    shown: Shown<'_>,
 ) -> Option<Action> {
+    let Shown { selected, forge } = shown;
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.add_space(4.0);
@@ -741,6 +895,11 @@ pub fn show(
                         );
                     }
                 }
+            }
+
+            // The forge's pull/merge requests and issues.
+            if let Some(forge) = forge {
+                forge_sections(ui, &mut c, forge, &matches);
             }
 
             // Tags.

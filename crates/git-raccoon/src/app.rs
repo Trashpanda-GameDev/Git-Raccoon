@@ -55,11 +55,17 @@ pub struct App {
     restart_to_update: bool,
     /// The licenses window, while open.
     licenses: Option<crate::ui::licenses::Tab>,
+    /// The new pull/merge request window, and its request on the way.
+    new_request: Option<crate::ui::forge::NewForm>,
+    new_request_post: Option<crate::task::Task<Result<crate::forge::Request, String>>>,
     /// The notes shown in "What's new", while it's open.
     whats_new: Vec<crate::changelog::Notes>,
     /// The feedback form, while it's open, and its post on the way.
     feedback: Option<crate::ui::feedback::Form>,
     feedback_post: Option<crate::task::Task<Result<u64, String>>>,
+    /// The sign-in window, while it's open, and its work in the background.
+    sign_in: Option<crate::ui::sign_in::SignIn>,
+    sign_in_work: Option<SignInWork>,
     /// Reports of earlier crashes, offered one at a time.
     crash_reports: Vec<crate::crash::Report>,
 }
@@ -154,9 +160,13 @@ impl App {
             restart_to_update: false,
             crash_reports: Vec::new(),
             licenses: None,
+            new_request: None,
+            new_request_post: None,
             whats_new,
             feedback: None,
             feedback_post: None,
+            sign_in: None,
+            sign_in_work: None,
         }
     }
 
@@ -874,7 +884,10 @@ impl App {
                 let Some(repo) = &mut self.repo else { return };
                 let head = repo.head_branch().unwrap_or("HEAD").to_string();
                 match command {
-                    Command::Refresh => repo.refresh(ctx),
+                    Command::Refresh => {
+                        repo.refresh(ctx);
+                        repo.forge_stale = true;
+                    }
                     Command::Find => {
                         repo.active_file = None;
                         repo.planner = None;
@@ -958,6 +971,192 @@ impl App {
         }
     }
 
+    /// Finds the open repository's forge when that's due (on opening,
+    /// signing in, Refresh, Fetch), loads what's on it, and takes in what's
+    /// loaded.
+    fn keep_forge(&mut self, ctx: &egui::Context) {
+        let Some(repo) = &mut self.repo else { return };
+        if std::mem::take(&mut repo.forge_stale) {
+            let remotes: Vec<(String, Option<String>)> = repo
+                .refs
+                .remotes
+                .iter()
+                .map(|r| (r.name.clone(), r.url.clone()))
+                .collect();
+            let found = crate::forge_view::ForgeView::find(&remotes, &self.settings.accounts);
+            match (&mut repo.forge, found) {
+                (Some(now), Some(found)) if now.same_as(&found) => now.load(ctx),
+                (forge, Some(mut found)) => {
+                    found.load(ctx);
+                    *forge = Some(found);
+                }
+                (forge, None) => *forge = None,
+            }
+        }
+        if let Some(f) = &mut repo.forge {
+            f.poll();
+        }
+    }
+
+    /// The new pull/merge request window, and opening it in the background.
+    fn new_request_window(&mut self, ctx: &egui::Context) {
+        use crate::ui::forge::NewAction;
+        let Some(form) = &mut self.new_request else {
+            return;
+        };
+        let Some(repo) = &mut self.repo else {
+            self.new_request = None;
+            return;
+        };
+        // Pushed yet (after the Push button, say)?
+        form.unpushed = repo.head_upstream().is_none_or(|u| u.ahead > 0 || u.gone);
+        if let Some(result) = self
+            .new_request_post
+            .as_ref()
+            .and_then(crate::task::Task::poll)
+        {
+            self.new_request_post = None;
+            form.sending = false;
+            match result {
+                Ok(made) => {
+                    self.new_request = None;
+                    repo.forge_stale = true;
+                    repo.deselect();
+                    if let Some(f) = &mut repo.forge {
+                        f.open_request(ctx, made.number);
+                    }
+                    return;
+                }
+                Err(e) => form.error = Some(e),
+            }
+        }
+        match crate::ui::forge::new_request(ctx, form) {
+            Some(NewAction::Push) => repo.run(ctx, Op::Push { force: false }),
+            Some(NewAction::Create) => {
+                let Some(f) = &repo.forge else { return };
+                let Some(account) = f.account.clone() else {
+                    return;
+                };
+                let project = f.project.clone();
+                let new = crate::forge::NewRequest {
+                    source: form.source.clone(),
+                    target: form.target.trim().to_string(),
+                    title: form.title.trim().to_string(),
+                    body: form.body.clone(),
+                    draft: form.draft,
+                };
+                form.sending = true;
+                form.error = None;
+                self.new_request_post = Some(crate::task::Task::spawn(ctx, move || {
+                    crate::forge::accounts::session(&account, &project)?.create(&new)
+                }));
+            }
+            Some(NewAction::Close) => {
+                self.new_request = None;
+                self.new_request_post = None;
+            }
+            None => {}
+        }
+    }
+
+    /// The sign-in window, and its work in the background.
+    fn sign_in_window(&mut self, ctx: &egui::Context) {
+        use crate::forge::{accounts, oauth};
+        use crate::ui::sign_in::{Action, Stage};
+        let Some(s) = &mut self.sign_in else { return };
+        // Work finished in the background.
+        match &self.sign_in_work {
+            Some(SignInWork::Code(task)) => {
+                if let Some(result) = task.poll() {
+                    self.sign_in_work = None;
+                    match result {
+                        Ok(code) => {
+                            ctx.open_url(egui::OpenUrl::new_tab(&code.page));
+                            let (kind, base) = s.forge();
+                            let client = s.browser().unwrap_or_default();
+                            let cancel = Arc::new(AtomicBool::new(false));
+                            let stop = Arc::clone(&cancel);
+                            let waiting = code.clone();
+                            let task = crate::task::Task::spawn(ctx, move || {
+                                let mut interval = waiting.interval;
+                                loop {
+                                    std::thread::sleep(std::time::Duration::from_secs(interval));
+                                    if stop.load(Ordering::Relaxed) {
+                                        return Err("cancelled".to_string());
+                                    }
+                                    match oauth::poll(kind, &base, client, &waiting) {
+                                        oauth::Poll::Waiting => {}
+                                        oauth::Poll::SlowDown => interval += 5,
+                                        oauth::Poll::Done(secret) => {
+                                            return accounts::sign_in(kind, &base, &secret, true);
+                                        }
+                                        oauth::Poll::Failed(why) => return Err(why),
+                                    }
+                                }
+                            });
+                            self.sign_in_work = Some(SignInWork::Account(task, cancel));
+                            s.stage = Stage::Approving(code);
+                        }
+                        Err(why) => s.stage = Stage::Failed(why),
+                    }
+                }
+            }
+            Some(SignInWork::Account(task, _)) => {
+                if let Some(result) = task.poll() {
+                    self.sign_in_work = None;
+                    match result {
+                        Ok(account) => {
+                            self.settings
+                                .accounts
+                                .retain(|a| !(a.base == account.base && a.login == account.login));
+                            self.settings.accounts.push(account);
+                            self.sign_in = None;
+                            if let Some(repo) = &mut self.repo {
+                                repo.forge_stale = true;
+                            }
+                            return;
+                        }
+                        Err(why) => s.stage = Stage::Failed(why),
+                    }
+                }
+            }
+            None => {}
+        }
+        match crate::ui::sign_in::show(ctx, s) {
+            Some(Action::Browser) => {
+                let (kind, base) = s.forge();
+                let client = s.browser().unwrap_or_default();
+                s.stage = Stage::Starting;
+                self.sign_in_work =
+                    Some(SignInWork::Code(crate::task::Task::spawn(ctx, move || {
+                        oauth::start(kind, &base, client)
+                    })));
+            }
+            Some(Action::Token) => {
+                let (kind, base) = s.forge();
+                let secret = accounts::Secret {
+                    token: s.token.trim().to_string(),
+                    refresh: None,
+                    expires: None,
+                };
+                s.stage = Stage::Checking;
+                let task = crate::task::Task::spawn(ctx, move || {
+                    accounts::sign_in(kind, &base, &secret, false)
+                });
+                self.sign_in_work = Some(SignInWork::Account(task, Arc::default()));
+            }
+            Some(Action::Open(url)) => ctx.open_url(egui::OpenUrl::new_tab(url)),
+            Some(Action::Close) => {
+                if let Some(SignInWork::Account(_, cancel)) = &self.sign_in_work {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+                self.sign_in_work = None;
+                self.sign_in = None;
+            }
+            None => {}
+        }
+    }
+
     /// Ctrl+scroll, Ctrl+plus, Ctrl+minus and Ctrl+0 size the interface,
     /// anywhere (even in a dialog or while typing), remembered like the
     /// size picked in Settings.
@@ -994,6 +1193,8 @@ impl App {
             || self.licenses.is_some()
             || !self.whats_new.is_empty()
             || self.feedback.is_some()
+            || self.sign_in.is_some()
+            || self.new_request.is_some()
             || dialog_open
         {
             return;
@@ -1050,6 +1251,8 @@ impl App {
             // as typing by now).
             if repo.search.open {
                 repo.search.close();
+            } else if repo.forge.as_ref().is_some_and(|f| f.open.is_some()) {
+                repo.close_forge_item();
             } else if repo.file_view.is_some() {
                 repo.file_view = None;
             } else if repo.planner.is_some() {
@@ -1156,7 +1359,12 @@ impl App {
             Some(toolbar::Action::Settings) => self.run_command(&ctx, Command::Settings),
             Some(toolbar::Action::Feedback) => self.run_command(&ctx, Command::Feedback),
             Some(toolbar::Action::RestartToUpdate) => self.restart_to_update = true,
-            Some(toolbar::Action::Fetch) => self.run(&ctx, Op::Fetch),
+            Some(toolbar::Action::Fetch) => {
+                self.run(&ctx, Op::Fetch);
+                if let Some(repo) = &mut self.repo {
+                    repo.forge_stale = true;
+                }
+            }
             Some(toolbar::Action::Pull) => {
                 self.run(
                     &ctx,
@@ -1308,11 +1516,32 @@ impl App {
                         &root,
                         &mut repo.sidebar_filter,
                         &mut repo.collapsed,
-                        selected.as_deref(),
+                        sidebar::Shown {
+                            selected: selected.as_deref(),
+                            forge: repo.forge.as_ref(),
+                        },
                     )
                 })
                 .inner;
             match jump {
+                Some(sidebar::Action::OpenRequest(n)) => {
+                    repo.deselect();
+                    if let Some(f) = &mut repo.forge {
+                        f.open_request(&ctx, n);
+                    }
+                }
+                Some(sidebar::Action::OpenIssue(n)) => {
+                    repo.deselect();
+                    if let Some(f) = &mut repo.forge {
+                        f.open = Some(crate::forge_view::Opened::Issue(n));
+                    }
+                }
+                Some(sidebar::Action::SignInToForge) => {
+                    if let Some(f) = &repo.forge {
+                        self.sign_in = Some(crate::ui::sign_in::SignIn::for_project(&f.project));
+                    }
+                }
+                Some(sidebar::Action::NewRequest) => self.new_request = new_form(repo),
                 Some(sidebar::Action::Jump(id)) => repo.select(&id),
                 Some(sidebar::Action::StashApply(id)) => repo.run(&ctx, Op::StashApply(id)),
                 Some(sidebar::Action::StashPop(id)) => repo.run(&ctx, Op::StashPop(id)),
@@ -1349,7 +1578,28 @@ impl App {
             top: 0,
             bottom: 8,
         });
-        if let Some(sel) = &repo.selected {
+        // A pull/merge request or issue from the forge.
+        if let Some(forge) = repo.forge.as_ref().filter(|f| f.open.is_some()) {
+            let action = Panel::right("forge-details")
+                .resizable(true)
+                .default_size(380.0)
+                .size_range(280.0..=640.0)
+                .frame(pane)
+                .show(ui, |ui| crate::ui::forge::show(ui, forge, now))
+                .inner;
+            match action {
+                Some(crate::ui::forge::Action::Open(url)) => {
+                    ctx.open_url(egui::OpenUrl::new_tab(url))
+                }
+                Some(crate::ui::forge::Action::Close) => repo.close_forge_item(),
+                Some(crate::ui::forge::Action::CheckOut(n)) => {
+                    if let Some(op) = repo.forge.as_ref().and_then(|f| check_out_op(f, n)) {
+                        repo.run(&ctx, op);
+                    }
+                }
+                None => {}
+            }
+        } else if let Some(sel) = &repo.selected {
             let id = sel.id.clone();
             let action = Panel::right("details")
                 .resizable(true)
@@ -1661,6 +1911,7 @@ impl eframe::App for App {
                 self.error = Some(e);
             }
         }
+        self.keep_forge(ctx);
         self.shortcuts(ctx);
     }
 
@@ -1689,6 +1940,16 @@ impl eframe::App for App {
             match crate::ui::settings::show(&ctx, &mut self.settings) {
                 Some(crate::ui::settings::Action::Close) => self.settings_open = false,
                 Some(crate::ui::settings::Action::ClearRecent) => self.settings.recent.clear(),
+                Some(crate::ui::settings::Action::AddAccount) => {
+                    self.settings_open = false;
+                    self.sign_in = Some(crate::ui::sign_in::SignIn::default());
+                }
+                Some(crate::ui::settings::Action::SignOut(i)) => {
+                    if i < self.settings.accounts.len() {
+                        let account = self.settings.accounts.remove(i);
+                        crate::forge::accounts::forget(&account);
+                    }
+                }
                 Some(crate::ui::settings::Action::Licenses) => {
                     self.settings_open = false;
                     self.licenses = Some(crate::ui::licenses::Tab::GitRaccoon);
@@ -1741,6 +2002,8 @@ impl eframe::App for App {
                 None => {}
             }
         }
+        self.sign_in_window(&ctx);
+        self.new_request_window(&ctx);
         self.crash_dialog(&ctx);
         self.questions(&ctx);
     }
@@ -1758,6 +2021,79 @@ impl eframe::App for App {
 /// The look a theme choice means now (System follows the system's light or dark).
 /// The look to show: the chosen family, dark or light as the mode (or
 /// the system) says.
+/// The window for a new pull/merge request from the checked-out branch.
+fn new_form(repo: &RepoView) -> Option<crate::ui::forge::NewForm> {
+    let forge = repo.forge.as_ref()?;
+    let source = repo.head_branch()?.to_string();
+    // Into the remote's default branch: "main" or "master", whichever it has.
+    let remote = repo.refs.remotes.iter().find(|r| r.name == forge.remote);
+    let has = |b: &str| remote.is_some_and(|r| r.branches.iter().any(|x| x.name == b));
+    let target = ["main", "master", "develop"]
+        .into_iter()
+        .find(|b| has(b) && *b != source)
+        .unwrap_or("main")
+        .to_string();
+    // Titled after the branch's last commit.
+    let title = repo
+        .history
+        .head_row()
+        .and_then(|row| repo.rows.get(row))
+        .map(|c| c.summary.clone())
+        .unwrap_or_default();
+    Some(crate::ui::forge::NewForm {
+        kind: forge.project.kind,
+        source,
+        target,
+        title,
+        body: String::new(),
+        draft: false,
+        unpushed: true,
+        sending: false,
+        error: None,
+    })
+}
+
+/// How to check out a pull/merge request: its branch here (brought up to
+/// the remote's), or, from a fork, its changes fetched into a branch of
+/// its own ("pr/7", "mr/12").
+fn check_out_op(forge: &crate::forge_view::ForgeView, number: u64) -> Option<Op> {
+    let r = forge.detailed(number).or_else(|| forge.request(number))?;
+    let remote = forge.remote.clone();
+    if r.from_fork {
+        let branch = match forge.project.kind {
+            crate::forge::Kind::GitHub => format!("pr/{number}"),
+            crate::forge::Kind::GitLab => format!("mr/{number}"),
+        };
+        let source = match forge.project.kind {
+            crate::forge::Kind::GitHub => format!("pull/{number}/head"),
+            crate::forge::Kind::GitLab => format!("merge-requests/{number}/head"),
+        };
+        Some(Op::Then(vec![
+            Op::FetchInto {
+                remote,
+                source,
+                branch: branch.clone(),
+            },
+            Op::Checkout(branch),
+        ]))
+    } else {
+        Some(Op::Then(vec![
+            Op::FetchRemote(remote.clone()),
+            Op::CheckoutRemote(format!("{remote}/{}", r.source)),
+        ]))
+    }
+}
+
+/// Signing in, in the background: getting the code to show, then the
+/// account (with a flag to stop waiting for approval).
+enum SignInWork {
+    Code(crate::task::Task<Result<crate::forge::oauth::DeviceCode, String>>),
+    Account(
+        crate::task::Task<Result<crate::forge::Account, String>>,
+        Arc<AtomicBool>,
+    ),
+}
+
 pub(crate) fn look_for(
     choice: ThemeChoice,
     mode: ThemeMode,

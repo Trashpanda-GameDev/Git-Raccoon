@@ -238,6 +238,12 @@ pub enum Op {
     Pull(PullMode),
     /// Delete a branch on its remote ("origin/feature"), for everyone.
     DeleteRemoteBranch(String),
+    /// Fetch a ref on a remote (a pull request's head) into a branch.
+    FetchInto {
+        remote: String,
+        source: String,
+        branch: String,
+    },
     /// Put a deleted remote branch back at a commit (undoing the delete).
     RestoreRemoteBranch {
         remote_branch: String,
@@ -416,6 +422,11 @@ impl Op {
                 let (remote, branch) = split_remote(&name)?;
                 sync::delete_remote_branch(path, remote, branch, report, &ctl.cancel)
             }
+            Op::FetchInto {
+                remote,
+                source,
+                branch,
+            } => sync::fetch_into(path, &remote, &source, &branch, report, &ctl.cancel),
             Op::RestoreRemoteBranch { remote_branch, id } => {
                 let (remote, branch) = split_remote(&remote_branch)?;
                 sync::restore_remote_branch(path, remote, branch, &id, report, &ctl.cancel)
@@ -490,6 +501,7 @@ impl Op {
             Op::Pull(_) => "pull",
             Op::Push { .. } => "push",
             Op::DeleteRemoteBranch(_) => "delete the remote branch",
+            Op::FetchInto { .. } => "fetch",
             Op::RestoreRemoteBranch { .. } => "undo",
             Op::AddRemote { .. } => "add the remote",
             Op::RenameRemote { .. } | Op::SetRemoteUrl { .. } => "change the remote",
@@ -1124,6 +1136,10 @@ pub struct RepoView {
     pub draft: CommitDraft,
     /// Working files picked together (Ctrl+click, Shift+click).
     pub file_selection: crate::ui::working::FileSelection,
+    /// The forge it's on (GitHub, GitLab), with its requests and issues.
+    pub forge: Option<crate::forge_view::ForgeView>,
+    /// Which forge, and what's on it, should be found out (again).
+    pub forge_stale: bool,
     committing: Option<Task<Result<Option<Undoable>, String>>>,
     /// How to undo the last action, if it can be.
     pub undo: Option<Undoable>,
@@ -1211,6 +1227,8 @@ impl RepoView {
             trash_override: None,
             draft: CommitDraft::default(),
             file_selection: crate::ui::working::FileSelection::default(),
+            forge: None,
+            forge_stale: true,
             committing: None,
             undo: None,
             conflict: None,
@@ -1438,6 +1456,7 @@ impl RepoView {
                 | Op::UpdateSubmodule(_)
                 | Op::DeleteRemoteBranch(_)
                 | Op::RestoreRemoteBranch { .. }
+                | Op::FetchInto { .. }
         ) {
             return None;
         }
@@ -2383,6 +2402,7 @@ impl RepoView {
         if !self.working_selected {
             self.active_file = None;
         }
+        self.close_forge_item();
         self.selected = None;
         self.working_selected = true;
     }
@@ -2426,6 +2446,7 @@ impl RepoView {
 
     pub fn select_row(&mut self, id: String, row: Option<usize>) {
         self.conflict = None;
+        self.close_forge_item();
         if self.working_selected || self.selected.as_ref().is_some_and(|s| s.id != id) {
             self.active_file = None;
         }
@@ -2443,8 +2464,16 @@ impl RepoView {
         }
     }
 
+    /// Closes the pull/merge request or issue in the details pane.
+    pub fn close_forge_item(&mut self) {
+        if let Some(f) = &mut self.forge {
+            f.open = None;
+        }
+    }
+
     pub fn deselect(&mut self) {
         self.conflict = None;
+        self.close_forge_item();
         self.selected = None;
         self.working_selected = false;
         self.active_file = None;

@@ -83,6 +83,21 @@ Progress shows in the toolbar, with a Cancel button.
 
 **Remotes** are managed in the sidebar: **+** next to *Remote* adds one (and fetches it); right-click one to edit or remove it.
 
+## Pull requests, merge requests and issues
+
+For a repository on **GitHub**, **GitLab.com** or a **self-managed GitLab**, the sidebar lists its open pull requests (merge requests on GitLab) and issues, under the branches. Git Raccoon finds the forge from the repository's remote (*origin* first).
+
+**Signing in.** Open **Settings → Accounts → Add account…** (or click *Sign in* in the sidebar section), and pick GitHub, GitLab.com or Self-managed GitLab (give its address, like `https://gitlab.example.com`). Where the browser sign-in is available, Git Raccoon shows a short code and opens the forge's page to approve it. Otherwise — and always for a self-managed GitLab — click **Make a token…**: the forge's page opens with the right permissions ticked (`repo` and `read:org` on GitHub, `api` on GitLab); create it and paste it in. Tokens are kept in your system's keychain (Keychain on macOS, Credential Manager on Windows, the Secret Service on Linux), never in the settings file. **Sign out** in the same place forgets it.
+
+**A request's details.** Click one to see who wants to merge what into what, how its reviews and checks (CI) stand, its comments and description.
+
+- **Check out** puts you on its branch, brought up to the remote's. A request from a fork is fetched into a branch of its own (`pr/12` or `mr/12`).
+- **Open on GitHub/GitLab** opens it in the browser.
+
+**A new request.** The **+** next to *Pull requests* (or *Merge requests*) opens one from the checked-out branch: pick the branch it goes into, give it a title and a description, and whether it's a draft. If the branch has commits the remote doesn't, push them first (there's a Push button right there).
+
+**Issues** open in the details pane the same way. Esc closes what's open. The lists reload when you fetch or refresh.
+
 ## Merging, rebasing and conflicts
 
 - **Merge:** right-click a branch and choose *Merge into …*, or **drag** it onto another branch, in the sidebar or by its label on the graph. You can fast-forward when possible or always create a merge commit.

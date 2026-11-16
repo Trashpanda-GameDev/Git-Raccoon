@@ -57,6 +57,8 @@ pub struct Settings {
     pub no_update_checks: bool,
     /// The version last run, to show what's new after an update.
     pub last_version: Option<String>,
+    /// Signed in to these forges (their tokens are in the keychain).
+    pub accounts: Vec<crate::forge::Account>,
     /// Changed files shown as a tree of folders, rather than by path.
     pub file_tree: bool,
     /// Which defaults these settings were saved with (see `upgrade`):
@@ -152,6 +154,7 @@ impl Default for Settings {
             zoom: None,
             no_update_checks: false,
             last_version: None,
+            accounts: Vec::new(),
             file_tree: false,
             defaults: DEFAULTS,
         }

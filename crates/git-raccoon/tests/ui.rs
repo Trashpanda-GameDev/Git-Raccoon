@@ -1769,6 +1769,236 @@ fn deletes_a_branch_on_the_remote_and_undoes_it() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// What a stand-in forge was sent: the method and path, and the body.
+type Seen = std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>;
+
+/// A stand-in forge: answers each request by its method and path (the
+/// longest matching prefix in `routes`), and keeps what it was sent. It
+/// also serves `repo` (a bare repository) at /team/app.git, read-only,
+/// over git's dumb HTTP.
+fn forge_server(routes: Vec<(&'static str, String)>, repo: std::path::PathBuf) -> (String, Seen) {
+    use std::io::{BufRead as _, BufReader, Read as _, Write as _};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = std::sync::Arc::clone(&seen);
+    let routes = std::sync::Arc::new(routes);
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let (routes, log) = (std::sync::Arc::clone(&routes), std::sync::Arc::clone(&log));
+            let repo = repo.clone();
+            std::thread::spawn(move || {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut first = String::new();
+                let _ = reader.read_line(&mut first);
+                let mut length = 0;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                        break;
+                    }
+                    if let Some(n) = line.to_lowercase().strip_prefix("content-length:") {
+                        length = n.trim().parse().unwrap_or(0);
+                    }
+                }
+                let mut body = vec![0; length];
+                let _ = reader.read_exact(&mut body);
+                let request = first.split(' ').take(2).collect::<Vec<_>>().join(" ");
+                let mut stream = stream;
+                if let Some(file) = request.strip_prefix("GET /team/app.git/") {
+                    let file = file.split('?').next().unwrap_or_default();
+                    let reply = std::fs::read(repo.join(file));
+                    let (status, bytes) = match reply {
+                        Ok(b) => (200, b),
+                        Err(_) => (404, Vec::new()),
+                    };
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 {status} X\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        bytes.len()
+                    );
+                    let _ = stream.write_all(&bytes);
+                    return;
+                }
+                log.lock()
+                    .unwrap()
+                    .push((request.clone(), String::from_utf8_lossy(&body).into_owned()));
+                let reply = routes
+                    .iter()
+                    .filter(|(prefix, _)| request.starts_with(prefix))
+                    .max_by_key(|(prefix, _)| prefix.len())
+                    .map_or_else(|| (404, "{}".to_string()), |(_, json)| (200, json.clone()));
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    reply.0,
+                    reply.1.len(),
+                    reply.1
+                );
+            });
+        }
+    });
+    (base, seen)
+}
+
+#[test]
+fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
+    use egui::accesskit::Role;
+    use git_raccoon::forge::{Account, Kind, accounts};
+    let sample = Sample::build();
+    let mr = |iid: u64, title: &str, source: &str| {
+        format!(
+            r#"{{"iid": {iid}, "title": "{title}", "author": {{"username": "ada"}},
+            "source_branch": "{source}", "target_branch": "main", "source_project_id": 1,
+            "target_project_id": 1, "draft": false, "web_url": "https://example.com/mr/{iid}",
+            "description": "Caches the pipeline.", "created_at": "2026-11-01T00:00:00Z",
+            "user_notes_count": 2, "head_pipeline": {{"status": "running"}}}}"#
+        )
+    };
+    let api = "/api/v4/projects/team%2Fapp";
+    // The repository on the stand-in forge.
+    let bare = sample.dir.with_extension("remote.git");
+    git(&sample, &["init", "-q", "--bare", bare.to_str().unwrap()]);
+    git(
+        &sample,
+        &["push", "-q", bare.to_str().unwrap(), "main", "main:cache"],
+    );
+    let served = std::process::Command::new("git")
+        .args(["update-server-info"])
+        .current_dir(&bare)
+        .status()
+        .unwrap();
+    assert!(served.success());
+    let (base, seen) = forge_server(vec![
+        ("GET /api/v4/user", r#"{"username": "milo"}"#.into()),
+        // Listing.
+        ("GET /api/v4/projects/team%2Fapp/merge_requests?", format!("[{}]", mr(12, "Pipeline cache", "cache"))),
+        ("GET /api/v4/projects/team%2Fapp/issues?", r#"[{"iid": 4, "title": "Slow start", "author": {"username": "milo"},
+            "labels": ["perf"], "web_url": "u", "description": "It takes ages.", "created_at": "2026-11-01T00:00:00Z",
+            "user_notes_count": 1}]"#.into()),
+        // Details.
+        ("GET /api/v4/projects/team%2Fapp/merge_requests/12", mr(12, "Pipeline cache", "cache")),
+        ("GET /api/v4/projects/team%2Fapp/merge_requests/12/approvals", r#"{"approved_by": [{"user": {"username": "rocky"}}]}"#.into()),
+        ("GET /api/v4/projects/team%2Fapp/merge_requests/13", mr(13, "Faster start", "cache")),
+        ("GET /api/v4/projects/team%2Fapp/merge_requests/13/approvals", r#"{"approved_by": []}"#.into()),
+        // Opening one.
+        ("POST /api/v4/projects/team%2Fapp/merge_requests", mr(13, "Faster start", "cache")),
+    ], bare.clone());
+    let url = format!("{base}/team/app.git");
+    git(&sample, &["remote", "set-url", "origin", &url]);
+    git(&sample, &["fetch", "-q", "origin"]);
+    accounts::use_memory_store();
+    let account = Account {
+        kind: Kind::GitLab,
+        base: base.clone(),
+        login: "rocky".into(),
+        oauth: false,
+    };
+    accounts::save(
+        &account,
+        &accounts::Secret {
+            token: "glpat".into(),
+            refresh: None,
+            expires: None,
+        },
+    )
+    .unwrap();
+    let mut h = harness(Settings {
+        accounts: vec![account],
+        ..Settings::default()
+    });
+    open(&mut h, sample.path());
+
+    // The lists, in the sidebar.
+    wait_for(&mut h, "the merge requests", |app| {
+        app.repo()
+            .unwrap()
+            .forge
+            .as_ref()
+            .is_some_and(|f| f.requests.is_some() && f.issues.is_some())
+    });
+    h.run_ok();
+    h.get_by_label("!12 Pipeline cache").click();
+    wait_for(&mut h, "its details", |app| {
+        app.repo()
+            .unwrap()
+            .forge
+            .as_ref()
+            .is_some_and(|f| f.detailed(12).is_some())
+    });
+    h.run_ok();
+    h.get_by_label_contains("Approved: rocky");
+    h.get_by_label_contains("1 running");
+    screenshot(&mut h, "50-merge-request");
+    let seen_now = seen.lock().unwrap().clone();
+    assert!(
+        seen_now
+            .iter()
+            .any(|(r, _)| r == &format!("GET {api}/merge_requests/12/approvals"))
+    );
+
+    // Check it out: its branch, from the remote.
+    h.get_by_label_contains("Check out").click();
+    wait_for(&mut h, "the checkout", |app| {
+        head_branch(app).as_deref() == Some("cache")
+    });
+
+    // An issue.
+    h.get_by_label("#4 Slow start").click();
+    h.run_ok();
+    h.get_by_value("ISSUE #4");
+    h.get_by_value("perf");
+    h.key_press(Key::Escape);
+    h.run_ok();
+    assert!(h.query_by_value("ISSUE #4").is_none(), "Esc closes it");
+
+    // A new merge request from the checked-out branch (it's pushed).
+    h.get_by_label("New merge request").click();
+    h.run_ok();
+    type_into(&mut h, "Request title", "Faster start");
+    h.get_by_role_and_label(Role::Button, "Open it").click();
+    wait_for(&mut h, "the new one", |app| {
+        app.repo()
+            .unwrap()
+            .forge
+            .as_ref()
+            .is_some_and(|f| f.open == Some(git_raccoon::forge_view::Opened::Request(13)))
+    });
+    let posted = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(r, _)| r == &format!("POST {api}/merge_requests"))
+        .cloned()
+        .unwrap();
+    let sent: serde_json::Value = serde_json::from_str(&posted.1).unwrap();
+    assert_eq!(
+        (
+            sent["source_branch"].as_str(),
+            sent["target_branch"].as_str()
+        ),
+        (Some("cache"), Some("main"))
+    );
+    assert!(sent["title"].as_str().unwrap().contains("Faster start"));
+
+    // Signing in with a token, through the window.
+    press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    h.get_by_label("Add account…").click();
+    h.run_ok();
+    h.get_by_label("Self-managed GitLab").click();
+    h.run_ok();
+    h.get_by_label("GitLab server address").click();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+    h.get_by_label("GitLab server address").type_text(&base);
+    type_into(&mut h, "Access token", "glpat-milo");
+    screenshot(&mut h, "51-sign-in");
+    h.get_by_role_and_label(Role::Button, "Sign in").click();
+    wait_for(&mut h, "the account", |app| {
+        app.settings().accounts.iter().any(|a| a.login == "milo")
+    });
+    let _ = std::fs::remove_dir_all(&bare);
+}
+
 #[test]
 fn fetches_pulls_and_pushes() {
     let sample = Sample::build();

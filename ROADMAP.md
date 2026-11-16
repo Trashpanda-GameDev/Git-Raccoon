@@ -84,10 +84,10 @@ The operations people open a GUI for.
 - [x] Project website ([site/](site/), on GitHub Pages)
 - [x] App icon
 - [x] Branding: installer artwork and a share card ([scripts/make-artwork.py](scripts/make-artwork.py))
+- [x] GitHub, GitLab.com and self-managed GitLab: pull/merge requests (reviews, checks, check out, open new ones) and issues next to the graph; sign in with the browser or a token, kept in the keychain
 
 ## Later (ideas, not commitments)
 
-- GitHub and GitLab integration: pull requests, reviews and issues next to the graph
 - Commit message suggestions from the staged diff
 - Built-in merge tool for three-way merges
 - Workspaces that group related repos
