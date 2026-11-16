@@ -328,18 +328,21 @@ fn website_screenshots() {
     drop(h);
 
     // The same view in other themes (before the edits below).
-    for (theme, mode, name) in [
-        (ThemeChoice::Raccoon, ThemeMode::Light, "raccoon-light"),
-        (ThemeChoice::Classic, ThemeMode::Dark, "classic"),
-        (ThemeChoice::Pastel, ThemeMode::Light, "pastel"),
-        (ThemeChoice::HighContrast, ThemeMode::Dark, "high-contrast"),
-        (ThemeChoice::Forest, ThemeMode::Dark, "forest"),
-        (ThemeChoice::Paper, ThemeMode::Light, "paper"),
+    // Every look, dark and light.
+    for (theme, name) in [
+        (ThemeChoice::Raccoon, "raccoon"),
+        (ThemeChoice::Classic, "classic"),
+        (ThemeChoice::Pastel, "pastel"),
+        (ThemeChoice::Forest, "forest"),
+        (ThemeChoice::Paper, "paper"),
+        (ThemeChoice::HighContrast, "high-contrast"),
     ] {
-        let mut h = harness(theme, mode);
-        open(&mut h, &demo.dir);
-        click(&mut h, INDEX_COMMIT);
-        small_shot(&mut h, &format!("theme-{name}"));
+        for (mode, mode_name) in [(ThemeMode::Dark, "dark"), (ThemeMode::Light, "light")] {
+            let mut h = harness(theme, mode);
+            open(&mut h, &demo.dir);
+            click(&mut h, INDEX_COMMIT);
+            small_shot(&mut h, &format!("theme-{name}-{mode_name}"));
+        }
     }
 
     // Working changes, back in the Raccoon theme: stage some lines of an edit.

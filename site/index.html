@@ -181,14 +181,18 @@
 <section id="themes">
   <div class="wrap">
     <h2 class="section-title">Make it yours</h2>
-    <p class="section-lede">Six looks, from Raccoon's warm browns to High contrast, each dark or light, or following your system's light and dark. Interface size from 90% to 150%.</p>
+    <p class="section-lede">Six looks, from Raccoon's warm browns to High contrast, each in a dark and a light version, or following your system's light and dark. Interface size from 50% to 200%.</p>
+    <div class="mode-switch" role="group" aria-label="Show the looks">
+      <button type="button" data-mode="dark" aria-pressed="true">Dark</button>
+      <button type="button" data-mode="light" aria-pressed="false">Light</button>
+    </div>
     <div class="themes">
-      <figure><a href="screenshots/theme-raccoon-light.png"><img src="screenshots/theme-raccoon-light.png" width="1280" height="800" loading="lazy" alt="The Raccoon look, light."></a><figcaption>Raccoon, light</figcaption></figure>
-      <figure><a href="screenshots/theme-classic.png"><img src="screenshots/theme-classic.png" width="1280" height="800" loading="lazy" alt="The Classic look, dark."></a><figcaption>Classic</figcaption></figure>
-      <figure><a href="screenshots/theme-high-contrast.png"><img src="screenshots/theme-high-contrast.png" width="1280" height="800" loading="lazy" alt="The High contrast look."></a><figcaption>High contrast</figcaption></figure>
-      <figure><a href="screenshots/theme-pastel.png"><img src="screenshots/theme-pastel.png" width="1280" height="800" loading="lazy" alt="The Pastel theme."></a><figcaption>Pastel</figcaption></figure>
-      <figure><a href="screenshots/theme-forest.png"><img src="screenshots/theme-forest.png" width="1280" height="800" loading="lazy" alt="The Forest theme."></a><figcaption>Forest</figcaption></figure>
-      <figure><a href="screenshots/theme-paper.png"><img src="screenshots/theme-paper.png" width="1280" height="800" loading="lazy" alt="The Paper theme."></a><figcaption>Paper</figcaption></figure>
+      <figure><a href="screenshots/theme-raccoon-dark.png" data-dark="screenshots/theme-raccoon-dark.png" data-light="screenshots/theme-raccoon-light.png"><img src="screenshots/theme-raccoon-dark.png" data-dark="screenshots/theme-raccoon-dark.png" data-light="screenshots/theme-raccoon-light.png" width="1280" height="800" loading="lazy" alt="The Raccoon look."></a><figcaption>Raccoon</figcaption></figure>
+      <figure><a href="screenshots/theme-classic-dark.png" data-dark="screenshots/theme-classic-dark.png" data-light="screenshots/theme-classic-light.png"><img src="screenshots/theme-classic-dark.png" data-dark="screenshots/theme-classic-dark.png" data-light="screenshots/theme-classic-light.png" width="1280" height="800" loading="lazy" alt="The Classic look."></a><figcaption>Classic</figcaption></figure>
+      <figure><a href="screenshots/theme-pastel-dark.png" data-dark="screenshots/theme-pastel-dark.png" data-light="screenshots/theme-pastel-light.png"><img src="screenshots/theme-pastel-dark.png" data-dark="screenshots/theme-pastel-dark.png" data-light="screenshots/theme-pastel-light.png" width="1280" height="800" loading="lazy" alt="The Pastel look."></a><figcaption>Pastel</figcaption></figure>
+      <figure><a href="screenshots/theme-forest-dark.png" data-dark="screenshots/theme-forest-dark.png" data-light="screenshots/theme-forest-light.png"><img src="screenshots/theme-forest-dark.png" data-dark="screenshots/theme-forest-dark.png" data-light="screenshots/theme-forest-light.png" width="1280" height="800" loading="lazy" alt="The Forest look."></a><figcaption>Forest</figcaption></figure>
+      <figure><a href="screenshots/theme-paper-dark.png" data-dark="screenshots/theme-paper-dark.png" data-light="screenshots/theme-paper-light.png"><img src="screenshots/theme-paper-dark.png" data-dark="screenshots/theme-paper-dark.png" data-light="screenshots/theme-paper-light.png" width="1280" height="800" loading="lazy" alt="The Paper look."></a><figcaption>Paper</figcaption></figure>
+      <figure><a href="screenshots/theme-high-contrast-dark.png" data-dark="screenshots/theme-high-contrast-dark.png" data-light="screenshots/theme-high-contrast-light.png"><img src="screenshots/theme-high-contrast-dark.png" data-dark="screenshots/theme-high-contrast-dark.png" data-light="screenshots/theme-high-contrast-light.png" width="1280" height="800" loading="lazy" alt="The High contrast look."></a><figcaption>High contrast</figcaption></figure>
     </div>
   </div>
 </section>
@@ -248,6 +252,26 @@
       hero.href = card.querySelector(".button.primary").href;
       hero.querySelector("span").textContent = "Download for " + names[os];
     }
+  })();
+
+  // The looks: dark or light versions, switched together.
+  (function () {
+    var buttons = document.querySelectorAll(".mode-switch button");
+    buttons.forEach(function (button) {
+      button.addEventListener("click", function () {
+        var mode = button.getAttribute("data-mode");
+        buttons.forEach(function (b) { b.setAttribute("aria-pressed", String(b === button)); });
+        document.querySelectorAll(".themes [data-" + mode + "]").forEach(function (el) {
+          el.setAttribute(el.tagName === "A" ? "href" : "src", el.getAttribute("data-" + mode));
+        });
+      });
+    });
+    // Load the light ones ahead, so switching is instant.
+    window.addEventListener("load", function () {
+      document.querySelectorAll(".themes img[data-light]").forEach(function (img) {
+        new Image().src = img.getAttribute("data-light");
+      });
+    });
   })();
 
   // The latest version, from GitHub (the page works without it).
