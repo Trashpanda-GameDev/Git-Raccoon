@@ -2611,7 +2611,6 @@ fn renders_every_theme() {
             (ThemeChoice::Raccoon, "Raccoon"),
             (ThemeChoice::Classic, "Classic"),
             (ThemeChoice::Pastel, "Pastel"),
-            (ThemeChoice::Abyss, "Abyss"),
             (ThemeChoice::Forest, "Forest"),
             (ThemeChoice::Paper, "Paper"),
             (ThemeChoice::HighContrast, "High contrast"),

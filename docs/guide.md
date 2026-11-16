@@ -143,7 +143,7 @@ After most actions, the toolbar shows exactly what **Undo** would do ("Undo comm
 
 **Settings** (the gear, or Ctrl+,) has:
 
-- **Theme:** a look (Raccoon, the default, Classic, Pastel, Abyss, Forest, Paper or High contrast), each **Dark** or **Light**, or **System** to follow your computer's light and dark.
+- **Theme:** a look (Raccoon, the default, Classic, Pastel, Forest, Paper or High contrast), each **Dark** or **Light**, or **System** to follow your computer's light and dark.
 - **Interface size**, from 90% to 150%. Anywhere in the app, Ctrl+scroll or Ctrl+plus and Ctrl+minus zoom in and out (from 50% to 200%), and Ctrl+0 goes back to normal; the size is remembered.
 - **Diffs:** unified or side by side.
 - **Updates:** whether to check automatically.

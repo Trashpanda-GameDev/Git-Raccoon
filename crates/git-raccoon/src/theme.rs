@@ -203,47 +203,6 @@ const PASTEL: Palette = Palette {
     syntax: EmbeddedThemeName::CatppuccinLatte,
 };
 
-const ABYSS: Palette = Palette {
-    light: false,
-    bg: Color32::from_rgb(0x15, 0x1a, 0x26),
-    bg_raised: Color32::from_rgb(0x1c, 0x23, 0x33),
-    bg_hover: Color32::from_rgb(0x24, 0x2c, 0x3f),
-    bg_selected: Color32::from_rgb(0x2c, 0x38, 0x52),
-    border: Color32::from_rgb(0x2a, 0x33, 0x47),
-    text: Color32::from_rgb(0xdc, 0xe4, 0xf2),
-    muted: Color32::from_rgb(0x86, 0x94, 0xad),
-    accent: Color32::from_rgb(0x2e, 0xc4, 0xc4),
-    on_accent: Color32::from_rgb(0x08, 0x1f, 0x24),
-    danger: Color32::from_rgb(0xff, 0x6b, 0x81),
-    danger_bg: Color32::from_rgb(0x3a, 0x20, 0x30),
-    add: Color32::from_rgb(0x4f, 0xd1, 0xa1),
-    del: Color32::from_rgb(0xff, 0x7a, 0x8a),
-    modified: Color32::from_rgb(0xf0, 0xc0, 0x60),
-    renamed: Color32::from_rgb(0x79, 0xa8, 0xff),
-    typechange: Color32::from_rgb(0xb4, 0x8c, 0xff),
-    hunk: Color32::from_rgb(0x8f, 0xb0, 0xf0),
-    add_bg: Color32::from_rgba_premultiplied(9, 25, 19, 31),
-    add_bg_strong: Color32::from_rgba_premultiplied(17, 46, 35, 56),
-    del_bg: Color32::from_rgba_premultiplied(31, 15, 17, 31),
-    del_bg_strong: Color32::from_rgba_premultiplied(56, 27, 30, 56),
-    word_add: Color32::from_rgba_premultiplied(28, 73, 56, 89),
-    word_del: Color32::from_rgba_premultiplied(89, 43, 48, 89),
-    hunk_bg: Color32::from_rgba_premultiplied(9, 11, 14, 15),
-    lanes: [
-        Color32::from_rgb(0x2e, 0xc4, 0xc4),
-        Color32::from_rgb(0x4f, 0x8c, 0xff),
-        Color32::from_rgb(0xa9, 0x70, 0xff),
-        Color32::from_rgb(0xff, 0x5f, 0xa2),
-        Color32::from_rgb(0xff, 0x8a, 0x3d),
-        Color32::from_rgb(0xff, 0xd2, 0x3f),
-        Color32::from_rgb(0x7e, 0xe0, 0x81),
-        Color32::from_rgb(0x3f, 0xb8, 0xff),
-        Color32::from_rgb(0xe0, 0x5f, 0xf0),
-        Color32::from_rgb(0x5f, 0xe0, 0xc0),
-    ],
-    syntax: EmbeddedThemeName::Base16OceanDark,
-};
-
 const FOREST: Palette = Palette {
     light: false,
     bg: Color32::from_rgb(0x1a, 0x20, 0x1b),
@@ -451,48 +410,6 @@ const PASTEL_DARK: Palette = Palette {
     syntax: EmbeddedThemeName::CatppuccinMocha,
 };
 
-/// Abyss in daylight: ink blues and teal.
-const ABYSS_LIGHT: Palette = Palette {
-    light: true,
-    bg: Color32::from_rgb(0xee, 0xf2, 0xf8),
-    bg_raised: Color32::from_rgb(0xfb, 0xfc, 0xfe),
-    bg_hover: Color32::from_rgb(0xe2, 0xe8, 0xf2),
-    bg_selected: Color32::from_rgb(0xd0, 0xdd, 0xf2),
-    border: Color32::from_rgb(0xcc, 0xd6, 0xe6),
-    text: Color32::from_rgb(0x18, 0x20, 0x2e),
-    muted: Color32::from_rgb(0x58, 0x67, 0x80),
-    accent: Color32::from_rgb(0x0f, 0x8f, 0x96),
-    on_accent: Color32::from_rgb(0xff, 0xff, 0xff),
-    danger: Color32::from_rgb(0xc8, 0x32, 0x4a),
-    danger_bg: Color32::from_rgb(0xfb, 0xe3, 0xe8),
-    add: Color32::from_rgb(0x1a, 0x8a, 0x5e),
-    del: Color32::from_rgb(0xc8, 0x3a, 0x4e),
-    modified: Color32::from_rgb(0x8a, 0x64, 0x00),
-    renamed: Color32::from_rgb(0x2a, 0x5f, 0xd0),
-    typechange: Color32::from_rgb(0x7a, 0x4a, 0xd0),
-    hunk: Color32::from_rgb(0x3a, 0x5a, 0x9a),
-    add_bg: Color32::from_rgba_premultiplied(7, 24, 10, 38),
-    add_bg_strong: Color32::from_rgba_premultiplied(14, 48, 20, 77),
-    del_bg: Color32::from_rgba_premultiplied(25, 4, 6, 31),
-    del_bg_strong: Color32::from_rgba_premultiplied(52, 9, 12, 64),
-    word_add: Color32::from_rgba_premultiplied(16, 56, 23, 89),
-    word_del: Color32::from_rgba_premultiplied(62, 10, 14, 77),
-    hunk_bg: Color32::from_rgba_premultiplied(1, 8, 17, 20),
-    lanes: [
-        Color32::from_rgb(0x0f, 0x8f, 0x96),
-        Color32::from_rgb(0x2a, 0x6a, 0xd8),
-        Color32::from_rgb(0x7a, 0x45, 0xd8),
-        Color32::from_rgb(0xd0, 0x3a, 0x7e),
-        Color32::from_rgb(0xd0, 0x66, 0x1a),
-        Color32::from_rgb(0xb0, 0x8a, 0x00),
-        Color32::from_rgb(0x2f, 0x9a, 0x4a),
-        Color32::from_rgb(0x1a, 0x7a, 0xc8),
-        Color32::from_rgb(0xa8, 0x3a, 0xc0),
-        Color32::from_rgb(0x1a, 0x9a, 0x80),
-    ],
-    syntax: EmbeddedThemeName::Base16OceanLight,
-};
-
 /// Forest in daylight: sage and amber.
 const FOREST_LIGHT: Palette = Palette {
     light: true,
@@ -625,7 +542,6 @@ pub enum Family {
     Classic,
     Raccoon,
     Pastel,
-    Abyss,
     Forest,
     Paper,
     HighContrast,
@@ -633,11 +549,10 @@ pub enum Family {
 
 impl Family {
     /// In the order they're offered: Git Raccoon's own first.
-    pub const ALL: [Family; 7] = [
+    pub const ALL: [Family; 6] = [
         Family::Raccoon,
         Family::Classic,
         Family::Pastel,
-        Family::Abyss,
         Family::Forest,
         Family::Paper,
         Family::HighContrast,
@@ -648,7 +563,6 @@ impl Family {
             Family::Classic => "Classic",
             Family::Raccoon => "Raccoon",
             Family::Pastel => "Pastel",
-            Family::Abyss => "Abyss",
             Family::Forest => "Forest",
             Family::Paper => "Paper",
             Family::HighContrast => "High contrast",
@@ -680,8 +594,6 @@ impl Look {
             (Family::Raccoon, true) => &RACCOON_LIGHT,
             (Family::Pastel, false) => &PASTEL_DARK,
             (Family::Pastel, true) => &PASTEL,
-            (Family::Abyss, false) => &ABYSS,
-            (Family::Abyss, true) => &ABYSS_LIGHT,
             (Family::Forest, false) => &FOREST,
             (Family::Forest, true) => &FOREST_LIGHT,
             (Family::Paper, false) => &PAPER_DARK,
@@ -696,7 +608,7 @@ impl Look {
             .iter()
             .position(|f| *f == self.family)
             .unwrap_or(0);
-        #[expect(clippy::cast_possible_truncation, reason = "seven families")]
+        #[expect(clippy::cast_possible_truncation, reason = "six families")]
         let family = family as u8;
         family * 2 + u8::from(self.light)
     }

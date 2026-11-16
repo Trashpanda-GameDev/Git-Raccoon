@@ -332,7 +332,7 @@ fn website_screenshots() {
         (ThemeChoice::Raccoon, ThemeMode::Light, "raccoon-light"),
         (ThemeChoice::Classic, ThemeMode::Dark, "classic"),
         (ThemeChoice::Pastel, ThemeMode::Light, "pastel"),
-        (ThemeChoice::Abyss, ThemeMode::Dark, "abyss"),
+        (ThemeChoice::HighContrast, ThemeMode::Dark, "high-contrast"),
         (ThemeChoice::Forest, ThemeMode::Dark, "forest"),
         (ThemeChoice::Paper, ThemeMode::Light, "paper"),
     ] {

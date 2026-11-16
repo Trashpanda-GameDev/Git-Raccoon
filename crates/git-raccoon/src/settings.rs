@@ -82,6 +82,8 @@ pub enum ThemeChoice {
     #[default]
     Raccoon,
     Pastel,
+    /// From settings before 0.5.3 only: a look since removed (it was too
+    /// like Classic), which [`Settings::upgrade`] turns into Classic.
     Abyss,
     Forest,
     Paper,
@@ -92,11 +94,10 @@ pub enum ThemeChoice {
 
 impl ThemeChoice {
     /// The choices offered, in order.
-    pub const ALL: [ThemeChoice; 7] = [
+    pub const ALL: [ThemeChoice; 6] = [
         ThemeChoice::Raccoon,
         ThemeChoice::Classic,
         ThemeChoice::Pastel,
-        ThemeChoice::Abyss,
         ThemeChoice::Forest,
         ThemeChoice::Paper,
         ThemeChoice::HighContrast,
@@ -105,12 +106,13 @@ impl ThemeChoice {
     pub fn family(self) -> crate::theme::Family {
         use crate::theme::Family;
         match self {
-            ThemeChoice::System | ThemeChoice::Dark | ThemeChoice::Light | ThemeChoice::Classic => {
-                Family::Classic
-            }
+            ThemeChoice::System
+            | ThemeChoice::Dark
+            | ThemeChoice::Light
+            | ThemeChoice::Abyss
+            | ThemeChoice::Classic => Family::Classic,
             ThemeChoice::Raccoon => Family::Raccoon,
             ThemeChoice::Pastel => Family::Pastel,
-            ThemeChoice::Abyss => Family::Abyss,
             ThemeChoice::Forest => Family::Forest,
             ThemeChoice::Paper => Family::Paper,
             ThemeChoice::HighContrast => Family::HighContrast,
@@ -203,6 +205,10 @@ impl Settings {
             self.theme = theme;
             self.theme_mode = mode;
         }
+        // Abyss is gone: Classic is the nearest, in the same mode.
+        if self.theme == ThemeChoice::Abyss {
+            self.theme = ThemeChoice::Classic;
+        }
         self.defaults = DEFAULTS;
         self
     }
@@ -284,6 +290,14 @@ mod tests {
         assert_eq!(
             (saved.theme, saved.theme_mode),
             (ThemeChoice::Forest, ThemeMode::System)
+        );
+        // Abyss, removed since: Classic, keeping its mode.
+        let abyss: Settings =
+            ron::from_str("(theme: Abyss, theme_mode: Light, defaults: 2)").unwrap();
+        let abyss = abyss.upgrade();
+        assert_eq!(
+            (abyss.theme, abyss.theme_mode),
+            (ThemeChoice::Classic, ThemeMode::Light)
         );
     }
 
