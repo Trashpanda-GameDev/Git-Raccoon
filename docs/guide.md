@@ -177,7 +177,7 @@ After most actions, the toolbar shows exactly what **Undo** would do ("Undo comm
 
 **What's new.** After an update, Git Raccoon shows what changed since the version you had (and "What's new in this version" in the command palette shows it again).
 
-**Feedback.** The speech-bubble button in the toolbar (or "Send feedback" in the command palette) takes a bug report, feedback or an idea: write a title and a few details and press **Send**: it's posted as a public issue on Git Raccoon's GitHub page, for the project's board. No account is needed, and nothing else about you is sent; bug reports include the version and system.
+**Feedback.** The speech-bubble button in the toolbar (or "Send feedback" in the command palette) takes a bug report, feedback or an idea: write a title and a few details and press **Send**: it's posted as a public issue on Git Raccoon's GitHub page, for the project's board. No account is needed, and nothing else about you is sent; bug reports include the version and system. Tick **Include a screenshot of the window** to send what the window looked like when you opened the form; it's shown to you first, as it's public too.
 
 **Crash reports.** If Git Raccoon runs into a bug, it writes a report on your computer — nothing is sent. Next time you start it, it shows you the report and lets you choose: **Report on GitHub…** opens an issue you can read and add to before posting, **Copy report**, or **Don't send**.
 

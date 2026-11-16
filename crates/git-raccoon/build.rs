@@ -1,5 +1,6 @@
-//! Embeds the app icon and name in the Windows executable, and the token
-//! the feedback form posts issues with (when the release build has one).
+//! Embeds the app icon and name in the Windows executable, and the tokens
+//! the feedback form posts issues and uploads screenshots with (when the
+//! release build has them).
 
 /// Mixed into the token, so it isn't plain text in the executable. It
 /// keeps it from a casual search, not from anyone determined.
@@ -7,21 +8,25 @@ const KEY: &[u8] = b"raccoons-wash-their-food-in-the-river";
 
 fn main() {
     println!("cargo:rerun-if-changed=assets/icon.ico");
-    println!("cargo:rerun-if-env-changed=GIT_RACCOON_FEEDBACK_TOKEN");
-    let token = std::env::var("GIT_RACCOON_FEEDBACK_TOKEN").unwrap_or_default();
-    let scrambled: Vec<String> = token
-        .trim()
-        .bytes()
-        .zip(KEY.iter().cycle())
-        .map(|(b, k)| (b ^ k).to_string())
-        .collect();
+    let scramble = |var: &str| -> String {
+        println!("cargo:rerun-if-env-changed={var}");
+        let token = std::env::var(var).unwrap_or_default();
+        token
+            .trim()
+            .bytes()
+            .zip(KEY.iter().cycle())
+            .map(|(b, k)| (b ^ k).to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let issues = scramble("GIT_RACCOON_FEEDBACK_TOKEN");
+    let screenshots = scramble("GIT_RACCOON_SCREENSHOT_TOKEN");
     let out =
         std::path::Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR")).join("feedback_token.rs");
     std::fs::write(
         out,
         format!(
-            "const SCRAMBLED: &[u8] = &[{}];\nconst KEY: &[u8] = &{KEY:?};\n",
-            scrambled.join(", ")
+            "const SCRAMBLED: &[u8] = &[{issues}];\nconst SCREENSHOT_SCRAMBLED: &[u8] = &[{screenshots}];\nconst KEY: &[u8] = &{KEY:?};\n"
         ),
     )
     .expect("write feedback_token.rs");

@@ -3120,8 +3120,26 @@ fn shows_whats_new_after_an_update_and_takes_feedback() {
     h.run_ok();
     type_into(&mut h, "Feedback title", "Raccoon-shaped cursor");
     type_into(&mut h, "Feedback details", "For fun.");
+    // A screenshot of the window as it was (this build can't upload it, so
+    // it's copied, for pasting into the issue).
+    h.get_by_label("Copy a screenshot of the window, to paste into the issue")
+        .click();
+    h.run_ok();
+    h.get_by_label_contains("It's public with the issue");
     screenshot(&mut h, "49-feedback");
     h.get_by_label("Continue on GitHub").click();
+    h.step();
+    let copied = h
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .find_map(|c| match c {
+            egui::OutputCommand::CopyImage(image) => Some(image.size),
+            _ => None,
+        });
+    let [w, _] = copied.expect("the screenshot was copied");
+    assert!(w > 100, "the whole window");
     h.run_ok();
     assert!(h.query_by_label("Feedback title").is_none(), "closed");
 }

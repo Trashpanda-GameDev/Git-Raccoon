@@ -13,6 +13,24 @@ pub struct Form {
     pub title: String,
     pub details: String,
     pub status: Status,
+    /// The window as it was when the form opened, and whether it goes too.
+    pub screenshot: Option<std::sync::Arc<egui::ColorImage>>,
+    pub attach: bool,
+    preview: Option<egui::TextureHandle>,
+}
+
+impl Form {
+    pub fn with_screenshot(screenshot: Option<std::sync::Arc<egui::ColorImage>>) -> Self {
+        Form {
+            screenshot,
+            ..Form::default()
+        }
+    }
+
+    /// The screenshot to send, if it's to go.
+    pub fn attached(&self) -> Option<std::sync::Arc<egui::ColorImage>> {
+        self.screenshot.clone().filter(|_| self.attach)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,6 +49,9 @@ impl Default for Form {
             title: String::new(),
             details: String::new(),
             status: Status::Writing,
+            screenshot: None,
+            attach: false,
+            preview: None,
         }
     }
 }
@@ -111,6 +132,38 @@ pub fn show(ctx: &egui::Context, form: &mut Form) -> Option<Action> {
                     .size(11.0)
                     .color(theme::muted()),
             );
+        }
+        // A screenshot: sent along where this build can upload it, or
+        // copied for pasting into the issue on GitHub.
+        let can_send = crate::feedback::uploads_screenshots() || !posts;
+        if let Some(shot) = form.screenshot.clone().filter(|_| can_send) {
+            ui.add_space(6.0);
+            let label = if posts {
+                "Include a screenshot of the window"
+            } else {
+                "Copy a screenshot of the window, to paste into the issue"
+            };
+            ui.checkbox(&mut form.attach, label);
+            if form.attach {
+                let texture = form.preview.get_or_insert_with(|| {
+                    ui.ctx().load_texture(
+                        "feedback-screenshot",
+                        crate::feedback::thumbnail(&shot, 1024),
+                        egui::TextureOptions::LINEAR,
+                    )
+                });
+                let [w, h] = shot.size;
+                #[expect(clippy::cast_precision_loss, reason = "screen sizes")]
+                let size = egui::vec2(240.0, 240.0 * h as f32 / (w as f32).max(1.0));
+                ui.add(egui::Image::new((texture.id(), size)).corner_radius(4));
+                ui.label(
+                    RichText::new(
+                        "It's public with the issue: check it shows nothing private (code, names, paths).",
+                    )
+                    .size(11.0)
+                    .color(theme::muted()),
+                );
+            }
         }
         if let Status::Failed(why) = &form.status {
             ui.add_space(6.0);

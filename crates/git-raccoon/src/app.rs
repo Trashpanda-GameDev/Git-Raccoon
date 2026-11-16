@@ -63,6 +63,8 @@ pub struct App {
     /// The feedback form, while it's open, and its post on the way.
     feedback: Option<crate::ui::feedback::Form>,
     feedback_post: Option<crate::task::Task<Result<u64, String>>>,
+    /// Frames waited for the screenshot the feedback form opens with.
+    feedback_capture: Option<u8>,
     /// The sign-in window, while it's open, and its work in the background.
     sign_in: Option<crate::ui::sign_in::SignIn>,
     sign_in_work: Option<SignInWork>,
@@ -165,6 +167,7 @@ impl App {
             whats_new,
             feedback: None,
             feedback_post: None,
+            feedback_capture: None,
             sign_in: None,
             sign_in_work: None,
         }
@@ -874,7 +877,7 @@ impl App {
             Command::ZoomIn => self.settings.zoom_step(true),
             Command::ZoomOut => self.settings.zoom_step(false),
             Command::ZoomReset => self.settings.zoom = None,
-            Command::Feedback => self.feedback = Some(crate::ui::feedback::Form::default()),
+            Command::Feedback => self.open_feedback(ctx),
             Command::WhatsNew => {
                 self.whats_new = crate::changelog::of(env!("CARGO_PKG_VERSION"))
                     .into_iter()
@@ -1064,6 +1067,49 @@ impl App {
                 self.new_request_post = None;
             }
             None => {}
+        }
+    }
+
+    /// Opens the feedback form, once the window's screenshot is taken (so
+    /// the form isn't in it).
+    fn open_feedback(&mut self, ctx: &egui::Context) {
+        if self.feedback.is_some() || self.feedback_capture.is_some() {
+            return;
+        }
+        self.feedback_capture = Some(0);
+        ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::new(
+            "feedback",
+        )));
+        ctx.request_repaint();
+    }
+
+    /// Takes in the screenshot for the feedback form, and opens it; without
+    /// one if none comes (not every system can take them).
+    fn feedback_screenshot(&mut self, ctx: &egui::Context) {
+        let Some(waited) = self.feedback_capture else {
+            return;
+        };
+        let shot = ctx.input(|i| {
+            i.raw.events.iter().find_map(|e| match e {
+                egui::Event::Screenshot {
+                    image, user_data, ..
+                } if user_data
+                    .data
+                    .as_ref()
+                    .and_then(|d| d.downcast_ref::<&str>())
+                    == Some(&"feedback") =>
+                {
+                    Some(std::sync::Arc::clone(image))
+                }
+                _ => None,
+            })
+        });
+        if shot.is_some() || waited >= 10 {
+            self.feedback_capture = None;
+            self.feedback = Some(crate::ui::feedback::Form::with_screenshot(shot));
+        } else {
+            self.feedback_capture = Some(waited + 1);
+            ctx.request_repaint();
         }
     }
 
@@ -1995,6 +2041,7 @@ impl eframe::App for App {
         if !self.whats_new.is_empty() && !crate::ui::whats_new::show(&ctx, &self.whats_new) {
             self.whats_new.clear();
         }
+        self.feedback_screenshot(&ctx);
         if let Some(form) = &mut self.feedback {
             use crate::ui::feedback::{Action, Status};
             if let Some(result) = self
@@ -2016,11 +2063,17 @@ impl eframe::App for App {
                     form.status = Status::Sending;
                     let (kind, title, details) =
                         (form.kind, form.title.clone(), form.details.clone());
+                    let shot = form.attached();
                     self.feedback_post = Some(crate::task::Task::spawn(&ctx, move || {
-                        crate::feedback::post(kind, &title, &details)
+                        let png = shot.map(|s| crate::feedback::png(&s)).transpose()?;
+                        crate::feedback::post(kind, &title, &details, png.as_deref())
                     }));
                 }
                 Some(Action::Send | Action::OpenOnGitHub) => {
+                    // The screenshot goes on the clipboard, for pasting there.
+                    if let Some(shot) = form.attached() {
+                        ctx.copy_image((*shot).clone());
+                    }
                     ctx.open_url(egui::OpenUrl::new_tab(on_github(form)));
                     self.feedback = None;
                 }

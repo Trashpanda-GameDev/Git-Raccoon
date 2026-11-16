@@ -70,6 +70,8 @@ jobs:
         env:
           # Lets the feedback form post issues itself (see feedback.rs).
           GIT_RACCOON_FEEDBACK_TOKEN: ${{ secrets.FEEDBACK_TOKEN }}
+          # And upload screenshots with them (optional; see feedback.rs).
+          GIT_RACCOON_SCREENSHOT_TOKEN: ${{ secrets.SCREENSHOT_TOKEN }}
       - name: Files to install
         shell: bash
         run: |
@@ -147,6 +149,8 @@ jobs:
         env:
           # Lets the feedback form post issues itself (see feedback.rs).
           GIT_RACCOON_FEEDBACK_TOKEN: ${{ secrets.FEEDBACK_TOKEN }}
+          # And upload screenshots with them (optional; see feedback.rs).
+          GIT_RACCOON_SCREENSHOT_TOKEN: ${{ secrets.SCREENSHOT_TOKEN }}
       - name: Files to install, and the icon in Apple's format
         run: |
           mkdir publish && cp target/release/git-raccoon publish/
@@ -216,6 +220,8 @@ jobs:
         env:
           # Lets the feedback form post issues itself (see feedback.rs).
           GIT_RACCOON_FEEDBACK_TOKEN: ${{ secrets.FEEDBACK_TOKEN }}
+          # And upload screenshots with them (optional; see feedback.rs).
+          GIT_RACCOON_SCREENSHOT_TOKEN: ${{ secrets.SCREENSHOT_TOKEN }}
       - name: Files to install
         run: |
           mkdir publish && cp target/release/git-raccoon publish/
