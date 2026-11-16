@@ -211,7 +211,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libssl-dev \
             libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev \
-            libxrandr-dev libxi-dev libfuse2
+            libxrandr-dev libxi-dev libdbus-1-dev libfuse2
       - run: cargo build --release -p git-raccoon
         env:
           # Lets the feedback form post issues itself (see feedback.rs).

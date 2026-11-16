@@ -37,7 +37,7 @@ cargo run --release -- path/to/repo
 
 - **Windows:** Rust's installer sets up the Visual Studio C++ Build Tools it needs. Nothing else is required.
 - **macOS:** `xcode-select --install`.
-- **Linux (Debian/Ubuntu):** `sudo apt install build-essential pkg-config libssl-dev libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libvulkan1 mesa-vulkan-drivers`
+- **Linux (Debian/Ubuntu):** `sudo apt install build-essential pkg-config libssl-dev libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libdbus-1-dev libvulkan1 mesa-vulkan-drivers`
 
 ## Releases and updates
 

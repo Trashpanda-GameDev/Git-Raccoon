@@ -21,6 +21,8 @@ velopack = "1.2.161"
 # Posting feedback as a GitHub issue (both already come with velopack).
 ureq = "3"
 serde_json = "1"
+# Forge accounts' tokens, in the system keychain.
+keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 
 # Colouring the title bar to match the theme, on Windows 11.
 [target.'cfg(windows)'.dependencies]

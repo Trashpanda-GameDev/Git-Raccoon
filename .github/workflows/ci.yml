@@ -31,7 +31,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libssl-dev \
             libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev \
-            libxrandr-dev libxi-dev libvulkan1 mesa-vulkan-drivers
+            libxrandr-dev libxi-dev libdbus-1-dev libvulkan1 mesa-vulkan-drivers
       - name: Git identity for tests that commit
         run: |
           git config --global user.name "CI"

@@ -5,6 +5,7 @@ pub mod changelog;
 pub mod commands;
 pub mod crash;
 pub mod feedback;
+pub mod forge;
 pub mod format;
 mod highlight;
 mod images;
