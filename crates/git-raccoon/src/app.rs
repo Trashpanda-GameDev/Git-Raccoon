@@ -57,8 +57,9 @@ pub struct App {
     licenses: Option<crate::ui::licenses::Tab>,
     /// The notes shown in "What's new", while it's open.
     whats_new: Vec<crate::changelog::Notes>,
-    /// The feedback form, while it's open.
+    /// The feedback form, while it's open, and its post on the way.
     feedback: Option<crate::ui::feedback::Form>,
+    feedback_post: Option<crate::task::Task<Result<u64, String>>>,
     /// Reports of earlier crashes, offered one at a time.
     crash_reports: Vec<crate::crash::Report>,
 }
@@ -155,6 +156,7 @@ impl App {
             licenses: None,
             whats_new,
             feedback: None,
+            feedback_post: None,
         }
     }
 
@@ -1696,13 +1698,38 @@ impl eframe::App for App {
             self.whats_new.clear();
         }
         if let Some(form) = &mut self.feedback {
+            use crate::ui::feedback::{Action, Status};
+            if let Some(result) = self
+                .feedback_post
+                .as_ref()
+                .and_then(crate::task::Task::poll)
+            {
+                self.feedback_post = None;
+                form.status = match result {
+                    Ok(number) => Status::Sent(number),
+                    Err(why) => Status::Failed(why),
+                };
+            }
+            let on_github = |form: &crate::ui::feedback::Form| {
+                crate::feedback::issue_url(form.kind, &form.title, &form.details)
+            };
             match crate::ui::feedback::show(&ctx, form) {
-                Some(crate::ui::feedback::Action::Send) => {
-                    let url = crate::feedback::issue_url(form.kind, &form.title, &form.details);
-                    ctx.open_url(egui::OpenUrl::new_tab(url));
+                Some(Action::Send) if crate::feedback::posts_itself() => {
+                    form.status = Status::Sending;
+                    let (kind, title, details) =
+                        (form.kind, form.title.clone(), form.details.clone());
+                    self.feedback_post = Some(crate::task::Task::spawn(&ctx, move || {
+                        crate::feedback::post(kind, &title, &details)
+                    }));
+                }
+                Some(Action::Send | Action::OpenOnGitHub) => {
+                    ctx.open_url(egui::OpenUrl::new_tab(on_github(form)));
                     self.feedback = None;
                 }
-                Some(crate::ui::feedback::Action::Close) => self.feedback = None,
+                Some(Action::Close) => {
+                    self.feedback = None;
+                    self.feedback_post = None;
+                }
                 None => {}
             }
         }

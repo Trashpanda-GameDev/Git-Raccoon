@@ -7,11 +7,21 @@ use crate::feedback::Kind;
 use crate::theme;
 use crate::ui::widgets;
 
-/// What's being written.
+/// What's being written, and how sending it went.
 pub struct Form {
     pub kind: Kind,
     pub title: String,
     pub details: String,
+    pub status: Status,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Status {
+    Writing,
+    Sending,
+    /// Posted, as this issue number.
+    Sent(u64),
+    Failed(String),
 }
 
 impl Default for Form {
@@ -20,28 +30,51 @@ impl Default for Form {
             kind: Kind::Feedback,
             title: String::new(),
             details: String::new(),
+            status: Status::Writing,
         }
     }
 }
 
 pub enum Action {
-    /// Open the prefilled issue on GitHub.
+    /// Post it (or, for builds that can't, open it on GitHub).
     Send,
+    /// After a failure: open the prefilled issue on GitHub instead.
+    OpenOnGitHub,
     Close,
 }
 
 pub fn show(ctx: &egui::Context, form: &mut Form) -> Option<Action> {
     let mut action = None;
+    let posts = crate::feedback::posts_itself();
     let modal = egui::Modal::new(egui::Id::new("feedback")).show(ctx, |ui| {
         ui.set_width(480.0);
         ui.label(RichText::new("Send feedback").strong().size(16.0));
         ui.add_space(4.0);
-        ui.label(
-            RichText::new(
-                "Report a bug, say what you think, or suggest an idea. It continues on GitHub, where you can check it and post it (you'll need a GitHub account); it goes on the project's board.",
-            )
-            .color(theme::muted()),
-        );
+        if let Status::Sent(number) = form.status {
+            ui.label(
+                RichText::new(format!(
+                    "Thanks! It's on the project board as issue #{number}."
+                ))
+                .color(theme::text()),
+            );
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if ui.button("Done").clicked() {
+                    action = Some(Action::Close);
+                }
+                ui.hyperlink_to(
+                    "See it on GitHub",
+                    format!("{}/{number}", crate::crash::ISSUES.trim_end_matches("/new")),
+                );
+            });
+            return;
+        }
+        let about = if posts {
+            "Report a bug, say what you think, or suggest an idea. It's posted as an issue on Git Raccoon's GitHub page (publicly), for the project's board; nothing else about you is sent."
+        } else {
+            "Report a bug, say what you think, or suggest an idea. It continues on GitHub, where you can check it and post it (you'll need a GitHub account); it goes on the project's board."
+        };
+        ui.label(RichText::new(about).color(theme::muted()));
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             form.kind = widgets::segmented(
@@ -79,21 +112,36 @@ pub fn show(ctx: &egui::Context, form: &mut Form) -> Option<Action> {
                     .color(theme::muted()),
             );
         }
+        if let Status::Failed(why) = &form.status {
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(format!("It wasn't sent: {why}.")).color(theme::danger()),
+            );
+            if ui.button("Send it on GitHub instead").clicked() {
+                action = Some(Action::OpenOnGitHub);
+            }
+        }
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            let ready = !form.title.trim().is_empty();
+            let sending = form.status == Status::Sending;
+            let ready = !form.title.trim().is_empty() && !sending;
+            let label = match (posts, sending) {
+                (_, true) => "Sending…",
+                (true, false) => "Send",
+                (false, false) => "Continue on GitHub",
+            };
             let send = egui::Button::new(
-                RichText::new("Continue on GitHub")
+                RichText::new(label)
                     .color(if ready { theme::on_accent() } else { theme::muted() })
                     .strong(),
             )
             .fill(if ready { theme::accent() } else { theme::bg_hover() });
-            if ui
-                .add_enabled(ready, send)
-                .on_disabled_hover_text("Write a title first")
-                .clicked()
-            {
+            let send = ui.add_enabled(ready, send);
+            if send.on_disabled_hover_text("Write a title first").clicked() {
                 action = Some(Action::Send);
+            }
+            if sending {
+                ui.spinner();
             }
             if ui.button("Cancel").clicked() {
                 action = Some(Action::Close);

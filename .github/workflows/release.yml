@@ -58,6 +58,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release -p git-raccoon
+        env:
+          # Lets the feedback form post issues itself (see feedback.rs).
+          GIT_RACCOON_FEEDBACK_TOKEN: ${{ secrets.FEEDBACK_TOKEN }}
       - name: Files to install
         shell: bash
         run: |
@@ -132,6 +135,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release -p git-raccoon
+        env:
+          # Lets the feedback form post issues itself (see feedback.rs).
+          GIT_RACCOON_FEEDBACK_TOKEN: ${{ secrets.FEEDBACK_TOKEN }}
       - name: Files to install, and the icon in Apple's format
         run: |
           mkdir publish && cp target/release/git-raccoon publish/
@@ -198,6 +204,9 @@ jobs:
             libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev \
             libxrandr-dev libxi-dev libfuse2
       - run: cargo build --release -p git-raccoon
+        env:
+          # Lets the feedback form post issues itself (see feedback.rs).
+          GIT_RACCOON_FEEDBACK_TOKEN: ${{ secrets.FEEDBACK_TOKEN }}
       - name: Files to install
         run: |
           mkdir publish && cp target/release/git-raccoon publish/
