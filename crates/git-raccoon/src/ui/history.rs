@@ -517,8 +517,12 @@ pub fn show(
                 (theme::text(), theme::muted())
             };
             let refs_cell = cell(0.0, cols.refs);
-            // More than one label: hovering spreads them all out.
-            if labels(c).len() > 1
+            // More than one label, or one cut short: hovering spreads them
+            // out, at their full length.
+            let cut_short = labels(c).first().is_some_and(|(r, on_remote)| {
+                widgets::pill_elided(painter, &ref_text(r, *on_remote), refs_cell.width())
+            });
+            if (labels(c).len() > 1 || cut_short)
                 && overlay.is_none()
                 && pointer.is_some_and(|p| {
                     Rect::from_x_y_ranges(refs_cell.x_range(), top..=top + ROW_HEIGHT).contains(p)
@@ -535,22 +539,6 @@ pub fn show(
             if let (Some(rect), Some((r, _))) = (pills.first(), labels(c).first()) {
                 let response =
                     ui.interact(*rect, ui.id().with(("label", row)), Sense::click_and_drag());
-                // A name cut short shows in full on hover.
-                let reserve = if labels(c).len() > 1 && !spread {
-                    34.0
-                } else {
-                    0.0
-                };
-                let on_remote = labels(c).first().is_some_and(|(_, o)| *o);
-                let response = if widgets::pill_elided(
-                    painter,
-                    &ref_text(r, on_remote),
-                    refs_cell.width() - reserve,
-                ) {
-                    response.on_hover_text(&r.name)
-                } else {
-                    response
-                };
                 if let Some(merge) = drag_and_drop(painter, &response, r) {
                     clicked = Some(merge);
                 } else if response.double_clicked() {
@@ -817,6 +805,9 @@ fn ref_pills(
     vec![rect]
 }
 
+/// How wide a label grows when they're spread out: room for long names.
+const MAX_LABEL: f32 = 640.0;
+
 /// Every label of a commit, one above the other, over the rows below:
 /// shown while the pointer is over them. A double-click checks one out; a
 /// click selects the commit. Returns the area they cover, and what was
@@ -863,7 +854,7 @@ fn all_labels(
                             .size()
                             .x
                             + 14.0;
-                        let width = width.min(360.0);
+                        let width = width.min(MAX_LABEL);
                         let (rect, response) = ui
                             .allocate_exact_size(egui::vec2(width, 20.0), Sense::click_and_drag());
                         let what = label_click(c, r);
@@ -878,15 +869,12 @@ fn all_labels(
                         widgets::pill(
                             ui.painter(),
                             Pos2::new(rect.left(), rect.center().y),
-                            360.0,
+                            MAX_LABEL,
                             &text,
                             colour,
                             r.is_head,
                         );
                         let mut tips = Vec::new();
-                        if widgets::pill_elided(ui.painter(), &text, 360.0) {
-                            tips.push(r.name.clone());
-                        }
                         if on_remote {
                             let copies: Vec<&str> = c
                                 .refs
@@ -899,7 +887,10 @@ fn all_labels(
                                 .collect();
                             tips.push(format!("{} is here too", copies.join(" and ")));
                         }
-                        if what.is_some() {
+                        // The hint only where there are several to choose
+                        // from: one label grown to its whole name is
+                        // left as it is.
+                        if what.is_some() && labels(c).len() > 1 {
                             tips.push("Double-click to check out".to_string());
                         }
                         let tip = tips.join(". ");

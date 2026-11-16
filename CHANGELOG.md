@@ -3,6 +3,10 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.8
+
+- **A label cut short grows to its whole name** when you hover over it in the graph, the way several labels spread out, instead of a tooltip.
+
 ## 0.5.7
 
 - **Clone from your accounts**: pick one of your GitHub or GitLab repositories from a list, or make a new repository there and clone it, in the Clone window.

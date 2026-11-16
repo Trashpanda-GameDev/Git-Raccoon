@@ -1499,12 +1499,20 @@ fn a_label_cut_short_shows_its_whole_name_on_hover() {
             std::thread::sleep(Duration::from_millis(20));
         }
     };
+    let column = h.get_by_label("Add icon").rect().left();
     hover(&mut h, "Add icon");
-    assert!(h.query_by_value(long).is_some(), "the whole name");
+    // The label grows to its whole name, over the graph (no tooltip).
+    let label = h.get_by_label(long).rect();
+    assert!(
+        label.right() > column,
+        "wider than its column: {label:?}, messages start at {column}"
+    );
+    assert!(h.query_by_value(long).is_none(), "not a tooltip");
     screenshot(&mut h, "56-long-label");
-    // A name that fits has no tooltip.
+    // A name that fits stays as it is (only the sidebar's row is named).
+    let before = h.query_all_by_label("short").count();
     hover(&mut h, "Reject bare repositories when loading");
-    assert!(h.query_by_value("short").is_none());
+    assert_eq!(h.query_all_by_label("short").count(), before);
 }
 
 #[test]
