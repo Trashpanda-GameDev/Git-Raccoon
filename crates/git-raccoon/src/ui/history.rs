@@ -125,6 +125,11 @@ pub enum Click {
     StashDrop(String),
 }
 
+/// Whether a row is a stash.
+fn is_stash(c: &GraphCommit) -> bool {
+    c.refs.iter().any(|r| r.kind == RefKind::Stash)
+}
+
 /// The branch a label stands for when dragged: a local or remote branch.
 fn draggable(r: &RefLabel) -> Option<&str> {
     matches!(r.kind, RefKind::Local | RefKind::Remote).then_some(r.name.as_str())
@@ -424,22 +429,35 @@ pub fn show(
             let Some(c) = repo.rows.get(row) else {
                 continue;
             };
+            let stash = is_stash(c);
             for e in &c.edges {
                 let (a, b) = (
                     Pos2::new(lane_x(graph_left, usize::from(e.from)), centre(row)),
                     Pos2::new(lane_x(graph_left, usize::from(e.to)), centre(row + 1)),
                 );
                 let stroke = Stroke::new(2.0, theme::lane_color(usize::from(e.lane)));
+                // A stash's line to its commit is dotted.
+                let dotted = stash && usize::from(e.from) == c.column;
                 if (a.x - b.x).abs() < 0.5 {
-                    graph.line_segment([a, b], stroke);
+                    if dotted {
+                        graph.extend(egui::Shape::dotted_line(&[a, b], stroke.color, 6.0, 1.2));
+                    } else {
+                        graph.line_segment([a, b], stroke);
+                    }
                 } else {
                     let mid = (a.y + b.y) / 2.0;
-                    graph.add(CubicBezierShape::from_points_stroke(
+                    let curve = CubicBezierShape::from_points_stroke(
                         [a, Pos2::new(a.x, mid), Pos2::new(b.x, mid), b],
                         false,
                         Color32::TRANSPARENT,
                         stroke,
-                    ));
+                    );
+                    if dotted {
+                        let points = curve.flatten(Some(0.5));
+                        graph.extend(egui::Shape::dotted_line(&points, stroke.color, 6.0, 1.2));
+                    } else {
+                        graph.add(curve);
+                    }
                 }
             }
         }
@@ -453,7 +471,17 @@ pub fn show(
             if is_head || selected.as_deref() == Some(c.id.as_str()) {
                 graph.circle_stroke(p, DOT_RADIUS + 3.0, Stroke::new(2.0, colour));
             }
-            if c.parents.len() > 1 {
+            if is_stash(c) {
+                // A stash: its icon, not a dot.
+                graph.circle_filled(p, DOT_RADIUS + 1.0, theme::bg());
+                graph.text(
+                    p,
+                    egui::Align2::CENTER_CENTER,
+                    icon::STACK,
+                    theme::body(15.0),
+                    colour,
+                );
+            } else if c.parents.len() > 1 {
                 graph.circle_filled(p, DOT_RADIUS - 2.0, colour);
             } else {
                 graph.circle_filled(p, DOT_RADIUS, theme::bg());
