@@ -3,6 +3,11 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.7
+
+- **Sidebar sections keep their headings in view**: each scrolls on its own, and you can drag the line under one to make it taller or shorter (double-click it to let it fit again).
+- **Long branch names show in full** when you hover over a label that's cut short in the graph.
+
 ## 0.5.6
 
 - **Stashes show in the graph**, with a stash icon and a dotted line to the commit they were made on; right-click one to apply, pop or delete it. ("Drop" is now called "Delete".)

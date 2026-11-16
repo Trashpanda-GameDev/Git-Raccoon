@@ -535,6 +535,22 @@ pub fn show(
             if let (Some(rect), Some((r, _))) = (pills.first(), labels(c).first()) {
                 let response =
                     ui.interact(*rect, ui.id().with(("label", row)), Sense::click_and_drag());
+                // A name cut short shows in full on hover.
+                let reserve = if labels(c).len() > 1 && !spread {
+                    34.0
+                } else {
+                    0.0
+                };
+                let on_remote = labels(c).first().is_some_and(|(_, o)| *o);
+                let response = if widgets::pill_elided(
+                    painter,
+                    &ref_text(r, on_remote),
+                    refs_cell.width() - reserve,
+                ) {
+                    response.on_hover_text(&r.name)
+                } else {
+                    response
+                };
                 if let Some(merge) = drag_and_drop(painter, &response, r) {
                     clicked = Some(merge);
                 } else if response.double_clicked() {
@@ -868,6 +884,9 @@ fn all_labels(
                             r.is_head,
                         );
                         let mut tips = Vec::new();
+                        if widgets::pill_elided(ui.painter(), &text, 360.0) {
+                            tips.push(r.name.clone());
+                        }
                         if on_remote {
                             let copies: Vec<&str> = c
                                 .refs

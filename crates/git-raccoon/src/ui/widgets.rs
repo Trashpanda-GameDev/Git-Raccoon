@@ -30,6 +30,18 @@ pub fn elided(
     painter.layout_job(job)
 }
 
+/// Whether a label's text is cut short in a pill at most `max_width` wide.
+pub fn pill_elided(painter: &Painter, text: &str, max_width: f32) -> bool {
+    elided(
+        painter,
+        text,
+        FontId::proportional(12.0),
+        theme::text(),
+        max_width - 14.0,
+    )
+    .elided
+}
+
 /// Draws elided text vertically centred in `rect`, from its left edge.
 pub fn text_in(painter: &Painter, rect: Rect, text: &str, font: FontId, color: Color32) -> Rect {
     let galley = elided(painter, text, font, color, rect.width());
