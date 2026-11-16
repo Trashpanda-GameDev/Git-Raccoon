@@ -1074,6 +1074,7 @@ impl App {
                             ctx.open_url(egui::OpenUrl::new_tab(&code.page));
                             let (kind, base) = s.forge();
                             let client = s.browser().unwrap_or_default();
+                            let app = (!client.is_empty()).then(|| client.clone());
                             let cancel = Arc::new(AtomicBool::new(false));
                             let stop = Arc::clone(&cancel);
                             let waiting = code.clone();
@@ -1084,11 +1085,16 @@ impl App {
                                     if stop.load(Ordering::Relaxed) {
                                         return Err("cancelled".to_string());
                                     }
-                                    match oauth::poll(kind, &base, client, &waiting) {
+                                    match oauth::poll(kind, &base, &client, &waiting) {
                                         oauth::Poll::Waiting => {}
                                         oauth::Poll::SlowDown => interval += 5,
                                         oauth::Poll::Done(secret) => {
-                                            return accounts::sign_in(kind, &base, &secret, true);
+                                            return accounts::sign_in(
+                                                kind,
+                                                &base,
+                                                &secret,
+                                                app.clone(),
+                                            );
                                         }
                                         oauth::Poll::Failed(why) => return Err(why),
                                     }
@@ -1129,7 +1135,7 @@ impl App {
                 s.stage = Stage::Starting;
                 self.sign_in_work =
                     Some(SignInWork::Code(crate::task::Task::spawn(ctx, move || {
-                        oauth::start(kind, &base, client)
+                        oauth::start(kind, &base, &client)
                     })));
             }
             Some(Action::Token) => {
@@ -1141,7 +1147,7 @@ impl App {
                 };
                 s.stage = Stage::Checking;
                 let task = crate::task::Task::spawn(ctx, move || {
-                    accounts::sign_in(kind, &base, &secret, false)
+                    accounts::sign_in(kind, &base, &secret, None)
                 });
                 self.sign_in_work = Some(SignInWork::Account(task, Arc::default()));
             }
@@ -1538,7 +1544,10 @@ impl App {
                 }
                 Some(sidebar::Action::SignInToForge) => {
                     if let Some(f) = &repo.forge {
-                        self.sign_in = Some(crate::ui::sign_in::SignIn::for_project(&f.project));
+                        self.sign_in = Some(crate::ui::sign_in::SignIn::for_project(
+                            &f.project,
+                            &self.settings.accounts,
+                        ));
                     }
                 }
                 Some(sidebar::Action::NewRequest) => self.new_request = new_form(repo),

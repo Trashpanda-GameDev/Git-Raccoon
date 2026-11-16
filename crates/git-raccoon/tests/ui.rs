@@ -1883,6 +1883,10 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
         ("GET /api/v4/projects/team%2Fapp/merge_requests/13/approvals", r#"{"approved_by": []}"#.into()),
         // Opening one.
         ("POST /api/v4/projects/team%2Fapp/merge_requests", mr(13, "Faster start", "cache")),
+        // Signing in with the browser.
+        ("POST /oauth/authorize_device", r#"{"device_code": "dev", "user_code": "WXYZ-0001",
+            "verification_uri": "https://example.com/device", "interval": 1}"#.into()),
+        ("POST /oauth/token", r#"{"access_token": "glo", "refresh_token": "r", "expires_in": 7200}"#.into()),
     ], bare.clone());
     let url = format!("{base}/team/app.git");
     git(&sample, &["remote", "set-url", "origin", &url]);
@@ -1892,7 +1896,7 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
         kind: Kind::GitLab,
         base: base.clone(),
         login: "rocky".into(),
-        oauth: false,
+        client: None,
     };
     accounts::save(
         &account,
@@ -1996,6 +2000,45 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     wait_for(&mut h, "the account", |app| {
         app.settings().accounts.iter().any(|a| a.login == "milo")
     });
+
+    // And with the browser, through the server's own app.
+    press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    h.get_by_label("Add account…").click();
+    h.run_ok();
+    h.get_by_label("Self-managed GitLab").click();
+    h.run_ok();
+    h.get_by_label("GitLab server address").click();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+    h.get_by_label("GitLab server address").type_text(&base);
+    h.get_by_label("Use the browser instead").click();
+    h.run_ok();
+    type_into(&mut h, "Application ID", "server-app");
+    screenshot(&mut h, "52-sign-in-app");
+    h.get_by_label("Sign in with the browser").click();
+    let mut shown = false;
+    for _ in 0..100 {
+        h.run_ok();
+        if h.query_by_value("WXYZ-0001").is_some() {
+            shown = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(shown, "the code to enter");
+    screenshot(&mut h, "53-sign-in-code");
+    wait_for(&mut h, "the browser sign-in", |app| {
+        app.settings()
+            .accounts
+            .iter()
+            .any(|a| a.client.as_deref() == Some("server-app"))
+    });
+    let asked = seen.lock().unwrap().clone();
+    assert!(
+        asked
+            .iter()
+            .any(|(r, body)| r == "POST /oauth/authorize_device"
+                && body.contains("client_id=server-app"))
+    );
     let _ = std::fs::remove_dir_all(&bare);
 }
 

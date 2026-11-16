@@ -5,7 +5,7 @@ release page). Newest first; a version's heading is just its number.
 
 ## 0.5.5
 
-- **Pull requests, merge requests and issues** from GitHub, GitLab.com and self-managed GitLab, in the sidebar: see a request's reviews and checks, check it out (forks too), open a new one from your branch, and read issues. Sign in under Settings → Accounts; tokens stay in your system's keychain.
+- **Pull requests, merge requests and issues** from GitHub, GitLab.com and self-managed GitLab, in the sidebar: see a request's reviews and checks, check it out (forks too), open a new one from your branch, and read issues. Sign in under Settings → Accounts, with the browser (a self-managed server too, with an app registered on it) or a token, to several at once; tokens stay in your system's keychain.
 - **Delete a branch on the remote**: right-click it under Remote in the sidebar (it asks first, and Undo puts it back).
 - **Branch, Fetch, Pull and Push sit in the middle** of the toolbar.
 - **Esc in the search bar** closes just the search bar, not the commit beside it.

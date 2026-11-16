@@ -19,8 +19,9 @@ const GITLAB_CLIENT_ID: &str = match option_env!("GIT_RACCOON_GITLAB_CLIENT_ID")
     None => "",
 };
 
-/// The client id for signing in to a forge with the browser, if there is
-/// one (self-managed GitLab servers would each need their own app).
+/// Git Raccoon's own client id for signing in to a forge with the
+/// browser, if there is one. A self-managed GitLab server needs an app of
+/// its own, registered there; its id is given when signing in.
 pub fn client_id(kind: Kind, base: &str) -> Option<&'static str> {
     let id = match (kind, base) {
         (Kind::GitHub, "https://github.com") => GITHUB_CLIENT_ID,
@@ -136,8 +137,7 @@ pub fn poll(kind: Kind, base: &str, client: &str, code: &DeviceCode) -> Poll {
 }
 
 /// Gets a fresh token with a refresh token (GitLab's expire).
-pub fn refresh(kind: Kind, base: &str, refresh: &str) -> Result<Secret, String> {
-    let client = client_id(kind, base).ok_or("signing in again is needed")?;
+pub fn refresh(kind: Kind, base: &str, client: &str, refresh: &str) -> Result<Secret, String> {
     let (_, token_url) = urls(kind, base);
     let v = http::post_form(
         kind.name(),

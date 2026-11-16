@@ -36,6 +36,11 @@ pub struct SignIn {
     pub token: String,
     /// Use a token even where the browser would do.
     pub with_token: bool,
+    /// A self-managed GitLab: sign in with the browser, through the app
+    /// registered on it ...
+    pub with_app: bool,
+    /// ... whose Application ID this is.
+    pub app_id: String,
     pub stage: Stage,
 }
 
@@ -46,23 +51,47 @@ impl Default for SignIn {
             server: "https://".into(),
             token: String::new(),
             with_token: false,
+            with_app: false,
+            app_id: String::new(),
             stage: Stage::Choosing,
         }
     }
 }
 
 impl SignIn {
-    /// Signing in to a project's forge.
-    pub fn for_project(project: &crate::forge::Project) -> Self {
+    /// Signing in to a project's forge. `accounts` give the app already
+    /// used on a self-managed server.
+    pub fn for_project(
+        project: &crate::forge::Project,
+        accounts: &[crate::forge::Account],
+    ) -> Self {
         let place = match project.base.as_str() {
             "https://github.com" => Place::GitHub,
             "https://gitlab.com" => Place::GitLab,
             _ => Place::SelfManaged,
         };
-        SignIn {
+        let mut s = SignIn {
             place,
             server: project.base.clone(),
             ..SignIn::default()
+        };
+        s.remember_app(accounts);
+        s
+    }
+
+    /// Fills in the app used before on this self-managed server, if any.
+    pub fn remember_app(&mut self, accounts: &[crate::forge::Account]) {
+        if self.place != Place::SelfManaged || !self.app_id.is_empty() {
+            return;
+        }
+        let (_, base) = self.forge();
+        if let Some(id) = accounts
+            .iter()
+            .filter(|a| a.base == base)
+            .find_map(|a| a.client.clone())
+        {
+            self.app_id = id;
+            self.with_app = true;
         }
     }
 
@@ -78,10 +107,27 @@ impl SignIn {
         }
     }
 
-    /// The browser can be used here (an OAuth app is set up for it).
-    pub fn browser(&self) -> Option<&'static str> {
+    /// Signing in with the browser, with this OAuth app (empty while a
+    /// self-managed server's Application ID is still to be given).
+    pub fn browser(&self) -> Option<String> {
+        if self.place == Place::SelfManaged {
+            return self.with_app.then(|| self.app_id.trim().to_string());
+        }
         let (kind, base) = self.forge();
-        oauth::client_id(kind, &base).filter(|_| !self.with_token)
+        oauth::client_id(kind, &base)
+            .filter(|_| !self.with_token)
+            .map(str::to_string)
+    }
+
+    /// Both ways of signing in can be offered here.
+    fn has_both(&self) -> bool {
+        let (kind, base) = self.forge();
+        self.place == Place::SelfManaged || oauth::client_id(kind, &base).is_some()
+    }
+
+    /// The server's page for registering an app (a self-managed GitLab).
+    pub fn apps_page(&self) -> String {
+        format!("{}/-/user_settings/applications", self.forge().1)
     }
 
     /// The page that makes a token with the right permissions.
@@ -164,6 +210,30 @@ pub fn show(ctx: &egui::Context, s: &mut SignIn) -> Option<Action> {
                     ui.label(RichText::new("Waiting for you to approve it…").color(theme::muted()));
                 });
             }
+            _ if s.place == Place::SelfManaged && s.with_app => {
+                ui.label(
+                    RichText::new(
+                        "Signs in with the browser, through an application registered on the server. Register one once (Make an app…): give it any name and redirect URI, untick Confidential, tick the api scope, and paste its Application ID here.",
+                    )
+                    .color(theme::muted()),
+                );
+                ui.add_space(4.0);
+                let ready_server = s.server.trim().len() > "https://".len();
+                if ui
+                    .add_enabled(ready_server, egui::Button::new("Make an app…"))
+                    .clicked()
+                {
+                    action = Some(Action::Open(s.apps_page()));
+                }
+                ui.add_space(4.0);
+                let id = ui.add(
+                    egui::TextEdit::singleline(&mut s.app_id)
+                        .hint_text("Application ID")
+                        .desired_width(f32::INFINITY),
+                );
+                ui.ctx()
+                    .accesskit_node_builder(id.id, |n| n.set_label("Application ID"));
+            }
             _ if s.browser().is_some() => {
                 ui.label(
                     RichText::new(format!(
@@ -207,9 +277,9 @@ pub fn show(ctx: &egui::Context, s: &mut SignIn) -> Option<Action> {
         }
         ui.add_space(12.0);
         ui.horizontal(|ui| {
-            let browser = s.browser().is_some();
-            let (label, ready) = if browser {
-                ("Sign in with the browser", !busy)
+            let browser = s.browser();
+            let (label, ready) = if let Some(id) = &browser {
+                ("Sign in with the browser", !busy && !id.is_empty())
             } else {
                 ("Sign in", !busy && !s.token.trim().is_empty())
             };
@@ -220,7 +290,11 @@ pub fn show(ctx: &egui::Context, s: &mut SignIn) -> Option<Action> {
             )
             .fill(if ready { theme::accent() } else { theme::bg_hover() });
             if ui.add_enabled(ready, go).clicked() {
-                action = Some(if browser { Action::Browser } else { Action::Token });
+                action = Some(if browser.is_some() {
+                    Action::Browser
+                } else {
+                    Action::Token
+                });
             }
             if busy && !matches!(s.stage, Stage::Approving(_)) {
                 ui.spinner();
@@ -229,15 +303,18 @@ pub fn show(ctx: &egui::Context, s: &mut SignIn) -> Option<Action> {
                 action = Some(Action::Close);
             }
             // The other way, where both are possible.
-            let (kind, base) = s.forge();
-            if oauth::client_id(kind, &base).is_some() && !busy {
-                let other = if s.with_token {
-                    "Use the browser instead"
-                } else {
+            if s.has_both() && !busy {
+                let other = if s.browser().is_some() {
                     "Use a token instead"
+                } else {
+                    "Use the browser instead"
                 };
                 if ui.link(other).clicked() {
-                    s.with_token = !s.with_token;
+                    if s.place == Place::SelfManaged {
+                        s.with_app = !s.with_app;
+                    } else {
+                        s.with_token = !s.with_token;
+                    }
                 }
             }
         });

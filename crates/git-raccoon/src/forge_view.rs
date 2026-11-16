@@ -167,7 +167,7 @@ mod tests {
             kind,
             base: base.into(),
             login: login.into(),
-            oauth: false,
+            client: None,
         }
     }
 

@@ -19,8 +19,10 @@ pub struct Account {
     pub base: String,
     /// Its user name there.
     pub login: String,
-    /// Signed in with the browser (OAuth), rather than a pasted token.
-    pub oauth: bool,
+    /// The OAuth app's client id, when signed in with the browser rather
+    /// than with a pasted token (renewing GitLab's sign-ins needs it).
+    #[serde(default)]
+    pub client: Option<String>,
 }
 
 impl Account {
@@ -127,7 +129,12 @@ fn user_url(kind: Kind, base: &str) -> String {
 }
 
 /// Checks a token, and finds whose it is. Returns the account.
-pub fn sign_in(kind: Kind, base: &str, secret: &Secret, oauth: bool) -> Result<Account, String> {
+pub fn sign_in(
+    kind: Kind,
+    base: &str,
+    secret: &Secret,
+    client: Option<String>,
+) -> Result<Account, String> {
     let base = base.trim().trim_end_matches('/');
     let me = http::get(
         kind.name(),
@@ -145,7 +152,7 @@ pub fn sign_in(kind: Kind, base: &str, secret: &Secret, oauth: bool) -> Result<A
         kind,
         base: base.to_string(),
         login,
-        oauth,
+        client,
     };
     save(&account, secret)?;
     Ok(account)
@@ -159,7 +166,12 @@ pub fn session(account: &Account, project: &Project) -> Result<Session, String> 
     if let (Some(expires), Some(refresh)) = (secret.expires, secret.refresh.clone())
         && expires - 60 < now
     {
-        secret = oauth::refresh(account.kind, &account.base, &refresh)?;
+        let client = account
+            .client
+            .as_deref()
+            .or_else(|| oauth::client_id(account.kind, &account.base))
+            .ok_or("signing in again is needed")?;
+        secret = oauth::refresh(account.kind, &account.base, client, &refresh)?;
         save(account, &secret)?;
     }
     Ok(Session::new(project.clone(), secret.token))
@@ -179,7 +191,7 @@ mod tests {
             refresh: None,
             expires: None,
         };
-        let account = sign_in(Kind::GitLab, &format!("{base}/"), &secret, false).unwrap();
+        let account = sign_in(Kind::GitLab, &format!("{base}/"), &secret, None).unwrap();
         assert_eq!(account.login, "rocky");
         assert_eq!(account.base, base, "without the trailing slash");
         assert_eq!(load(&account).unwrap(), secret);
@@ -191,5 +203,40 @@ mod tests {
             ..account
         };
         assert_eq!(place.place(), "git.example.com");
+    }
+
+    #[test]
+    fn renews_a_self_managed_sign_in_with_its_own_app() {
+        use_memory_store();
+        let (base, seen) = mock::serve(vec![(
+            200,
+            r#"{"access_token": "new", "refresh_token": "r2", "expires_in": 7200}"#.into(),
+        )]);
+        let account = Account {
+            kind: Kind::GitLab,
+            base: base.clone(),
+            login: "rocky".into(),
+            client: Some("server-app".into()),
+        };
+        let old = Secret {
+            token: "old".into(),
+            refresh: Some("r1".into()),
+            expires: Some(crate::settings::now() - 10),
+        };
+        save(&account, &old).unwrap();
+        let project = super::super::Project {
+            kind: Kind::GitLab,
+            base: base.clone(),
+            host: String::new(),
+            path: "team/app".into(),
+        };
+        assert!(session(&account, &project).is_ok());
+        assert_eq!(load(&account).unwrap().token, "new");
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen[0].0, "POST /oauth/token");
+        assert!(
+            seen[0].2.contains("client_id=server-app") && seen[0].2.contains("refresh_token=r1")
+        );
+        forget(&account);
     }
 }
