@@ -9,9 +9,10 @@ use eframe::egui::{self, RichText};
 use egui_phosphor::regular as icon;
 use git_raccoon_core::{branch, create};
 
+use crate::forge::Account;
 use crate::forge::templates::{Template, Templates};
-use crate::forge::{Account, Kind};
 use crate::theme;
+use crate::ui::side_form::{self, FIELDS, check, field, label, place_row};
 use crate::ui::sign_in;
 
 /// Where a new repository goes.
@@ -34,18 +35,14 @@ impl Place {
     fn name(self) -> &'static str {
         match self {
             Place::Here => "Only on this computer",
-            Place::Forge(sign_in::Place::GitHub) => "GitHub",
-            Place::Forge(sign_in::Place::GitLab) => "GitLab.com",
-            Place::Forge(sign_in::Place::SelfManaged) => "Self-managed GitLab",
+            Place::Forge(forge) => side_form::forge_name(forge),
         }
     }
 
     fn glyph(self) -> &'static str {
         match self {
             Place::Here => icon::DESKTOP,
-            Place::Forge(sign_in::Place::GitHub) => icon::GITHUB_LOGO,
-            Place::Forge(sign_in::Place::GitLab) => icon::GITLAB_LOGO,
-            Place::Forge(sign_in::Place::SelfManaged) => icon::GITLAB_LOGO_SIMPLE,
+            Place::Forge(forge) => side_form::forge_glyph(forge),
         }
     }
 
@@ -53,13 +50,7 @@ impl Place {
     fn has(self, account: &Account) -> bool {
         match self {
             Place::Here => false,
-            Place::Forge(sign_in::Place::GitHub) => {
-                account.kind == Kind::GitHub && account.base == "https://github.com"
-            }
-            Place::Forge(sign_in::Place::GitLab) => account.base == "https://gitlab.com",
-            Place::Forge(sign_in::Place::SelfManaged) => {
-                account.kind == Kind::GitLab && account.base != "https://gitlab.com"
-            }
+            Place::Forge(forge) => side_form::forge_has(forge, account),
         }
     }
 }
@@ -158,34 +149,6 @@ pub enum Action {
     Stop,
 }
 
-/// The width of the names' column, and of the fields beside it.
-const LABELS: f32 = 150.0;
-const FIELDS: f32 = 400.0;
-
-/// A row's name, at the right of the names' column.
-fn label(ui: &mut egui::Ui, text: &str) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(LABELS, 22.0), egui::Sense::hover());
-    ui.painter().text(
-        rect.right_center(),
-        egui::Align2::RIGHT_CENTER,
-        text,
-        theme::body(theme::FONT_SIZE),
-        theme::muted(),
-    );
-}
-
-/// A one-line field, with its name for screen readers.
-fn field(ui: &mut egui::Ui, text: &mut String, name: &str, hint: &str) -> egui::Response {
-    let response = ui.add(
-        egui::TextEdit::singleline(text)
-            .hint_text(hint)
-            .desired_width(FIELDS),
-    );
-    ui.ctx()
-        .accesskit_node_builder(response.id, |n| n.set_label(name));
-    response
-}
-
 /// A template picker: "None" or one of `offered`; `id` is its name for
 /// screen readers. Returns whether it's open.
 fn template_picker(
@@ -259,7 +222,7 @@ fn details(ui: &mut egui::Ui, form: &mut Form, accounts: &[Account], action: &mu
                     .accesskit_node_builder(combo.response.id, |n| n.set_label("Who can see it"));
                 ui.end_row();
                 label(ui, "Clone after creating");
-                ui.checkbox(&mut form.clone, "");
+                check(ui, &mut form.clone, "Clone after creating");
                 ui.end_row();
             }
             // What follows is for the copy on this computer.
@@ -281,10 +244,7 @@ fn details(ui: &mut egui::Ui, form: &mut Form, accounts: &[Account], action: &mu
             ui.end_row();
             label(ui, "Full path");
             ui.add_enabled_ui(here_too, |ui| {
-                let full = form.dest().display().to_string();
-                ui.set_max_width(FIELDS);
-                ui.add(egui::Label::new(RichText::new(&full).color(theme::muted())).truncate())
-                    .on_hover_text(&full);
+                side_form::path(ui, &form.dest().display().to_string());
             });
             ui.end_row();
             label(ui, "Default branch name");
@@ -317,7 +277,7 @@ fn details(ui: &mut egui::Ui, form: &mut Form, accounts: &[Account], action: &mu
             ui.end_row();
             label(ui, "Initialize with LFS");
             ui.add_enabled_ui(here_too && form.lfs_installed, |ui| {
-                ui.checkbox(&mut form.lfs, "")
+                check(ui, &mut form.lfs, "Initialize with LFS")
                     .on_disabled_hover_text("Git LFS isn't installed");
             });
             ui.end_row();
@@ -343,46 +303,6 @@ fn details(ui: &mut egui::Ui, form: &mut Form, accounts: &[Account], action: &mu
         }
         _ => {}
     }
-}
-
-/// One of the places down the side: its icon and name, at the left.
-fn place_row(ui: &mut egui::Ui, place: Place, chosen: bool) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(190.0, 32.0), egui::Sense::click());
-    let name = place.name();
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(
-            egui::WidgetType::SelectableLabel,
-            ui.is_enabled(),
-            chosen,
-            name,
-        )
-    });
-    let painter = ui.painter();
-    if chosen {
-        painter.rect_filled(rect, 4, theme::bg_selected());
-    } else if response.hovered() {
-        painter.rect_filled(rect, 4, theme::bg_hover());
-    }
-    let colour = if chosen {
-        theme::text()
-    } else {
-        theme::muted()
-    };
-    painter.text(
-        rect.left_center() + egui::vec2(18.0, 0.0),
-        egui::Align2::CENTER_CENTER,
-        place.glyph(),
-        theme::body(15.0),
-        colour,
-    );
-    painter.text(
-        rect.left_center() + egui::vec2(36.0, 0.0),
-        egui::Align2::LEFT_CENTER,
-        name,
-        theme::body(theme::FONT_SIZE),
-        colour,
-    );
-    response
 }
 
 /// Why it can't be made yet, if it can't.
@@ -413,6 +333,10 @@ fn problem(form: &Form) -> Option<&'static str> {
 pub fn show(ctx: &egui::Context, form: &mut Form, accounts: &[Account]) -> Option<Action> {
     let mut action = None;
     let making = form.progress.is_some();
+    // Signed in since (from here): that account.
+    if form.account.is_none() {
+        form.account = accounts.iter().position(|a| form.place.has(a));
+    }
     let modal = egui::Modal::new(egui::Id::new("new-repo")).show(ctx, |ui| {
         ui.set_width(760.0);
         ui.label(RichText::new("New repository").strong().size(15.0));
@@ -421,9 +345,9 @@ pub fn show(ctx: &egui::Context, form: &mut Form, accounts: &[Account]) -> Optio
             // Where it goes.
             ui.add_enabled_ui(!making && form.done.is_none(), |ui| {
                 ui.vertical(|ui| {
-                    ui.set_width(190.0);
+                    ui.set_width(side_form::PLACES);
                     for place in Place::ALL {
-                        let row = place_row(ui, place, form.place == place);
+                        let row = place_row(ui, place.glyph(), place.name(), form.place == place);
                         if row.clicked() && form.place != place {
                             form.place = place;
                             form.account = accounts.iter().position(|a| place.has(a));

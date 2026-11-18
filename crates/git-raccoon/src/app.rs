@@ -231,12 +231,10 @@ impl App {
     /// Opens the clone dialog.
     pub fn show_clone(&mut self) {
         // Signed in somewhere: start with the first account's repositories.
-        let account = (!self.settings.accounts.is_empty()).then_some(0);
-        self.clone_form = Some(clone::Form {
-            parent: self.clone_parent(),
-            account,
-            ..clone::Form::default()
-        });
+        self.clone_form = Some(clone::Form::new(
+            self.clone_parent(),
+            &self.settings.accounts,
+        ));
     }
 
     /// Opens the new-repository dialog: on this computer only, to start with.
@@ -349,7 +347,7 @@ impl App {
             return;
         };
         form.error = None;
-        let (url, dest) = (form.url.trim().to_string(), form.dest());
+        let (url, dest, options) = (form.url.trim().to_string(), form.dest(), form.options());
         self.settings.clone_dir = Some(form.parent.trim().to_string());
         let progress = Arc::new(Mutex::new(None));
         let cancel = Arc::new(AtomicBool::new(false));
@@ -364,7 +362,7 @@ impl App {
                     }
                     repaint.request_repaint();
                 };
-                create::clone(&url, &dest, &mut report, &c)
+                create::clone(&url, &dest, &options, &mut report, &c)
             }),
         });
     }
@@ -417,7 +415,12 @@ impl App {
             .as_ref()
             .map(|c| c.progress.lock().ok().and_then(|p| p.clone()));
         match clone::show(ctx, form, progress, &self.settings.accounts) {
-            Some(clone::Action::LoadRepos) => {}
+            Some(clone::Action::SignIn(place)) => {
+                self.sign_in = Some(crate::ui::sign_in::SignIn {
+                    place,
+                    ..crate::ui::sign_in::SignIn::default()
+                });
+            }
             Some(clone::Action::Clone) => self.start_clone(ctx),
             Some(clone::Action::Browse) => {
                 if let Some(dir) = rfd::FileDialog::new()
@@ -2440,10 +2443,13 @@ fn start_making(
             return Ok(Made::There(made.path));
         }
         say("Cloning it…");
-        create::clone(&made.clone_url, &dest, &mut |p| say(&p.phase), &c).map_err(|e| match e {
-            git_raccoon_core::Error::Cancelled => None,
-            e => failed(format!("Made {}, but could not clone it: {e}", made.path)),
-        })?;
+        let options = create::CloneOptions::default();
+        create::clone(&made.clone_url, &dest, &options, &mut |p| say(&p.phase), &c).map_err(
+            |e| match e {
+                git_raccoon_core::Error::Cancelled => None,
+                e => failed(format!("Made {}, but could not clone it: {e}", made.path)),
+            },
+        )?;
         let first = create::start(&dest, &starter).map_err(|e| failed(e.to_string()))?;
         if let Some(b) = first {
             say("Pushing the first commit…");

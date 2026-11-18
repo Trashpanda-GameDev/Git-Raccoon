@@ -20,6 +20,7 @@ pub mod push_to;
 pub mod rebase;
 pub mod search_bar;
 pub mod settings;
+pub mod side_form;
 pub mod sidebar;
 pub mod sign_in;
 pub mod tabs;

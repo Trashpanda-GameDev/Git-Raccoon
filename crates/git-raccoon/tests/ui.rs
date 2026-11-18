@@ -3347,8 +3347,11 @@ fn clones_from_an_account_and_makes_new_repositories_there() {
     });
     h.run_ok();
 
-    // The account's repositories, to pick from.
+    // The account's repositories, to pick from (the account's forge is
+    // chosen, and its list is a dropdown).
     h.get_by_label("Clone a repository…").click();
+    h.run_ok();
+    h.get_by_label("Repository to clone").click();
     let mut listed = false;
     for _ in 0..200 {
         h.run_ok();
@@ -3366,10 +3369,7 @@ fn clones_from_an_account_and_makes_new_repositories_there() {
     );
     h.get_by_label_contains("team/app").click();
     h.run_ok();
-    assert_eq!(
-        h.get_by_label("Repository URL").value().as_deref(),
-        Some(format!("{base}/team/app.git").as_str())
-    );
+    // Picked: named after it.
     assert_eq!(h.get_by_label("Clone name").value().as_deref(), Some("app"));
     screenshot(&mut h, "58-clone-from-account");
     h.get_by_label("Clone").click();
@@ -3467,6 +3467,10 @@ fn clones_and_starts_repositories() {
         Some(name.as_str()),
         "named after the URL"
     );
+    // Only some folders: src, not assets.
+    h.get_by_label("Sparse checkout").click();
+    h.run_ok();
+    type_into(&mut h, "Folders to include", "src");
     screenshot(&mut h, "26-clone");
     h.get_by_label("Clone").click();
     wait_for(&mut h, "the clone to open", |app| app.repo().is_some());
@@ -3476,6 +3480,8 @@ fn clones_and_starts_repositories() {
         base.join(&name).canonicalize().unwrap()
     );
     assert!(repo.history.total() > 5);
+    assert!(base.join(&name).join("src").exists());
+    assert!(!base.join(&name).join("assets").exists(), "sparse");
     assert_eq!(
         h.state().settings().clone_dir.as_deref(),
         Some(parent.as_str()),

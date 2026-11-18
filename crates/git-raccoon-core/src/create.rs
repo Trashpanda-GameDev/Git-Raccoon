@@ -23,11 +23,23 @@ pub fn can_clone_into(dest: &Path) -> bool {
     }
 }
 
-/// Clones `url` into `dest`, reporting progress; returns `dest`. If it
-/// fails or is cancelled, a folder the clone created is removed again.
+/// How much of a repository a clone takes.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct CloneOptions {
+    /// Only the latest commit's history (`--depth 1`).
+    pub shallow: bool,
+    /// Check out only these folders (and the files at the top); `Some` of
+    /// none: the top-level files only.
+    pub sparse: Option<Vec<String>>,
+}
+
+/// Clones `url` into `dest` as `options` say, reporting progress; returns
+/// `dest`. If it fails or is cancelled, a folder the clone created is
+/// removed again.
 pub fn clone(
     url: &str,
     dest: &Path,
+    options: &CloneOptions,
     on: &mut dyn FnMut(Progress),
     cancel: &AtomicBool,
 ) -> Result<PathBuf> {
@@ -52,12 +64,24 @@ pub fn clone(
     let existed = dest.exists();
     let parent_str = parent.to_string_lossy();
     let name = name.to_string_lossy();
-    let result = cli::run_with_progress(
-        &parent_str,
-        &["clone", "--progress", url, &name],
-        &mut |l| on(Progress::parse(l)),
-        cancel,
-    );
+    let mut args = vec!["clone", "--progress"];
+    if options.shallow {
+        args.extend(["--depth", "1"]);
+    }
+    if options.sparse.is_some() {
+        args.push("--sparse");
+    }
+    args.extend([url, &name]);
+    let result =
+        cli::run_with_progress(&parent_str, &args, &mut |l| on(Progress::parse(l)), cancel)
+            .and_then(|_| match &options.sparse {
+                Some(folders) if !folders.is_empty() => {
+                    let mut set = vec!["sparse-checkout", "set"];
+                    set.extend(folders.iter().map(String::as_str));
+                    cli::run(&dest.to_string_lossy(), &set, None).map(drop)
+                }
+                _ => Ok(()),
+            });
     match result {
         Ok(_) => Ok(dest.to_path_buf()),
         Err(e) => {
@@ -182,13 +206,27 @@ mod tests {
         let dest = base.join("copy");
         let none = AtomicBool::new(false);
 
-        let done = clone(source.path(), &dest, &mut |_| {}, &none).unwrap();
+        let done = clone(
+            source.path(),
+            &dest,
+            &CloneOptions::default(),
+            &mut |_| {},
+            &none,
+        )
+        .unwrap();
         assert_eq!(done, dest);
         let copy = git2::Repository::open(&dest).unwrap();
         assert_eq!(copy.head().unwrap().target().unwrap(), head);
         assert!(copy.find_remote("origin").is_ok());
 
-        let err = clone(source.path(), &dest, &mut |_| {}, &none).unwrap_err();
+        let err = clone(
+            source.path(),
+            &dest,
+            &CloneOptions::default(),
+            &mut |_| {},
+            &none,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("isn't empty"), "{err}");
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -199,19 +237,94 @@ mod tests {
         let dest = base.join("copy");
         let none = AtomicBool::new(false);
         let missing = base.join("no-such-repo");
-        assert!(clone(&missing.to_string_lossy(), &dest, &mut |_| {}, &none).is_err());
+        assert!(
+            clone(
+                &missing.to_string_lossy(),
+                &dest,
+                &CloneOptions::default(),
+                &mut |_| {},
+                &none
+            )
+            .is_err()
+        );
         assert!(!dest.exists(), "the half-made folder is gone");
 
         // An empty folder the user chose is kept.
         std::fs::create_dir_all(&dest).unwrap();
-        assert!(clone(&missing.to_string_lossy(), &dest, &mut |_| {}, &none).is_err());
+        assert!(
+            clone(
+                &missing.to_string_lossy(),
+                &dest,
+                &CloneOptions::default(),
+                &mut |_| {},
+                &none
+            )
+            .is_err()
+        );
         assert!(dest.exists());
 
         let cancelled = AtomicBool::new(true);
         let other = base.join("other");
-        let err = clone("https://example.com/r.git", &other, &mut |_| {}, &cancelled).unwrap_err();
+        let err = clone(
+            "https://example.com/r.git",
+            &other,
+            &CloneOptions::default(),
+            &mut |_| {},
+            &cancelled,
+        )
+        .unwrap_err();
         assert!(matches!(err, Error::Cancelled));
         assert!(!other.exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn clones_shallow_and_sparse() {
+        let source = TempRepo::new();
+        source.write(
+            "root.txt", "top
+",
+        );
+        source.write(
+            "a/one.txt",
+            "a
+",
+        );
+        source.write(
+            "b/two.txt",
+            "b
+",
+        );
+        source.commit_all("first");
+        source.write(
+            "root.txt",
+            "top again
+",
+        );
+        source.commit_all("second");
+        // Local clones ignore --depth unless the source is a file:// URL.
+        let url = format!("file://{}", source.path().replace('\\', "/"));
+        let base = scratch("partial");
+        let none = AtomicBool::new(false);
+
+        let shallow = base.join("shallow");
+        let options = CloneOptions {
+            shallow: true,
+            sparse: None,
+        };
+        clone(&url, &shallow, &options, &mut |_| {}, &none).unwrap();
+        let repo = git2::Repository::open(&shallow).unwrap();
+        assert!(repo.is_shallow());
+
+        let sparse = base.join("sparse");
+        let options = CloneOptions {
+            shallow: false,
+            sparse: Some(vec!["a".into()]),
+        };
+        clone(&url, &sparse, &options, &mut |_| {}, &none).unwrap();
+        assert!(sparse.join("root.txt").exists(), "the top-level files");
+        assert!(sparse.join("a/one.txt").exists(), "the folder asked for");
+        assert!(!sparse.join("b").exists(), "not the others");
         let _ = std::fs::remove_dir_all(&base);
     }
 
