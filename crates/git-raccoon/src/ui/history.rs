@@ -14,6 +14,8 @@ pub const ROW_HEIGHT: f32 = 28.0;
 const LANE_WIDTH: f32 = 18.0;
 const GRAPH_PADDING: f32 = 12.0;
 const DOT_RADIUS: f32 = 6.0;
+/// The length of the dashes (and gaps) in the working changes' line.
+const WIP_DASH: f32 = 3.0;
 /// Very wide graphs are clipped to this.
 const MAX_GRAPH_COLUMN: f32 = 320.0;
 /// Rows drawn above and below the visible ones.
@@ -394,7 +396,14 @@ pub fn show(
         graph_x = graph_scrollbar(ui, header, &cols, width, graph_x, spare);
     }
 
-    if working_row(ui, repo, &cols, width, graph_x) {
+    // The working changes sit on HEAD: a dashed line runs down to it,
+    // until the list is scrolled past it.
+    let wip = repo.status.as_ref().is_some_and(|s| !s.is_clean());
+    let to_head = repo
+        .history
+        .head_row()
+        .filter(|&row| row_top(row) + ROW_HEIGHT / 2.0 >= scroll.offset);
+    if working_row(ui, repo, &cols, width, graph_x, to_head.is_some()) {
         return Some(Click::Working);
     }
 
@@ -662,6 +671,25 @@ pub fn show(
                 }
             }
         }
+        if wip
+            && let Some(row) = to_head
+            && let Some(c) = repo.rows.get(row)
+        {
+            // From the top of the list (where the WIP row's line ends) to
+            // HEAD's ring; dashes start on the pattern so they scroll with it.
+            let x = lane_x(graph_left, c.column);
+            let period = WIP_DASH * 2.0;
+            let top = origin.y + (viewport.min.y / period).floor() * period;
+            let end = centre(row) - DOT_RADIUS - 3.0;
+            if end > top {
+                graph.extend(egui::Shape::dashed_line(
+                    &[Pos2::new(x, top), Pos2::new(x, end)],
+                    Stroke::new(2.0, theme::muted()),
+                    WIP_DASH,
+                    WIP_DASH,
+                ));
+            }
+        }
         for row in first..last {
             let Some(c) = repo.rows.get(row) else {
                 continue;
@@ -815,14 +843,16 @@ pub fn show(
 }
 
 /// The "Working changes" row above the commits, shown while there are
-/// uncommitted changes, with the commit summary to write in. Returns
-/// whether it was clicked.
+/// uncommitted changes, with the commit summary to write in. `to_head`:
+/// its dashed line goes on down (towards HEAD, below). Returns whether it
+/// was clicked.
 fn working_row(
     ui: &mut egui::Ui,
     repo: &mut RepoView,
     cols: &Columns,
     width: f32,
     graph_x: f32,
+    to_head: bool,
 ) -> bool {
     let Some(status) = repo.status.as_ref().filter(|s| !s.is_clean()) else {
         return false;
@@ -879,15 +909,17 @@ fn working_row(
     let graph = painter.with_clip_rect(column.intersect(painter.clip_rect()));
     let centre = Pos2::new(lane_x(column.left() - graph_x, lane), rect.center().y);
     let dashed = Stroke::new(2.0, theme::muted());
-    graph.extend(egui::Shape::dashed_line(
-        &[
-            Pos2::new(centre.x, centre.y + DOT_RADIUS),
-            Pos2::new(centre.x, rect.bottom()),
-        ],
-        dashed,
-        3.0,
-        3.0,
-    ));
+    if to_head {
+        graph.extend(egui::Shape::dashed_line(
+            &[
+                Pos2::new(centre.x, centre.y + DOT_RADIUS),
+                Pos2::new(centre.x, rect.bottom()),
+            ],
+            dashed,
+            WIP_DASH,
+            WIP_DASH,
+        ));
+    }
     graph.circle_filled(centre, DOT_RADIUS, theme::bg());
     let points: Vec<Pos2> = (0..=24)
         .map(|i| {
