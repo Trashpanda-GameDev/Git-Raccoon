@@ -28,6 +28,8 @@ const MAX_GRAPH_COLUMN: f32 = 320.0;
 const OVERSCAN: usize = 6;
 /// How long after the list last scrolled hovering labels spreads them out.
 const SCROLL_SETTLE: f32 = 0.3;
+/// The commit message column is never narrower than this.
+const MIN_MESSAGE: f32 = 120.0;
 /// Below this width, the author and SHA columns are dropped.
 const NARROW: f32 = 820.0;
 
@@ -65,20 +67,65 @@ struct Columns {
 }
 
 impl Columns {
-    fn new(width: f32, lanes: usize, order: &[Column]) -> Self {
+    /// `widths`: the widths the user gave columns; the rest are the defaults.
+    fn new(width: f32, lanes: usize, order: &[Column], widths: &[(Column, f32)]) -> Self {
         let narrow = width < NARROW;
+        let given = |column: Column, default: f32| {
+            widths
+                .iter()
+                .find(|(c, _)| *c == column)
+                .map_or(default, |(_, w)| *w)
+        };
         Columns {
-            refs: if narrow { 140.0 } else { 200.0 },
-            graph: graph_column_width(lanes),
-            author: if narrow { 0.0 } else { 140.0 },
-            date: 110.0,
-            sha: if narrow { 0.0 } else { 72.0 },
+            refs: given(Column::Refs, if narrow { 140.0 } else { 200.0 }),
+            graph: given(Column::Graph, graph_column_width(lanes)),
+            author: if narrow {
+                0.0
+            } else {
+                given(Column::Author, 140.0)
+            },
+            date: given(Column::Date, 110.0),
+            sha: if narrow {
+                0.0
+            } else {
+                given(Column::Sha, 72.0)
+            },
             order: Column::sanitise(order),
         }
     }
 
     fn message(&self, width: f32) -> f32 {
-        (width - self.refs - self.graph - self.author - self.date - self.sha).max(120.0)
+        (width - self.refs - self.graph - self.author - self.date - self.sha).max(MIN_MESSAGE)
+    }
+
+    /// How much wider a column can get before the message column would be
+    /// narrower than its heading.
+    fn room(&self, width: f32, painter: &egui::Painter) -> f32 {
+        (self.message(width) - min_width(painter, Column::Message)).max(0.0)
+    }
+
+    /// The order with `column` moved to where it would land if dropped with
+    /// its left edge at `left` (in a list starting at `start`).
+    fn dropped_at(&self, column: Column, left: f32, start: f32, width: f32) -> Vec<Column> {
+        let mut order: Vec<Column> = self
+            .order
+            .iter()
+            .copied()
+            .filter(|c| *c != column)
+            .collect();
+        let centre = left + self.w(column, width) / 2.0;
+        let mut x = start;
+        let mut at = order.len();
+        for (i, c) in order.iter().enumerate() {
+            let w = self.w(*c, width);
+            if x + w / 2.0 > centre {
+                at = i;
+                break;
+            }
+            x += w;
+        }
+        order.insert(at, column);
+        order
     }
 
     /// A column's width, in a list `width` wide.
@@ -119,22 +166,74 @@ impl Columns {
     }
 }
 
-/// The column headings. A heading can be dragged left or right to move
-/// its column; returns the new order when one is dropped. Right-clicking
-/// one offers the usual order back.
-fn headings(ui: &mut egui::Ui, header: Rect, cols: &Columns, width: f32) -> Option<Vec<Column>> {
-    let mut moved = None;
-    let pointer = ui.ctx().pointer_interact_pos();
-    let mut dragging: Option<(Column, Rect)> = None;
+/// The narrowest a column gets: room for its heading.
+fn min_width(painter: &egui::Painter, column: Column) -> f32 {
+    let title = column.title().to_uppercase();
+    painter
+        .layout_no_wrap(title, theme::body(11.0), theme::muted())
+        .size()
+        .x
+        + 20.0
+}
+
+/// Where the heading being moved is kept: its column, and how far from its
+/// left edge it was taken hold of.
+fn moving_id(ui: &egui::Ui) -> egui::Id {
+    ui.id().with("moving-heading")
+}
+
+/// The heading being moved, if any, and where its left edge is (it follows
+/// the pointer).
+fn moving(ui: &egui::Ui) -> Option<(Column, f32)> {
+    let (column, grab) = ui.data(|d| d.get_temp::<(Column, f32)>(moving_id(ui)))?;
+    let pointer = ui.ctx().pointer_interact_pos()?;
+    Some((column, pointer.x - grab))
+}
+
+/// What was done to the headings.
+enum Heading {
+    /// A column was dropped in a new place, or the usual order asked for.
+    Moved(Vec<Column>),
+    /// A column's edge was dragged.
+    Resized(Column, f32),
+    /// A column's edge was double-clicked: fit it to what it shows.
+    Fit(Column),
+    /// The usual widths asked for.
+    ResetWidths,
+}
+
+/// The column headings, in `cols`' order (while one is being moved, the
+/// order it would have if dropped now: the others slide aside, and it
+/// follows the pointer). A heading can be dragged left or right to move
+/// its column, and its right edge to make the column wider or narrower;
+/// double-clicking the edge fits the column to what it shows. Right-
+/// clicking one offers the usual order and widths back.
+fn headings(
+    ui: &mut egui::Ui,
+    header: Rect,
+    cols: &Columns,
+    width: f32,
+    moved: Option<(Column, f32)>,
+) -> Option<Heading> {
+    let mut action = None;
+    let state = moving_id(ui);
     for &column in &cols.order {
         let w = cols.w(column, width);
         if w <= 0.0 {
             continue;
         }
-        let cell = Rect::from_min_size(
-            Pos2::new(header.left() + cols.x(column, width), header.top()),
-            egui::vec2(w, header.height()),
-        );
+        let is_moving = moved.is_some_and(|(c, _)| c == column);
+        let x_id = ui.id().with(("heading-x", column.title()));
+        let x = match moved.filter(|_| is_moving) {
+            // Under the pointer; dropped, it slides from there.
+            Some((_, left)) => ui.ctx().animate_value_with_time(x_id, left, 0.0),
+            None => ui.ctx().animate_value_with_time(
+                x_id,
+                header.left() + cols.x(column, width),
+                widgets::DRAG_SLIDE,
+            ),
+        };
+        let cell = Rect::from_min_size(Pos2::new(x, header.top()), egui::vec2(w, header.height()));
         let response = ui.interact(
             cell,
             ui.id().with(("heading", column.title())),
@@ -143,67 +242,194 @@ fn headings(ui: &mut egui::Ui, header: Rect, cols: &Columns, width: f32) -> Opti
         response.widget_info(|| {
             egui::WidgetInfo::labeled(egui::WidgetType::Button, true, column.title())
         });
-        let response = response
-            .on_hover_cursor(egui::CursorIcon::Grab)
-            .on_hover_text("Drag to move this column");
+        // The hand (Grab and Grabbing show four arrows on Windows).
+        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+        // No tip while one is on the move.
+        let response = if moved.is_none() {
+            response.on_hover_text("Drag to move this column")
+        } else {
+            response
+        };
         response.context_menu(|ui| {
             if ui.button("Put the columns back in order").clicked() {
-                moved = Some(Column::ALL.to_vec());
+                action = Some(Heading::Moved(Column::ALL.to_vec()));
+                ui.close();
+            }
+            if ui.button("Put the column widths back").clicked() {
+                action = Some(Heading::ResetWidths);
                 ui.close();
             }
         });
+        // Held where it was pressed (a drag only starts once the pointer moves).
+        if response.drag_started()
+            && let Some(p) = ui.input(|i| i.pointer.press_origin())
+        {
+            ui.data_mut(|d| d.insert_temp(state, (column, p.x - cell.left())));
+        }
         if response.dragged() {
-            dragging = Some((column, cell));
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if response.drag_stopped() {
+            ui.data_mut(|d| d.remove::<(Column, f32)>(state));
+            action = Some(Heading::Moved(cols.order.clone()));
+        }
+        if is_moving {
+            // Above everything, see-through.
+            let mut painter = ui
+                .ctx()
+                .layer_painter(egui::LayerId::new(egui::Order::Tooltip, state));
+            painter.multiply_opacity(widgets::DRAG_OPACITY);
+            painter.rect(
+                cell,
+                4,
+                theme::bg_raised(),
+                Stroke::new(1.0, theme::border()),
+                egui::StrokeKind::Inside,
+            );
+            draw_heading(&painter, cell, column.title(), theme::text());
         } else {
             draw_heading(ui.painter(), cell, column.title(), theme::muted());
         }
-        if response.drag_stopped()
-            && let Some(p) = pointer
-        {
-            // Where it lands: before the first column whose middle is
-            // right of the pointer.
-            let mut order: Vec<Column> = cols
-                .order
-                .iter()
-                .copied()
-                .filter(|c| *c != column)
-                .collect();
-            let at = order
-                .iter()
-                .position(|c| header.left() + cols.x(*c, width) + cols.w(*c, width) / 2.0 > p.x)
-                .unwrap_or(order.len());
-            order.insert(at, column);
-            if order != cols.order {
-                moved = Some(order);
-            }
-        }
     }
-    // The heading being moved follows the pointer, with a line where it
-    // would land.
-    if let (Some((column, cell)), Some(p)) = (dragging, pointer) {
-        let others: Vec<Column> = cols
-            .order
-            .iter()
-            .copied()
-            .filter(|c| *c != column)
-            .collect();
-        let landing = others
-            .iter()
-            .find(|c| header.left() + cols.x(**c, width) + cols.w(**c, width) / 2.0 > p.x)
-            .map_or(header.right(), |c| header.left() + cols.x(*c, width));
-        let painter = ui.painter();
-        painter.vline(landing, header.y_range(), Stroke::new(2.0, theme::accent()));
-        let ghost = cell.translate(egui::vec2(p.x - cell.center().x, 0.0));
-        painter.rect_filled(ghost, 4, theme::bg_hover());
-        draw_heading(painter, ghost, column.title(), theme::text());
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    if moved.is_none()
+        && let Some(edge) = column_edges(ui, header, cols, width)
+    {
+        action = Some(edge);
     }
     ui.painter().hline(
         header.x_range(),
         header.bottom(),
         Stroke::new(1.0, theme::border()),
     );
-    moved
+    action
+}
+
+/// The edges between headings: drag one to resize the column it belongs
+/// to, double-click it to fit that column. The commit message takes the
+/// room that's left, so the edge on its right resizes the column after it.
+fn column_edges(ui: &mut egui::Ui, header: Rect, cols: &Columns, width: f32) -> Option<Heading> {
+    let mut action = None;
+    let shown: Vec<Column> = cols
+        .order
+        .iter()
+        .copied()
+        .filter(|c| cols.w(*c, width) > 0.0)
+        .collect();
+    for (i, &left) in shown.iter().enumerate() {
+        let (column, grows) = match (left, shown.get(i + 1)) {
+            (Column::Message, Some(&right)) => (right, -1.0),
+            (Column::Message, None) => continue,
+            _ => (left, 1.0),
+        };
+        let x = header.left() + cols.x(left, width) + cols.w(left, width);
+        let rect = Rect::from_center_size(
+            Pos2::new(x, header.center().y),
+            egui::vec2(8.0, header.height()),
+        );
+        let response = ui.interact(
+            rect,
+            ui.id().with(("column-edge", left.title())),
+            Sense::click_and_drag(),
+        );
+        let name = if column == left {
+            format!("Resize {}", column.title())
+        } else {
+            format!("Resize {} from its left", column.title())
+        };
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &name));
+        let response = response
+            .on_hover_cursor(egui::CursorIcon::ResizeColumn)
+            .on_hover_text("Drag to resize; double-click to fit");
+        let active = response.hovered() || response.dragged();
+        ui.painter().vline(
+            x,
+            header.y_range().shrink(if active { 2.0 } else { 7.0 }),
+            Stroke::new(
+                if active { 2.0 } else { 1.0 },
+                if active {
+                    theme::accent()
+                } else {
+                    theme::border()
+                },
+            ),
+        );
+        // The width it had when the drag began: the edge then stays under
+        // the pointer (a drag only starts once the pointer has moved a bit).
+        let start = ui.id().with(("column-edge-start", left.title()));
+        if response.drag_started() {
+            ui.data_mut(|d| d.insert_temp(start, cols.w(column, width)));
+        }
+        if response.double_clicked() {
+            action = Some(Heading::Fit(column));
+        } else if let Some(moved) = response.total_drag_delta() {
+            let now = cols.w(column, width);
+            let began = ui.data(|d| d.get_temp::<f32>(start)).unwrap_or(now);
+            let wanted = began + moved.x * grows;
+            let widest = now + cols.room(width, ui.painter());
+            let w = wanted.min(widest).max(min_width(ui.painter(), column));
+            if (w - now).abs() > f32::EPSILON {
+                action = Some(Heading::Resized(column, w));
+            }
+        }
+    }
+    action
+}
+
+fn set_width(widths: &mut Vec<(Column, f32)>, column: Column, w: f32) {
+    widths.retain(|(c, _)| *c != column);
+    widths.push((column, w));
+}
+
+/// How wide `column` needs to be for the widest of what it shows in the
+/// rows on screen (a long history isn't read all through for this).
+fn fitted_width(
+    ui: &egui::Ui,
+    repo: &mut RepoView,
+    column: Column,
+    scroll: &Scroll,
+    now: i64,
+) -> f32 {
+    if column == Column::Graph {
+        return lanes_width(repo.history.width());
+    }
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "scroll offsets are non-negative and bounded"
+    )]
+    let rows = {
+        let first = (scroll.offset / ROW_HEIGHT).floor() as usize;
+        let last = (((scroll.offset + scroll.height) / ROW_HEIGHT).ceil() as usize + 1)
+            .min(repo.history.total());
+        first.min(last)..last
+    };
+    repo.rows.ensure(rows.clone());
+    let painter = ui.painter();
+    let measure = |text: String, font: egui::FontId| {
+        painter.layout_no_wrap(text, font, theme::text()).size().x
+    };
+    let widest = rows
+        .filter_map(|row| repo.rows.get(row))
+        .map(|c| match column {
+            Column::Refs => labels(c).first().map_or(0.0, |(r, on_remote)| {
+                // A label at its whole length, and "+N" after it.
+                let pill =
+                    measure(ref_text(r, *on_remote), egui::FontId::proportional(12.0)) + 14.0;
+                if labels(c).len() > 1 {
+                    pill + 38.0
+                } else {
+                    pill
+                }
+            }),
+            Column::Author => measure(c.author.clone(), theme::body(theme::FONT_SIZE)),
+            Column::Date => measure(format::age(c.time, now), theme::body(theme::FONT_SIZE)),
+            Column::Sha => measure(format::short_sha(&c.id).to_string(), theme::mono(12.0)),
+            // The message takes what's left; the graph is measured above.
+            Column::Message | Column::Graph => 0.0,
+        })
+        .fold(0.0, f32::max);
+    // The cell's padding on each side.
+    widest + 16.0
 }
 
 /// A thin scrollbar along the bottom of the graph's heading, for a graph
@@ -383,10 +609,11 @@ pub fn show(
     scroll: &mut Scroll,
     now: i64,
     order: &mut Vec<Column>,
+    widths: &mut Vec<(Column, f32)>,
 ) -> Option<Click> {
     let total = repo.history.total();
     let width = ui.available_width();
-    let cols = Columns::new(width, repo.history.width(), order);
+    let mut cols = Columns::new(width, repo.history.width(), order, widths);
     // A graph wider than its column scrolls sideways.
     let scroll_id = graph_scroll_id(repo);
     let spare = (lanes_width(repo.history.width()) - cols.graph).max(0.0);
@@ -395,10 +622,26 @@ pub fn show(
         .unwrap_or(0.0)
         .clamp(0.0, spare);
 
-    // Column headings: drag one to move its column.
+    // Column headings: drag one to move its column, or its edge to resize it.
     let (header, _) = ui.allocate_exact_size(egui::vec2(width, 28.0), Sense::hover());
-    if let Some(moved) = headings(ui, header, &cols, width) {
-        *order = moved;
+    // While one is moved, everything is shown in the order it would have
+    // if dropped now.
+    let moved = moving(ui);
+    if let Some((column, left)) = moved {
+        cols.order = cols.dropped_at(column, left, header.left(), width);
+    }
+    match headings(ui, header, &cols, width, moved) {
+        Some(Heading::Moved(new)) => *order = new,
+        Some(Heading::Resized(column, w)) => set_width(widths, column, w),
+        Some(Heading::Fit(column)) => {
+            let fit = fitted_width(ui, repo, column, scroll, now);
+            let w = fit
+                .min(cols.w(column, width) + cols.room(width, ui.painter()))
+                .max(min_width(ui.painter(), column));
+            set_width(widths, column, w);
+        }
+        Some(Heading::ResetWidths) => widths.clear(),
+        None => {}
     }
     if spare > 0.0 {
         graph_x = graph_scrollbar(ui, header, &cols, width, graph_x, spare);

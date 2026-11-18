@@ -213,11 +213,16 @@ impl Drop for Sample {
     }
 }
 
-fn rand_suffix() -> u32 {
-    std::time::SystemTime::now()
+/// A different number for each temporary folder: tests run side by side,
+/// and the clock alone can give two of them the same one.
+fn rand_suffix() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let count = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .subsec_nanos()
+        .subsec_nanos();
+    (count << 32) | u64::from(nanos)
 }
 
 /// A small PNG: a disc on a transparent background.
@@ -1636,10 +1641,41 @@ fn moves_columns_by_dragging_their_headings() {
     settle(&mut h);
     let x = |h: &Harness<'_, App>, label: &str| h.get_by_label(label).rect().left();
     assert!(x(&h, "Author") > x(&h, "Commit message"));
-    // Drag Author to the left of Commit message.
+    // Drag Author to the left of Commit message. While it's held, it follows
+    // the pointer and the columns show where it would land; nothing is
+    // kept until it's dropped.
+    let message_was = x(&h, "Commit message");
     let from = h.get_by_label("Author").rect().center();
-    let to = egui::pos2(x(&h, "Commit message") + 10.0, from.y);
-    drag(&mut h, from, to);
+    let to = egui::pos2(message_was + 10.0, from.y);
+    h.event(egui::Event::PointerMoved(from));
+    h.run_ok();
+    h.event(egui::Event::PointerButton {
+        pos: from,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_ok();
+    for i in 1..=10 {
+        h.event(egui::Event::PointerMoved(
+            from + (to - from) * (i as f32 / 10.0),
+        ));
+        h.step();
+    }
+    h.step();
+    assert!((h.get_by_label("Author").rect().center().x - to.x).abs() < 1.0);
+    assert!(
+        x(&h, "Commit message") > message_was + 50.0,
+        "the message column made room"
+    );
+    assert_eq!(h.state().settings().columns, Column::ALL, "not yet");
+    screenshot(&mut h, "60-moving-column");
+    h.event(egui::Event::PointerButton {
+        pos: to,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
     settle(&mut h);
     assert_eq!(
         h.state().settings().columns,
@@ -1668,6 +1704,74 @@ fn moves_columns_by_dragging_their_headings() {
     h.get_by_label("Put the columns back in order").click();
     settle(&mut h);
     assert_eq!(h.state().settings().columns, Column::ALL);
+}
+
+#[test]
+fn resizes_columns_by_their_edges() {
+    use git_raccoon::settings::Column;
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    settle(&mut h);
+    let heading = |h: &Harness<'_, App>, label: &str| h.get_by_label(label).rect();
+    let given = |h: &Harness<'_, App>, column: Column| {
+        h.state()
+            .settings()
+            .column_widths
+            .iter()
+            .find(|(c, _)| *c == column)
+            .map(|(_, w)| *w)
+    };
+
+    // Dragging the edge after Branch / Tag makes it wider; the message
+    // column gives up the room.
+    let refs = heading(&h, "Branch / Tag").width();
+    let message = heading(&h, "Commit message").width();
+    let edge = heading(&h, "Resize Branch / Tag").center();
+    drag(&mut h, edge, edge + egui::vec2(80.0, 0.0));
+    settle(&mut h);
+    assert!((heading(&h, "Branch / Tag").width() - (refs + 80.0)).abs() < 1.0);
+    assert!((heading(&h, "Commit message").width() - (message - 80.0)).abs() < 1.0);
+    screenshot(&mut h, "62-resized-column");
+
+    // Never narrower than its heading...
+    let edge = heading(&h, "Resize Branch / Tag").center();
+    drag(&mut h, edge, egui::pos2(0.0, edge.y));
+    settle(&mut h);
+    let narrowest = heading(&h, "Branch / Tag").width();
+    assert!(narrowest > 60.0 && narrowest < 140.0, "{narrowest}");
+    // ...and the message column never narrower than its own.
+    let edge = heading(&h, "Resize Branch / Tag").center();
+    drag(&mut h, edge, egui::pos2(edge.x + 2000.0, edge.y));
+    settle(&mut h);
+    let squeezed = heading(&h, "Commit message").width();
+    assert!(squeezed > 100.0 && squeezed < 160.0, "{squeezed}");
+
+    // The edge right of the message column resizes the column after it.
+    h.get_by_label("Branch / Tag").click_secondary();
+    h.run_ok();
+    h.get_by_label("Put the column widths back").click();
+    settle(&mut h);
+    assert!(h.state().settings().column_widths.is_empty());
+    let author = heading(&h, "Author").width();
+    let edge = heading(&h, "Resize Author from its left").center();
+    drag(&mut h, edge, edge - egui::vec2(40.0, 0.0));
+    settle(&mut h);
+    assert!(
+        (heading(&h, "Author").width() - (author + 40.0)).abs() < 1.0,
+        "{author} -> {}",
+        heading(&h, "Author").width()
+    );
+
+    // Double-clicking an edge fits the column to what it shows: the author
+    // column to "Rocky Raccoon".
+    let edge = heading(&h, "Resize Author").center();
+    double_click_at(&mut h, edge);
+    settle(&mut h);
+    let fitted = given(&h, Column::Author).unwrap();
+    assert!(fitted < author && fitted > 80.0, "{fitted}");
+    // Kept in the settings.
+    assert!(given(&h, Column::Refs).is_none());
 }
 
 #[test]

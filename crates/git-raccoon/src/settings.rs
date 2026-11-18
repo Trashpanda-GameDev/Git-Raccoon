@@ -109,6 +109,9 @@ pub struct Settings {
     pub file_tree: bool,
     /// The graph's columns, in the order they're shown.
     pub columns: Vec<Column>,
+    /// Widths given to the graph's columns by dragging their edges (the
+    /// commit message takes the room that's left). Unlisted: the default.
+    pub column_widths: Vec<(Column, f32)>,
     /// The command that opens a terminal ("{path}" is the folder); empty
     /// for the system's own.
     pub terminal: String,
@@ -209,6 +212,7 @@ impl Default for Settings {
             file_tree: false,
             terminal: String::new(),
             columns: Column::ALL.to_vec(),
+            column_widths: Vec::new(),
             defaults: DEFAULTS,
         }
     }
@@ -312,6 +316,15 @@ mod tests {
             Column::sanitise(&saved.columns),
             [Date, Refs, Graph, Message, Author, Sha]
         );
+        // Widths come back as saved; settings from before them have none.
+        assert!(saved.column_widths.is_empty());
+        let widths = Settings {
+            column_widths: vec![(Refs, 260.0), (Author, 96.5)],
+            ..Settings::default()
+        };
+        let back: Settings =
+            serde_json::from_str(&serde_json::to_string(&widths).unwrap()).unwrap();
+        assert_eq!(back.column_widths, widths.column_widths);
     }
 
     use super::*;

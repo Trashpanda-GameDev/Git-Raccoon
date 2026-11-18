@@ -2083,7 +2083,14 @@ impl App {
                         egui::Stroke::new(1.0, theme::border()),
                     );
                 }
-                match history::show(ui, repo, &mut self.scroll, now, &mut self.settings.columns) {
+                match history::show(
+                    ui,
+                    repo,
+                    &mut self.scroll,
+                    now,
+                    &mut self.settings.columns,
+                    &mut self.settings.column_widths,
+                ) {
                     Some(history::Click::Row(row)) => {
                         repo.select_index(row);
                         repo.scroll_to = None;
