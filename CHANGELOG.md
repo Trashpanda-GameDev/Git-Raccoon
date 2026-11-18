@@ -6,6 +6,7 @@ release page). Newest first; a version's heading is just its number.
 ## 0.5.11
 
 - **A graph with many branches scrolls sideways**: use the horizontal wheel (or Shift and the wheel) over it, or drag the bar under the Graph heading. Jumping to a commit brings its line into view.
+- **Branch labels no longer stop the graph scrolling**: they only spread out when the pointer rests on them, not while the list scrolls past.
 
 ## 0.5.10
 

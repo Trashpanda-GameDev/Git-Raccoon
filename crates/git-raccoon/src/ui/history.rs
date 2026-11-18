@@ -26,6 +26,8 @@ const WIP_HINT: &str = "Write a summary";
 const MAX_GRAPH_COLUMN: f32 = 320.0;
 /// Rows drawn above and below the visible ones.
 const OVERSCAN: usize = 6;
+/// How long after the list last scrolled hovering labels spreads them out.
+const SCROLL_SETTLE: f32 = 0.3;
 /// Below this width, the author and SHA columns are dropped.
 const NARROW: f32 = 820.0;
 
@@ -462,6 +464,25 @@ pub fn show(
     }) {
         overlay = None;
     }
+    // Not while the list scrolls (or just after): spread out under the
+    // pointer, the labels would catch the wheel and stop it.
+    let since_scroll = ui.input(|i| i.time_since_last_scroll());
+    let scrolling = ui.input(egui::InputState::is_scrolling) || since_scroll < SCROLL_SETTLE;
+    if scrolling {
+        // Still on top this frame, they have the wheel's first turn: pass
+        // it on to the list.
+        let dy = ui.input(|i| i.smooth_scroll_delta.y);
+        if jumped.is_none()
+            && dy != 0.0
+            && overlay.is_some_and(|(_, _, labels)| pointer.is_some_and(|p| labels.contains(p)))
+        {
+            area = area.vertical_scroll_offset((scroll.offset - dy).max(0.0));
+        }
+        overlay = None;
+        // Look again once it has settled, in case the pointer rests on labels.
+        ui.ctx()
+            .request_repaint_after_secs(SCROLL_SETTLE - since_scroll.min(SCROLL_SETTLE));
+    }
     let output = area.show_viewport(ui, |ui, viewport| {
         ui.set_min_height(row_top(total));
         let origin = ui.max_rect().min;
@@ -758,6 +779,7 @@ pub fn show(
                 widgets::pill_elided(painter, &ref_text(r, *on_remote), refs_cell.width())
             });
             if (labels(c).len() > 1 || cut_short)
+                && !scrolling
                 && overlay.is_none()
                 && pointer.is_some_and(|p| {
                     Rect::from_x_y_ranges(refs_cell.x_range(), top..=top + ROW_HEIGHT).contains(p)

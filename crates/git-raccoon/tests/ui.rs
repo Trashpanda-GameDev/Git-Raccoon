@@ -1445,6 +1445,74 @@ fn spreads_out_a_commits_labels_and_checks_them_out() {
 }
 
 #[test]
+fn scrolls_on_over_labels_without_spreading_them_out() {
+    let sample = Sample::build();
+    // A long history with two labels on every fifth commit: rows whose
+    // labels would spread out pass under the pointer as the list scrolls.
+    for i in 0..60 {
+        git(
+            &sample,
+            &[
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                &format!("Step {i:02}"),
+            ],
+        );
+        if i % 5 == 0 {
+            git(&sample, &["branch", &format!("pair-a-{i:02}")]);
+            git(&sample, &["branch", &format!("pair-b-{i:02}")]);
+        }
+    }
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    settle(&mut h);
+    // Spread out, a row's labels are listed over the graph (the sidebar
+    // lists the branches too, further left).
+    let spread = |h: &Harness<'_, App>, i: usize| {
+        h.query_all_by_label(&format!("pair-b-{i:02}"))
+            .any(|n| n.rect().center().x > 230.0)
+    };
+
+    // Over the labels of a row that has two: they spread out.
+    let row = h.get_by_label("Step 50").rect();
+    let labels = egui::pos2(row.left() + 30.0, row.center().y);
+    h.hover_at(labels);
+    h.run_ok();
+    assert!(spread(&h, 50), "spread out");
+
+    // The wheel there scrolls the list, and keeps scrolling it.
+    let mut last = h.get_by_label("Step 50").rect().top();
+    for _ in 0..4 {
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -120.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        // (A step is a quarter of a second.)
+        h.step();
+        // Labels passing under the pointer stay in their rows.
+        assert!(
+            !(0..60).step_by(5).any(|i| spread(&h, i)),
+            "nothing spread out while scrolling"
+        );
+        h.step();
+        let top = h
+            .query_by_label("Step 50")
+            .map_or(f32::NEG_INFINITY, |n| n.rect().top());
+        assert!(top < last - 1.0, "scrolled on: {last} -> {top}");
+        last = top;
+        // Settled: labels the pointer rests on may spread out again, and
+        // the next turn of the wheel starts over them.
+        for _ in 0..4 {
+            h.step();
+        }
+    }
+}
+
+#[test]
 fn merges_by_dragging_labels_on_the_graph() {
     use egui::accesskit::Role;
     let sample = Sample::build();
