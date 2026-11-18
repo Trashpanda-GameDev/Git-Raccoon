@@ -66,7 +66,8 @@ fn urls(kind: Kind, base: &str) -> (String, String) {
 
 fn scope(kind: Kind) -> &'static str {
     match kind {
-        Kind::GitHub => "repo read:org",
+        // `workflow`: pushing commits that change GitHub Actions workflows.
+        Kind::GitHub => "repo read:org workflow",
         Kind::GitLab => "api",
     }
 }

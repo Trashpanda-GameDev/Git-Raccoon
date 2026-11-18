@@ -134,7 +134,7 @@ impl SignIn {
     pub fn token_page(&self) -> String {
         match self.forge() {
             (Kind::GitHub, _) => {
-                "https://github.com/settings/tokens/new?scopes=repo,read:org&description=Git%20Raccoon".into()
+                "https://github.com/settings/tokens/new?scopes=repo,read:org,workflow&description=Git%20Raccoon".into()
             }
             (Kind::GitLab, base) => format!(
                 "{base}/-/user_settings/personal_access_tokens?name=Git%20Raccoon&scopes=api"

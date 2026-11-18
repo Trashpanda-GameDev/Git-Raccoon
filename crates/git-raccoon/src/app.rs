@@ -419,6 +419,17 @@ impl App {
         if self.prompt.is_none()
             && let Some(request) = self.askpass.as_ref().and_then(|s| s.poll())
         {
+            // An account signed in here answers for its host, without asking.
+            if let Some((account, asked)) =
+                crate::forge::accounts::for_git_prompt(&request.prompt, &self.settings.accounts)
+            {
+                let account = account.clone();
+                // Reading the keychain (or renewing a GitLab sign-in) can block.
+                std::thread::spawn(move || {
+                    request.answer(crate::forge::accounts::answer_git(&account, asked).ok());
+                });
+                return;
+            }
             self.prompt = Some(crate::ui::askpass::Prompt {
                 request,
                 input: String::new(),

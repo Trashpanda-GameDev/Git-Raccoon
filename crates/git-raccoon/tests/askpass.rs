@@ -19,6 +19,7 @@ use eframe::egui;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable as _;
 use git_raccoon::App;
+use git_raccoon::forge::{Account, Kind, accounts};
 use git_raccoon::settings::Settings;
 
 fn git(dir: &Path, args: &[&str]) {
@@ -191,5 +192,50 @@ fn asks_for_a_username_and_password_in_the_app() {
     wait_for(&mut h, "the fetch to stop", |app| !app.is_busy());
     assert_eq!(seen.lock().unwrap().len(), 1, "no second sign-in was sent");
     assert_eq!(question(h.state()), None);
+    drop(h);
+
+    // Signed in to that host here: the account answers, nobody is asked.
+    accounts::use_memory_store();
+    let account = Account {
+        kind: Kind::GitHub,
+        base: format!("http://127.0.0.1:{port}"),
+        login: "rocky".into(),
+        client: None,
+    };
+    accounts::save(
+        &account,
+        &accounts::Secret {
+            token: "gho_signed_in".into(),
+            refresh: None,
+            expires: None,
+        },
+    )
+    .unwrap();
+    let settings = Settings {
+        accounts: vec![account],
+        ..Settings::default()
+    };
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .wgpu()
+        .build_eframe(move |cc| {
+            let mut app = App::with_settings(&cc.egui_ctx, settings.clone());
+            app.answer_git_questions(&cc.egui_ctx, Path::new(env!("CARGO_BIN_EXE_git-raccoon")));
+            app
+        });
+    let ctx = h.ctx.clone();
+    h.state_mut().open(&ctx, dir.to_str().unwrap());
+    wait_for(&mut h, "the repo", |app| {
+        app.repo().is_some() && !app.is_busy()
+    });
+    h.get_by_label("Fetch").click();
+    let sent = seen.clone();
+    wait_for(&mut h, "the sign-in", move |app| {
+        assert_eq!(question(app), None, "the account answered");
+        sent.lock().unwrap().len() == 2
+    });
+    wait_for(&mut h, "the fetch to finish", |app| !app.is_busy());
+    // Its login and token (base64 of "rocky:gho_signed_in").
+    assert_eq!(seen.lock().unwrap()[1], "cm9ja3k6Z2hvX3NpZ25lZF9pbg==");
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -187,6 +187,63 @@ fn token(account: &Account) -> Result<String, String> {
     Ok(secret.token)
 }
 
+/// What Git asks for when it signs in over HTTPS.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Asked {
+    Username,
+    Password,
+}
+
+/// The signed-in account that can answer Git's `prompt` ("Username for
+/// 'https://github.com': ", "Password for 'https://me@github.com': "), and
+/// what Git asks for. Git only asks when no credential helper answered, so
+/// the user's own sign-in still comes first.
+pub fn for_git_prompt<'a>(prompt: &str, accounts: &'a [Account]) -> Option<(&'a Account, Asked)> {
+    let (asked, url) = prompt.trim().split_once(" for '")?;
+    let asked = match asked {
+        "Username" => Asked::Username,
+        "Password" => Asked::Password,
+        _ => return None,
+    };
+    let url = url.strip_suffix("':")?;
+    let (scheme, rest) = url.split_once("://")?;
+    let (user, host) = match rest.split_once('@') {
+        Some((user, host)) => (Some(user), host),
+        None => (None, rest),
+    };
+    let host = host.split('/').next()?;
+    let base = format!("{scheme}://{host}");
+    let mut on_host = accounts
+        .iter()
+        .filter(|a| a.base.eq_ignore_ascii_case(&base));
+    match user {
+        // Git named the user: only that account answers.
+        Some(user) => on_host.find(|a| {
+            a.login.eq_ignore_ascii_case(user) || git_username(a).eq_ignore_ascii_case(user)
+        }),
+        // Several accounts there: the user chooses.
+        None => on_host.next().filter(|_| on_host.next().is_none()),
+    }
+    .map(|a| (a, asked))
+}
+
+/// The answer to what Git asked, for `account`: its token as the password.
+pub fn answer_git(account: &Account, asked: Asked) -> Result<String, String> {
+    match asked {
+        Asked::Username => Ok(git_username(account)),
+        Asked::Password => token(account),
+    }
+}
+
+/// The user name Git signs in with: GitLab takes OAuth tokens only as
+/// "oauth2"; personal tokens (and GitHub) take any name.
+fn git_username(account: &Account) -> String {
+    match (account.kind, &account.client) {
+        (Kind::GitLab, Some(_)) => "oauth2".into(),
+        _ => account.login.clone(),
+    }
+}
+
 /// A repository of an account's (its own, or one it's a member of).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Repo {
@@ -293,6 +350,54 @@ mod tests {
             ..account
         };
         assert_eq!(place.place(), "git.example.com");
+    }
+
+    #[test]
+    fn answers_git_for_the_account_on_its_host() {
+        let account = |kind, base: &str, login: &str, client: Option<&str>| Account {
+            kind,
+            base: base.into(),
+            login: login.into(),
+            client: client.map(String::from),
+        };
+        let hub = account(Kind::GitHub, "https://github.com", "rocky", None);
+        let lab = account(Kind::GitLab, "https://gitlab.com", "rocky", Some("app"));
+        let accounts = [hub.clone(), lab.clone()];
+        let ask = |prompt: &str| for_git_prompt(prompt, &accounts).map(|(a, q)| (a.clone(), q));
+
+        assert_eq!(
+            ask("Username for 'https://github.com': "),
+            Some((hub.clone(), Asked::Username))
+        );
+        assert_eq!(
+            ask("Password for 'https://Rocky@github.com': "),
+            Some((hub.clone(), Asked::Password))
+        );
+        assert_eq!(
+            ask("Password for 'https://github.com/owner/repo.git': "),
+            Some((hub.clone(), Asked::Password)),
+            "with credential.useHttpPath"
+        );
+        assert_eq!(answer_git(&hub, Asked::Username).unwrap(), "rocky");
+        // GitLab's OAuth tokens sign in as "oauth2", and Git then names it.
+        assert_eq!(answer_git(&lab, Asked::Username).unwrap(), "oauth2");
+        assert_eq!(
+            ask("Password for 'https://oauth2@gitlab.com': "),
+            Some((lab.clone(), Asked::Password))
+        );
+
+        // Someone else, another host, or not Git's sign-in: the user answers.
+        assert_eq!(ask("Password for 'https://someone@github.com': "), None);
+        assert_eq!(ask("Username for 'https://example.com': "), None);
+        assert_eq!(
+            ask("Enter passphrase for key '/home/rocky/.ssh/id': "),
+            None
+        );
+        let two = [
+            hub.clone(),
+            account(Kind::GitHub, "https://github.com", "work", None),
+        ];
+        assert!(for_git_prompt("Username for 'https://github.com': ", &two).is_none());
     }
 
     #[test]

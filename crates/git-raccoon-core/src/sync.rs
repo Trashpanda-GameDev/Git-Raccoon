@@ -47,7 +47,12 @@ pub enum PullMode {
 
 fn adds_hint(text: String) -> Error {
     let lower = text.to_lowercase();
-    let hint = if lower.contains("terminal prompts disabled")
+    let hint = if lower.contains("password authentication is not supported") {
+        // GitHub: an account password was given, typed or saved long ago.
+        Some(
+            "GitHub doesn't accept account passwords for Git. Sign in to GitHub in Git Raccoon (Settings, Accounts) and it answers for Git, or give a personal access token as the password. If an old password is saved, remove it from your credential helper (on Windows: Credential Manager, git:https://github.com).",
+        )
+    } else if lower.contains("terminal prompts disabled")
         || lower.contains("could not read username")
         || lower.contains("authentication failed")
     {
@@ -557,5 +562,13 @@ mod tests {
                 .into(),
         );
         assert!(e.to_string().contains("credential helper"), "{e}");
+        let e = adds_hint(
+            "remote: Invalid username or token. Password authentication is not supported for Git operations.\nfatal: Authentication failed for 'https://github.com/owner/repo.git/'"
+                .into(),
+        );
+        assert!(
+            e.to_string().contains("doesn't accept account passwords"),
+            "{e}"
+        );
     }
 }
