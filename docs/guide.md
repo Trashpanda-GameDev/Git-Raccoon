@@ -52,7 +52,7 @@ The toolbar has the repository menu (your recent repositories, to switch to one)
 
 ## Committing
 
-When you have uncommitted changes, a **// WIP** row sits at the top of the graph. Click it to see your changes:
+When you have uncommitted changes, a **// WIP** row sits at the top of the graph, with a dashed line down to the commit you're on. You can write the commit's summary right there: it's the same text as the summary box under Commit, and a stash starts with it as its title. Click the row to see your changes:
 
 - **Unstaged** and **staged** files, each in a list of its own (so staged files stay in view, however many unstaged ones there are; click a list's heading to fold it away), with buttons to stage, unstage or discard. Pick several files with Ctrl+click (or Shift+click for a range) and right-click them, or right-click a folder in the folder view, to stage, unstage, stash, ignore (new files: they're added to `.gitignore`) or discard them all at once. The tree button at the top shows the files in their folders instead of by path (commits and stashes too; a folder holding just one folder shares its row, like `game/assets/localisation`), and the bin discards all changes, staged or not, after asking. Discarded files go to the Recycle Bin or Trash, so they can be recovered.
 - Open a file's diff to stage **single hunks**, or pick **individual lines** in the gutter and stage just those.
@@ -74,11 +74,11 @@ Tags can be lightweight, or annotated (with a message).
 
 - **Fetch** gets new commits from every remote without changing your branches; the sidebar and toolbar then show how far behind you are.
 - **Pull** brings the upstream's new commits into your branch. It only fast-forwards by default; if both sides have new commits, it asks whether to **merge** or **rebase**. Uncommitted changes are put aside and restored.
-- **Push** sends your commits. The first push of a new branch sets up its upstream. If the remote has commits you don't, it offers to pull first, or to **force push** — which is always done *with lease*, so it never deletes commits you haven't seen.
+- **Push** sends your commits. Pushing a branch that isn't on a remote yet asks where it should go, in a bar under the toolbar: the same name on `origin` to start with, or pick another remote (when there are several) or name. From then on it pushes to and pulls from there. If the remote has commits you don't, it offers to pull first, or to **force push** — which is always done *with lease*, so it never deletes commits you haven't seen.
 
 Progress shows in the toolbar, with a Cancel button.
 
-**Signing in.** Git Raccoon uses your existing Git setup: Git Credential Manager (included with Git for Windows) and other credential helpers, and keys in your SSH agent. When Git needs a password, a passphrase or confirmation of a new host, Git Raccoon asks in a dialog.
+**Signing in.** Git Raccoon uses your existing Git setup: Git Credential Manager (included with Git for Windows) and other credential helpers, and keys in your SSH agent. When Git needs a password, a passphrase or confirmation of a new host, Git Raccoon asks in a dialog. If you're signed in to the repository's forge in Git Raccoon (see below), that account answers for its host instead, with its token.
 
 **Several branches at once:** Ctrl+click (Cmd+click on a Mac) branches in the sidebar to pick them, then right-click one to delete them all (local ones, or remote ones on their remote). It asks once, and if any has work that isn't merged anywhere, it asks again before deleting any of them. Undo brings them all back; Esc unpicks.
 
@@ -90,7 +90,7 @@ Progress shows in the toolbar, with a Cancel button.
 
 For a repository on **GitHub**, **GitLab.com** or a **self-managed GitLab**, the sidebar lists its open pull requests (merge requests on GitLab) and issues, under the branches. Git Raccoon finds the forge from the repository's remote (*origin* first).
 
-**Signing in.** Open **Settings → Accounts → Add account…** (or click *Sign in* in the sidebar section), and pick GitHub, GitLab.com or Self-managed GitLab (give its address, like `https://gitlab.example.com`). With the browser, Git Raccoon shows a short code and opens the forge's page to approve it. Or click **Use a token instead**, then **Make a token…**: the forge's page opens with the right permissions ticked (`repo` and `read:org` on GitHub, `api` on GitLab); create it and paste it in. You can be signed in to several at once (GitHub, GitLab.com and any number of servers); each repository uses the account for its remote.
+**Signing in.** Open **Settings → Accounts → Add account…** (or click *Sign in* in the sidebar section), and pick GitHub, GitLab.com or Self-managed GitLab (give its address, like `https://gitlab.example.com`). With the browser, Git Raccoon shows a short code and opens the forge's page to approve it. Or click **Use a token instead**, then **Make a token…**: the forge's page opens with the right permissions ticked (`repo`, `read:org` and `workflow` on GitHub, `api` on GitLab); create it and paste it in. You can be signed in to several at once (GitHub, GitLab.com and any number of servers); each repository uses the account for its remote.
 
 **A self-managed GitLab with the browser.** The server needs Git Raccoon registered as an application once: choose *Use the browser instead*, click **Make an app…** (it opens *Applications* in your GitLab settings), give it any name and redirect URI, untick *Confidential*, tick the `api` scope, and paste its **Application ID** into the sign-in window. Git Raccoon remembers it for that server. (This needs a GitLab version with device sign-in, 17.2 or later.) Tokens are kept in your system's keychain (Keychain on macOS, Credential Manager on Windows, the Secret Service on Linux), never in the settings file. **Sign out** in the same place forgets it.
 
@@ -190,6 +190,8 @@ After most actions, the toolbar shows exactly what **Undo** would do ("Undo comm
 
 - **"Git isn't installed, or isn't on PATH."** Install [Git](https://git-scm.com), then restart Git Raccoon.
 - **Fetching or pushing asks for a password every time.** Set up a credential helper (Git Credential Manager comes with Git for Windows), or use SSH with your key in an SSH agent.
+- **"Password authentication is not supported" (GitHub).** GitHub doesn't take your account password for Git. Sign in to GitHub in Git Raccoon (**Settings → Accounts**), or give a personal access token as the password. If an old password is saved, remove it from your credential helper (on Windows: Credential Manager, `git:https://github.com`).
+- **"Not owned by current user" / "dubious ownership".** The folder belongs to another user, and Git doesn't trust it. Git's message shows the `git config --global --add safe.directory …` command that trusts it.
 - **"This host isn't known yet."** Git Raccoon asks you to confirm a new SSH host the first time; check its fingerprint against the one the host publishes.
 - **Large files show as small text files.** The repository uses Git LFS: install [git-lfs](https://git-lfs.com) and run `git lfs pull`.
 - **Something went wrong.** The error banner shows Git's own message. If it looks like a bug, a report on the project's [issues page](https://github.com/Trashpanda-GameDev/Git-Raccoon/issues) helps.

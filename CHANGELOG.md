@@ -7,6 +7,12 @@ release page). Newest first; a version's heading is just its number.
 
 - **A graph with many branches scrolls sideways**: use the horizontal wheel (or Shift and the wheel) over it, or drag the bar under the Graph heading. Jumping to a commit brings its line into view.
 - **Branch labels no longer stop the graph scrolling**: they only spread out when the pointer rests on them, not while the list scrolls past.
+- **Write the commit summary in the WIP row** at the top of the graph: it's the same text as the box under Commit, and the stash dialog starts with it as the stash's title. The field starts small, so the change counts stay in view, and grows as you write.
+- **The WIP row's dashed line runs down to the commit you're on**, past any newer commits on other branches.
+- **Choose where a new branch is pushed**: pushing a branch that isn't on a remote yet asks where it should go, in a bar under the toolbar, filled in with the same name on origin. Pick another remote or name, and it pushes to and pulls from there from then on.
+- **Push with the account you signed in with**: when Git asks for a password, a GitHub or GitLab account signed in to in Git Raccoon answers with its token. Your own credential helpers still come first. Signing in to GitHub now also asks for the workflow scope, which pushing changes to GitHub Actions workflows needs.
+- **A clearer message when GitHub refuses a password**: it says to sign in here or use a token, and how to remove an old saved password.
+- **Repositories in folders owned by the Administrators group open**, as they do with Git itself; one Git refuses still shows Git's message, with the command that trusts the folder.
 
 ## 0.5.10
 
