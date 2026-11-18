@@ -1787,41 +1787,12 @@ impl App {
                     }
                 }
                 Some(sidebar::Action::NewRequest) => self.new_request = new_form(repo),
-                Some(sidebar::Action::OpenWeb(url)) => ctx.open_url(egui::OpenUrl::new_tab(url)),
-                Some(sidebar::Action::Jump(id)) => repo.select(&id),
-                Some(sidebar::Action::StashApply(id)) => repo.run(&ctx, Op::StashApply(id)),
-                Some(sidebar::Action::StashPop(id)) => repo.run(&ctx, Op::StashPop(id)),
-                Some(sidebar::Action::StashDrop(id)) => repo.confirm_drop(id),
-                Some(sidebar::Action::Checkout(name)) => repo.checkout(&ctx, name),
-                Some(sidebar::Action::CheckoutRemote(name)) => {
-                    repo.run(&ctx, Op::CheckoutRemote(name));
-                }
-                Some(sidebar::Action::NewBranch { start, label }) => repo.new_branch(start, label),
-                Some(sidebar::Action::Rename(name)) => repo.rename_branch(name),
-                Some(sidebar::Action::DeleteBranch(name)) => repo.confirm_delete_branch(name),
-                Some(sidebar::Action::DeleteBranches(names)) => repo.confirm_delete_branches(names),
-                Some(sidebar::Action::DeleteRemoteBranches(names)) => {
-                    repo.confirm_delete_remote_branches(names);
-                }
-                Some(sidebar::Action::DeleteRemoteBranch(name)) => {
-                    repo.confirm_delete_remote_branch(name);
-                }
-                Some(sidebar::Action::DeleteTag(name)) => repo.confirm_delete_tag(name),
-                Some(sidebar::Action::EditRemote(name)) => repo.edit_remote(name),
-                Some(sidebar::Action::RemoveRemote(name)) => repo.confirm_remove_remote(name),
-                Some(sidebar::Action::Merge { source, target }) => repo.ask_merge(source, target),
-                Some(sidebar::Action::Rebase(onto)) => repo.confirm_rebase(onto),
-                Some(sidebar::Action::OpenPath(p)) => repo.open_request = Some(p),
-                Some(sidebar::Action::UpdateSubmodule(p)) => {
-                    repo.run(&ctx, Op::UpdateSubmodule(p));
-                }
-                Some(sidebar::Action::AddWorktree) => repo.new_worktree(),
-                Some(sidebar::Action::RemoveWorktree(p)) => repo.confirm_remove_worktree(p),
                 Some(sidebar::Action::Terminal(dir)) => {
                     if let Err(why) = crate::terminal::open(&dir, &self.settings.terminal) {
                         self.error = Some(format!("Could not open a terminal: {why}."));
                     }
                 }
+                Some(action) => repo_action(repo, &ctx, action),
                 None => {}
             }
         }
@@ -2113,9 +2084,7 @@ impl App {
                         repo.scroll_to = None;
                     }
                     Some(history::Click::Working) => repo.select_working(),
-                    Some(history::Click::OpenWeb(url)) => {
-                        ctx.open_url(egui::OpenUrl::new_tab(url));
-                    }
+                    Some(history::Click::Branch(action)) => repo_action(repo, &ctx, action),
                     Some(history::Click::NewBranch { id, label }) => repo.new_branch(id, label),
                     Some(history::Click::NewTag { id, label }) => repo.new_tag(id, label),
                     Some(history::Click::CheckoutDetached { id, label }) => {
@@ -2287,6 +2256,44 @@ impl eframe::App for App {
 /// The look to show: the chosen family, dark or light as the mode (or
 /// the system) says.
 /// The window for a new pull/merge request from the checked-out branch.
+/// Does what a branch, tag, stash, remote or worktree's menu asked for (in
+/// the sidebar, or on a label in the graph), where only the repository is
+/// involved; the sidebar's other actions are the app's.
+fn repo_action(repo: &mut RepoView, ctx: &egui::Context, action: sidebar::Action) {
+    match action {
+        sidebar::Action::OpenWeb(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
+        sidebar::Action::Jump(id) => repo.select(&id),
+        sidebar::Action::StashApply(id) => repo.run(ctx, Op::StashApply(id)),
+        sidebar::Action::StashPop(id) => repo.run(ctx, Op::StashPop(id)),
+        sidebar::Action::StashDrop(id) => repo.confirm_drop(id),
+        sidebar::Action::Checkout(name) => repo.checkout(ctx, name),
+        sidebar::Action::CheckoutRemote(name) => repo.run(ctx, Op::CheckoutRemote(name)),
+        sidebar::Action::NewBranch { start, label } => repo.new_branch(start, label),
+        sidebar::Action::Rename(name) => repo.rename_branch(name),
+        sidebar::Action::DeleteBranch(name) => repo.confirm_delete_branch(name),
+        sidebar::Action::DeleteBranches(names) => repo.confirm_delete_branches(names),
+        sidebar::Action::DeleteRemoteBranches(names) => {
+            repo.confirm_delete_remote_branches(names);
+        }
+        sidebar::Action::DeleteRemoteBranch(name) => repo.confirm_delete_remote_branch(name),
+        sidebar::Action::DeleteTag(name) => repo.confirm_delete_tag(name),
+        sidebar::Action::EditRemote(name) => repo.edit_remote(name),
+        sidebar::Action::RemoveRemote(name) => repo.confirm_remove_remote(name),
+        sidebar::Action::Merge { source, target } => repo.ask_merge(source, target),
+        sidebar::Action::Rebase(onto) => repo.confirm_rebase(onto),
+        sidebar::Action::OpenPath(p) => repo.open_request = Some(p),
+        sidebar::Action::UpdateSubmodule(p) => repo.run(ctx, Op::UpdateSubmodule(p)),
+        sidebar::Action::AddWorktree => repo.new_worktree(),
+        sidebar::Action::RemoveWorktree(p) => repo.confirm_remove_worktree(p),
+        // The app's.
+        sidebar::Action::OpenRequest(_)
+        | sidebar::Action::OpenIssue(_)
+        | sidebar::Action::SignInToForge
+        | sidebar::Action::NewRequest
+        | sidebar::Action::Terminal(_) => {}
+    }
+}
+
 fn new_form(repo: &RepoView) -> Option<crate::ui::forge::NewForm> {
     let forge = repo.forge.as_ref()?;
     let source = repo.head_branch()?.to_string();

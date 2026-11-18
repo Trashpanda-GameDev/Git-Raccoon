@@ -1,7 +1,7 @@
 //! The commit list with its graph. Only the rows on screen are drawn.
 
 use crate::settings::Column;
-use eframe::egui::{self, Color32, Pos2, Rect, Sense, Stroke, epaint::CubicBezierShape};
+use eframe::egui::{self, Color32, Pos2, Rect, RichText, Sense, Stroke, epaint::CubicBezierShape};
 use egui_phosphor::regular as icon;
 use git_raccoon_core::repo::{GraphCommit, RefKind, RefLabel};
 
@@ -519,8 +519,9 @@ fn row_top(row: usize) -> f32 {
 pub enum Click {
     Row(usize),
     Working,
-    /// Open a page on the forge (from a commit's context menu).
-    OpenWeb(String),
+    /// What a menu in the sidebar does, asked for here: from a branch's or
+    /// tag's label, or opening the commit's page on the forge.
+    Branch(crate::ui::sidebar::Action),
     /// From a commit's context menu; `label` describes the commit.
     NewBranch {
         id: String,
@@ -705,9 +706,11 @@ pub fn show(
     // The row whose labels are spread out, its label cell, and the area
     // they cover: kept while the pointer is over them, so they can be reached.
     let mut overlay: Option<(usize, Rect, Rect)> = ui.ctx().data(|d| d.get_temp(overlay_id));
+    // (Or while one of their menus is open: it's outside them.)
     if overlay.is_some_and(|(_, cell, area)| {
         !pointer.is_some_and(|p| area.expand(2.0).contains(p) || cell.contains(p))
-    }) {
+    }) && !egui::Popup::is_any_open(ui.ctx())
+    {
         overlay = None;
     }
     // Not while the list scrolls (or just after): spread out under the
@@ -778,105 +781,12 @@ pub fn show(
                 double_click = response.interact_pointer_pos().map(|p| (row, p));
             }
             if let Some(c) = commit {
-                let (id, label) = (c.id.clone(), commit_label(&c.id, &c.summary));
                 let web = repo.web.commit(&c.id);
-                let stash = c.refs.iter().any(|r| r.kind == RefKind::Stash);
-                if stash {
-                    response.context_menu(|ui| {
-                        for (glyph, text, which) in [
-                            (icon::ARROW_SQUARE_DOWN, "Apply", 0),
-                            (icon::STACK_MINUS, "Pop", 1),
-                            (icon::TRASH, "Delete…", 2),
-                        ] {
-                            if ui.button(format!("{glyph}  {text}")).clicked() {
-                                let id = id.clone();
-                                clicked = Some(match which {
-                                    0 => Click::StashApply(id),
-                                    1 => Click::StashPop(id),
-                                    _ => Click::StashDrop(id),
-                                });
-                                ui.close();
-                            }
-                        }
-                    });
-                } else {
-                    response.context_menu(|ui| {
-                        if let Some((text, url)) = &web {
-                            if ui
-                                .button(format!("{}  {text}", icon::ARROW_SQUARE_OUT))
-                                .clicked()
-                            {
-                                clicked = Some(Click::OpenWeb(url.clone()));
-                                ui.close();
-                            }
-                            if ui
-                                .button(format!("{}  Copy its link", icon::LINK))
-                                .clicked()
-                            {
-                                ui.ctx().copy_text(url.clone());
-                                ui.close();
-                            }
-                            ui.separator();
-                        }
-                        let on_branch = head.is_some();
-                        let target = head.as_deref().unwrap_or("HEAD");
-                        let items = [
-                            (icon::GIT_BRANCH, "Create branch here…".to_string(), 0, true),
-                            (icon::TAG, "Create tag here…".to_string(), 1, true),
-                            (
-                                icon::SIGN_OUT,
-                                "Check out this commit…".to_string(),
-                                2,
-                                true,
-                            ),
-                            (
-                                icon::ARROW_BEND_DOWN_RIGHT,
-                                format!("Cherry-pick onto {target}"),
-                                3,
-                                on_branch,
-                            ),
-                            (
-                                icon::ARROW_COUNTER_CLOCKWISE,
-                                "Revert this commit".to_string(),
-                                4,
-                                on_branch,
-                            ),
-                            (
-                                icon::CLOCK_COUNTER_CLOCKWISE,
-                                format!("Reset {target} to here…"),
-                                5,
-                                on_branch,
-                            ),
-                            (
-                                icon::LIST_NUMBERS,
-                                "Interactive rebase from here…".to_string(),
-                                6,
-                                on_branch,
-                            ),
-                        ];
-                        for (glyph, text, which, enabled) in items {
-                            if which == 3 {
-                                ui.separator();
-                            }
-                            if ui
-                                .add_enabled(enabled, egui::Button::new(format!("{glyph}  {text}")))
-                                .clicked()
-                            {
-                                let (id, label) = (id.clone(), label.clone());
-                                clicked = Some(match which {
-                                    0 => Click::NewBranch { id, label },
-                                    1 => Click::NewTag { id, label },
-                                    2 => Click::CheckoutDetached { id, label },
-                                    3 => Click::CherryPick { id },
-                                    4 => Click::Revert { id },
-                                    5 => Click::Reset { id, label },
-                                    _ => Click::InteractiveRebase { id, label },
-                                });
-                                ui.close();
-                            }
-                        }
-                    });
-                }
+                response.context_menu(|ui| {
+                    if let Some(action) = commit_menu(ui, c, web.as_ref(), head.as_deref(), None) {
+                        clicked = Some(action);
+                    }
+                });
             }
         }
 
@@ -1029,7 +939,10 @@ pub fn show(
                 && overlay.is_none()
                 && pointer.is_some_and(|p| {
                     Rect::from_x_y_ranges(refs_cell.x_range(), top..=top + ROW_HEIGHT).contains(p)
+                        // The list itself, not a menu or window over it.
+                        && ui.ctx().layer_id_at(p) == Some(ui.layer_id())
                 })
+                && !egui::Popup::is_any_open(ui.ctx())
                 && ui.clip_rect().contains(refs_cell.center())
             {
                 overlay = Some((row, refs_cell, Rect::NOTHING));
@@ -1042,6 +955,14 @@ pub fn show(
             if let (Some(rect), Some((r, _))) = (pills.first(), labels(c).first()) {
                 let response =
                     ui.interact(*rect, ui.id().with(("label", row)), Sense::click_and_drag());
+                // Right-clicked, the commit's menu, with the label's own first.
+                let web = repo.web.commit(&c.id);
+                response.context_menu(|ui| {
+                    if let Some(action) = commit_menu(ui, c, web.as_ref(), head.as_deref(), Some(r))
+                    {
+                        clicked = Some(action);
+                    }
+                });
                 if let Some(merge) = drag_and_drop(painter, &response, r) {
                     clicked = Some(merge);
                 } else if response.double_clicked() {
@@ -1095,7 +1016,15 @@ pub fn show(
 
         if let Some((row, cell, _)) = overlay {
             if let Some(c) = repo.rows.get(row) {
-                let (area, action) = all_labels(ui.ctx(), overlay_id, cell, row, c);
+                let web = repo.web.commit(&c.id);
+                let (area, action) = all_labels(
+                    ui.ctx(),
+                    overlay_id,
+                    cell,
+                    row,
+                    c,
+                    (web.as_ref(), head.as_deref()),
+                );
                 overlay = Some((row, cell, area));
                 if action.is_some() {
                     clicked = action;
@@ -1363,6 +1292,9 @@ fn all_labels(
     cell: Rect,
     row: usize,
     c: &GraphCommit,
+    // The commit's page on the forge, and the checked-out branch: for the
+    // right-click menu.
+    (web, head): (Option<&(String, String)>, Option<&str>),
 ) -> (Rect, Option<Click>) {
     const GAP: f32 = 4.0;
     const PAD: f32 = 4.0;
@@ -1370,7 +1302,8 @@ fn all_labels(
     let mut action = None;
     let top = cell.center().y - 10.0 - PAD;
     let area = egui::Area::new(id)
-        .order(egui::Order::Foreground)
+        // Over the list, but under menus, tooltips and windows.
+        .order(egui::Order::Middle)
         .fixed_pos(Pos2::new(cell.left() - PAD, top))
         .show(ctx, |ui| {
             egui::Frame::new()
@@ -1439,6 +1372,11 @@ fn all_labels(
                         } else {
                             response.on_hover_text(tip)
                         };
+                        response.context_menu(|ui| {
+                            if let Some(chosen) = commit_menu(ui, c, web, head, Some(r)) {
+                                action = Some(chosen);
+                            }
+                        });
                         if let Some(merge) = drag_and_drop(ui.painter(), &response, r) {
                             action = Some(merge);
                         } else if response.double_clicked() {
@@ -1450,6 +1388,124 @@ fn all_labels(
                 });
         });
     (area.response.rect, action)
+}
+
+/// The right-click menu of a commit, or of one of its labels (`label`):
+/// that label's checkout first, then what can be done with the commit (a
+/// stash: apply, pop or delete it). `web` is the commit's page on the
+/// forge; `head` the checked-out branch.
+fn commit_menu(
+    ui: &mut egui::Ui,
+    c: &GraphCommit,
+    web: Option<&(String, String)>,
+    head: Option<&str>,
+    label: Option<&RefLabel>,
+) -> Option<Click> {
+    let mut chosen = None;
+    let id = c.id.clone();
+    if c.refs.iter().any(|r| r.kind == RefKind::Stash) {
+        for (glyph, text, which) in [
+            (icon::ARROW_SQUARE_DOWN, "Apply", 0),
+            (icon::STACK_MINUS, "Pop", 1),
+            (icon::TRASH, "Delete…", 2),
+        ] {
+            if ui.button(format!("{glyph}  {text}")).clicked() {
+                chosen = Some(match which {
+                    0 => Click::StashApply(id.clone()),
+                    1 => Click::StashPop(id.clone()),
+                    _ => Click::StashDrop(id.clone()),
+                });
+                ui.close();
+            }
+        }
+        return chosen;
+    }
+    // A branch's or tag's label: what its menu in the sidebar has, under
+    // its name ("Create branch here" is in the commit's part below).
+    if let Some(r) = label {
+        use crate::ui::sidebar;
+        let items = match r.kind {
+            RefKind::Local => sidebar::local_branch_items(&r.name, &c.id, r.is_head, head),
+            RefKind::Remote => sidebar::remote_branch_items(&r.name, &c.id, head),
+            RefKind::Tag => sidebar::tag_items(&r.name, &c.id),
+            RefKind::Head | RefKind::Stash => Vec::new(),
+        };
+        let items: Vec<_> = items
+            .into_iter()
+            .filter(|(_, _, a)| !matches!(a, sidebar::Action::NewBranch { .. }))
+            .collect();
+        if !items.is_empty() {
+            ui.label(RichText::new(&r.name).size(12.0).color(theme::muted()));
+            let mut action = None;
+            sidebar::menu(ui, &mut action, items);
+            chosen = action.map(Click::Branch);
+            ui.separator();
+        }
+    }
+    let mut opened = None;
+    crate::ui::sidebar::web_items(ui, &mut opened, web);
+    if let Some(open) = opened {
+        chosen = Some(Click::Branch(open));
+    }
+    let on_branch = head.is_some();
+    let target = head.unwrap_or("HEAD");
+    let label = commit_label(&c.id, &c.summary);
+    let items = [
+        (icon::GIT_BRANCH, "Create branch here…".to_string(), 0, true),
+        (icon::TAG, "Create tag here…".to_string(), 1, true),
+        (
+            icon::SIGN_OUT,
+            "Check out this commit only (detached)…".to_string(),
+            2,
+            true,
+        ),
+        (
+            icon::ARROW_BEND_DOWN_RIGHT,
+            format!("Cherry-pick onto {target}"),
+            3,
+            on_branch,
+        ),
+        (
+            icon::ARROW_COUNTER_CLOCKWISE,
+            "Revert this commit".to_string(),
+            4,
+            on_branch,
+        ),
+        (
+            icon::CLOCK_COUNTER_CLOCKWISE,
+            format!("Reset {target} to here…"),
+            5,
+            on_branch,
+        ),
+        (
+            icon::LIST_NUMBERS,
+            "Interactive rebase from here…".to_string(),
+            6,
+            on_branch,
+        ),
+    ];
+    for (glyph, text, which, enabled) in items {
+        if which == 3 {
+            ui.separator();
+        }
+        if ui
+            .add_enabled(enabled, egui::Button::new(format!("{glyph}  {text}")))
+            .clicked()
+        {
+            let (id, label) = (id.clone(), label.clone());
+            chosen = Some(match which {
+                0 => Click::NewBranch { id, label },
+                1 => Click::NewTag { id, label },
+                2 => Click::CheckoutDetached { id, label },
+                3 => Click::CherryPick { id },
+                4 => Click::Revert { id },
+                5 => Click::Reset { id, label },
+                _ => Click::InteractiveRebase { id, label },
+            });
+            ui.close();
+        }
+    }
+    chosen
 }
 
 /// "a1b2c3d Fix the thing", for dialogs about a commit.

@@ -830,7 +830,8 @@ pub fn drag_label(ctx: &egui::Context) {
 
 /// Adds the items of a context menu; the chosen one becomes the action.
 /// "Open on GitHub" (and copying the link) at the top of a context menu.
-fn web_items(ui: &mut egui::Ui, action: &mut Option<Action>, web: Option<&(String, String)>) {
+/// A page on the forge, and copying its link, at the top of a menu.
+pub fn web_items(ui: &mut egui::Ui, action: &mut Option<Action>, web: Option<&(String, String)>) {
     let Some((text, url)) = web else { return };
     if ui
         .button(format!("{}  {text}", icon::ARROW_SQUARE_OUT))
@@ -849,13 +850,125 @@ fn web_items(ui: &mut egui::Ui, action: &mut Option<Action>, web: Option<&(Strin
     ui.separator();
 }
 
-fn menu(ui: &mut egui::Ui, action: &mut Option<Action>, items: Vec<(&str, bool, Action)>) {
+pub fn menu<S: AsRef<str>>(
+    ui: &mut egui::Ui,
+    action: &mut Option<Action>,
+    items: Vec<(S, bool, Action)>,
+) {
     for (label, enabled, act) in items {
-        if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+        if ui
+            .add_enabled(enabled, egui::Button::new(label.as_ref()))
+            .clicked()
+        {
             *action = Some(act);
             ui.close();
         }
     }
+}
+
+/// What can be done with a local branch at `target`, from its right-click
+/// menu (here or on the graph). `head`: the checked-out branch.
+pub fn local_branch_items(
+    name: &str,
+    target: &str,
+    is_head: bool,
+    head: Option<&str>,
+) -> Vec<(String, bool, Action)> {
+    let onto = head.unwrap_or("HEAD");
+    vec![
+        // Named, so it isn't taken for checking out just its commit.
+        (
+            format!("Check out {name}"),
+            !is_head,
+            Action::Checkout(name.into()),
+        ),
+        (
+            format!("Merge into {onto}"),
+            !is_head && head.is_some(),
+            Action::Merge {
+                source: name.into(),
+                target: None,
+            },
+        ),
+        (
+            format!("Rebase {onto} onto {name}"),
+            !is_head && head.is_some(),
+            Action::Rebase(name.into()),
+        ),
+        (
+            "Create branch here…".into(),
+            true,
+            Action::NewBranch {
+                start: target.into(),
+                label: name.into(),
+            },
+        ),
+        ("Rename…".into(), true, Action::Rename(name.into())),
+        (
+            "Delete…".into(),
+            !is_head,
+            Action::DeleteBranch(name.into()),
+        ),
+    ]
+}
+
+/// What can be done with a remote branch ("origin/x") at `target`.
+pub fn remote_branch_items(
+    full_name: &str,
+    target: &str,
+    head: Option<&str>,
+) -> Vec<(String, bool, Action)> {
+    let onto = head.unwrap_or("HEAD");
+    // Checking it out makes (or brings up to date) the local branch.
+    let local = crate::repo_view::local_name(full_name);
+    vec![
+        (
+            format!("Merge into {onto}"),
+            head.is_some(),
+            Action::Merge {
+                source: full_name.into(),
+                target: None,
+            },
+        ),
+        (
+            format!("Rebase {onto} onto {full_name}"),
+            head.is_some(),
+            Action::Rebase(full_name.into()),
+        ),
+        (
+            format!("Check out as {local}"),
+            true,
+            Action::CheckoutRemote(full_name.into()),
+        ),
+        (
+            "Create branch here…".into(),
+            true,
+            Action::NewBranch {
+                start: target.into(),
+                label: full_name.into(),
+            },
+        ),
+        (
+            "Delete on the remote…".into(),
+            true,
+            Action::DeleteRemoteBranch(full_name.into()),
+        ),
+    ]
+}
+
+/// What can be done with a tag at `target`.
+pub fn tag_items(name: &str, target: &str) -> Vec<(String, bool, Action)> {
+    vec![
+        (
+            "Create branch here…".into(),
+            true,
+            Action::NewBranch {
+                start: target.into(),
+                label: name.into(),
+            },
+        ),
+        ("Delete tag…".into(), true, Action::DeleteTag(name.into())),
+    ]
 }
 
 /// Shows the sidebar.
@@ -1079,9 +1192,6 @@ pub fn show(
                         if let Some(a) = drop_target(ui, &response, &b.name) {
                             c.action = Some(a);
                         }
-                        let merge_label = format!("Merge into {}", head.unwrap_or("HEAD"));
-                        let rebase_label =
-                            format!("Rebase {} onto {}", head.unwrap_or("HEAD"), b.name);
                         // On the forge, as its upstream.
                         let page = b
                             .upstream
@@ -1093,32 +1203,7 @@ pub fn show(
                                 return;
                             }
                             web_items(ui, &mut c.action, page.as_ref());
-                            let items = vec![
-                                ("Check out", !b.is_head, Action::Checkout(b.name.clone())),
-                                (
-                                    merge_label.as_str(),
-                                    !b.is_head && head.is_some(),
-                                    Action::Merge {
-                                        source: b.name.clone(),
-                                        target: None,
-                                    },
-                                ),
-                                (
-                                    rebase_label.as_str(),
-                                    !b.is_head && head.is_some(),
-                                    Action::Rebase(b.name.clone()),
-                                ),
-                                (
-                                    "Create branch here…",
-                                    true,
-                                    Action::NewBranch {
-                                        start: b.target.clone(),
-                                        label: b.name.clone(),
-                                    },
-                                ),
-                                ("Rename…", true, Action::Rename(b.name.clone())),
-                                ("Delete…", !b.is_head, Action::DeleteBranch(b.name.clone())),
-                            ];
+                            let items = local_branch_items(&b.name, &b.target, b.is_head, head);
                             menu(ui, &mut c.action, items);
                         });
                     },
@@ -1188,51 +1273,13 @@ pub fn show(
                                     c.action = Some(Action::Jump(b.target.clone()));
                                 }
                                 drag_source(&response, &b.full_name);
-                                let merge_label = format!("Merge into {}", head.unwrap_or("HEAD"));
-                                let rebase_label = format!(
-                                    "Rebase {} onto {}",
-                                    head.unwrap_or("HEAD"),
-                                    b.full_name
-                                );
                                 let page = web.branch(&b.full_name);
                                 response.context_menu(|ui| {
                                     if c.picked_menu(ui, &me, head) {
                                         return;
                                     }
                                     web_items(ui, &mut c.action, page.as_ref());
-                                    let items = vec![
-                                        (
-                                            merge_label.as_str(),
-                                            head.is_some(),
-                                            Action::Merge {
-                                                source: b.full_name.clone(),
-                                                target: None,
-                                            },
-                                        ),
-                                        (
-                                            rebase_label.as_str(),
-                                            head.is_some(),
-                                            Action::Rebase(b.full_name.clone()),
-                                        ),
-                                        (
-                                            "Check out",
-                                            true,
-                                            Action::CheckoutRemote(b.full_name.clone()),
-                                        ),
-                                        (
-                                            "Create branch here…",
-                                            true,
-                                            Action::NewBranch {
-                                                start: b.target.clone(),
-                                                label: b.full_name.clone(),
-                                            },
-                                        ),
-                                        (
-                                            "Delete on the remote…",
-                                            true,
-                                            Action::DeleteRemoteBranch(b.full_name.clone()),
-                                        ),
-                                    ];
+                                    let items = remote_branch_items(&b.full_name, &b.target, head);
                                     menu(ui, &mut c.action, items);
                                 });
                             },
@@ -1280,18 +1327,7 @@ pub fn show(
                     let page = web.tag(&t.name);
                     response.context_menu(|ui| {
                         web_items(ui, &mut c.action, page.as_ref());
-                        let items = vec![
-                            (
-                                "Create branch here…",
-                                true,
-                                Action::NewBranch {
-                                    start: t.target.clone(),
-                                    label: t.name.clone(),
-                                },
-                            ),
-                            ("Delete tag…", true, Action::DeleteTag(t.name.clone())),
-                        ];
-                        menu(ui, &mut c.action, items);
+                        menu(ui, &mut c.action, tag_items(&t.name, &t.target));
                     });
                 }
             });

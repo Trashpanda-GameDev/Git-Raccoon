@@ -1577,6 +1577,101 @@ fn scrolls_on_over_labels_without_spreading_them_out() {
     }
 }
 
+fn right_click_at(h: &mut Harness<'_, App>, pos: egui::Pos2) {
+    h.hover_at(pos);
+    h.run_ok();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run_ok();
+    }
+}
+
+#[test]
+fn right_clicking_a_label_on_the_graph_shows_its_menu() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    let label = |h: &Harness<'_, App>, summary: &str| {
+        let row = h.get_by_label(summary).rect();
+        egui::pos2(row.left() + 30.0, row.center().y)
+    };
+
+    // A branch's label: what its menu in the sidebar has, then the
+    // commit's (#27).
+    let at = label(&h, "Colour lanes");
+    right_click_at(&mut h, at);
+    h.get_by_label("Merge into main");
+    h.get_by_label("Rename…");
+    h.get_by_label_contains("Create branch here…");
+    h.get_by_label_contains("Interactive rebase from here…");
+    screenshot(&mut h, "45-label-menu");
+    h.get_by_label("Check out feature/graph").click();
+    wait_for(&mut h, "the checkout", |app| {
+        head_branch(app).as_deref() == Some("feature/graph")
+    });
+
+    // A tag's too.
+    let at = label(&h, "Merge branch 'feature/graph'");
+    right_click_at(&mut h, at);
+    h.get_by_label("Delete tag…");
+    h.get_by_label_contains("Create tag here…").click();
+    settle(&mut h);
+    assert!(matches!(
+        h.state().repo().unwrap().dialog,
+        Some(git_raccoon::repo_view::Dialog::NewTag { .. })
+    ));
+
+    // And each of several labels, spread out.
+    h.key_press(Key::Escape);
+    settle(&mut h);
+    git(&sample, &["branch", "release", "HEAD"]);
+    h.key_press(Key::F5);
+    settle(&mut h);
+    let row = h.get_by_label("Colour lanes").rect();
+    h.hover_at(egui::pos2(row.left() + 30.0, row.center().y));
+    h.run_ok();
+    let release = h
+        .query_all_by_label("release")
+        .map(|n| n.rect().center())
+        .find(|p| p.x > 230.0)
+        .unwrap();
+    right_click_at(&mut h, release);
+    h.get_by_label_contains("Create branch here…");
+    h.get_by_label("Delete…").click();
+    settle(&mut h);
+    assert!(
+        matches!(
+            h.state().repo().unwrap().dialog,
+            Some(git_raccoon::repo_view::Dialog::Confirm { .. })
+        ),
+        "asks before deleting release"
+    );
+
+    // Labels under a window or a menu stay as they are: spread out, they'd
+    // cover it.
+    let spread = |h: &Harness<'_, App>| {
+        h.query_all_by_label("release")
+            .any(|n| n.rect().center().x > 230.0)
+    };
+    let colour_lanes = label(&h, "Colour lanes");
+    h.hover_at(colour_lanes);
+    h.run_ok();
+    assert!(!spread(&h), "not under the question");
+    h.key_press(Key::Escape);
+    settle(&mut h);
+    let at = label(&h, "Redraw icon and rename loader");
+    right_click_at(&mut h, at);
+    h.get_by_label("Rename…");
+    h.hover_at(colour_lanes);
+    h.run_ok();
+    assert!(!spread(&h), "not under the menu");
+}
+
 #[test]
 fn merges_by_dragging_labels_on_the_graph() {
     use egui::accesskit::Role;

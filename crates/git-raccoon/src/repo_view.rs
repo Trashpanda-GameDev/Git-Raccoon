@@ -708,7 +708,7 @@ fn split_remote(name: &str) -> Result<(&str, &str), Error> {
 }
 
 /// "feature" for the remote branch "origin/feature".
-fn local_name(remote_branch: &str) -> &str {
+pub fn local_name(remote_branch: &str) -> &str {
     remote_branch
         .split_once('/')
         .map_or(remote_branch, |(_, rest)| rest)

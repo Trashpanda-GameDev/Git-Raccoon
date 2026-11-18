@@ -6,6 +6,7 @@ release page). Newest first; a version's heading is just its number.
 ## 0.5.11
 
 - **A graph with many branches scrolls sideways**: use the horizontal wheel (or Shift and the wheel) over it, or drag the bar under the Graph heading. Jumping to a commit brings its line into view.
+- **Right-click a branch or tag on the graph** for its menu: what the sidebar offers for it (check out, merge, rebase, rename, delete…), then what can be done with its commit. Before, nothing opened.
 - **Move through the graph faster**: Shift+↓/↑ follows the selected commit's branch, past commits on other branches, Ctrl+↓/↑ jumps between commits with a branch or tag, Home and End go to the newest and oldest commit, and Ctrl+H to the checked-out one.
 - **Search from the toolbar, in a small box over the graph**: the new Search button does what Ctrl+F does, and the search now opens in a box at the top right of the graph instead of a bar across it. It shows which match you're on ("3 of 40").
 - **Resize the graph's columns**: drag the edge after a heading, or double-click it to fit the column to what's on screen. No column gets narrower than its heading, and right-click a heading to put the widths back.
