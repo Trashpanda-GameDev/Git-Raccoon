@@ -275,7 +275,39 @@ pub fn push(
     }
     args.push(&remote);
     args.push(&refspec);
-    match run(path, &args, on, cancel) {
+    run_push(path, &args, on, cancel)
+}
+
+/// Pushes the checked-out branch to `branch` on `remote`, which it then
+/// pushes to and pulls from (its upstream). `force` as for [`push`].
+pub fn push_to(
+    path: &str,
+    remote: &str,
+    branch: &str,
+    force: bool,
+    on: &mut dyn FnMut(Progress),
+    cancel: &AtomicBool,
+) -> Result<()> {
+    let cur = current(path)?;
+    let mut args = vec!["push", "--progress", "--set-upstream"];
+    if force {
+        args.push("--force-with-lease");
+    }
+    let refspec = format!("{}:refs/heads/{branch}", cur.branch);
+    args.push(remote);
+    args.push(&refspec);
+    run_push(path, &args, on, cancel)
+}
+
+/// Runs a `git push`, telling a refusal to overwrite the remote's commits
+/// ([`Error::Rejected`]) from other failures.
+fn run_push(
+    path: &str,
+    args: &[&str],
+    on: &mut dyn FnMut(Progress),
+    cancel: &AtomicBool,
+) -> Result<()> {
+    match run(path, args, on, cancel) {
         Err(Error::Command(text))
             if text.contains("[rejected]")
                 || text.contains("non-fast-forward")
@@ -462,6 +494,30 @@ mod tests {
             std::fs::read_to_string(s.b.dir.join("f.txt")).unwrap(),
             "two\n"
         );
+    }
+
+    #[test]
+    fn pushes_a_new_branch_where_asked_and_tracks_it() {
+        let s = setup();
+        let none = AtomicBool::new(false);
+        cli::run(s.a.path(), &["checkout", "-q", "-b", "fix/thing"], None).unwrap();
+        commit_file(&s.a, "fix.txt", "fixed\n", "fix");
+        assert!(!has_upstream(s.a.path()));
+
+        push_to(
+            s.a.path(),
+            "origin",
+            "fix/other-name",
+            false,
+            &mut |_| {},
+            &none,
+        )
+        .unwrap();
+        let r = refs::load_refs(s.a.path()).unwrap();
+        let local = r.local.iter().find(|b| b.name == "fix/thing").unwrap();
+        let upstream = local.upstream.as_ref().unwrap();
+        assert_eq!(upstream.name, "origin/fix/other-name");
+        assert_eq!(upstream.ahead, 0);
     }
 
     #[test]

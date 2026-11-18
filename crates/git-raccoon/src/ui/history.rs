@@ -929,7 +929,10 @@ fn working_row(
     ui.ctx()
         .accesskit_node_builder(summary.id, |n| n.set_label("WIP summary"));
     painter.galley(
-        Pos2::new(field_right + 12.0, message.center().y - counts.size().y / 2.0),
+        Pos2::new(
+            field_right + 12.0,
+            message.center().y - counts.size().y / 2.0,
+        ),
         counts,
         theme::muted(),
     );

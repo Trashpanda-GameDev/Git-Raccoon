@@ -1009,7 +1009,7 @@ impl App {
                     Command::Pull => {
                         repo.run(ctx, Op::Pull(git_raccoon_core::sync::PullMode::FastForward))
                     }
-                    Command::Push => repo.run(ctx, Op::Push { force: false }),
+                    Command::Push => repo.push(ctx),
                     Command::ShowWorking => repo.select_working(),
                     Command::WriteCommit => {
                         repo.select_working();
@@ -1148,7 +1148,7 @@ impl App {
             }
         }
         match crate::ui::forge::new_request(ctx, form) {
-            Some(NewAction::Push) => repo.run(ctx, Op::Push { force: false }),
+            Some(NewAction::Push) => repo.push(ctx),
             Some(NewAction::Create) => {
                 let Some(f) = &repo.forge else { return };
                 let Some(account) = f.account.clone() else {
@@ -1545,7 +1545,11 @@ impl App {
                     Op::Pull(git_raccoon_core::sync::PullMode::FastForward),
                 );
             }
-            Some(toolbar::Action::Push) => self.run(&ctx, Op::Push { force: false }),
+            Some(toolbar::Action::Push) => {
+                if let Some(r) = &mut self.repo {
+                    r.push(&ctx);
+                }
+            }
             Some(toolbar::Action::CancelSync) => {
                 if let Some(r) = &self.repo {
                     r.cancel_sync();

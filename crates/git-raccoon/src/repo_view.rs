@@ -260,6 +260,9 @@ pub enum Op {
     /// Push the checked-out branch; `force` only with lease.
     Push {
         force: bool,
+        /// The remote and branch to push to and track, for a branch that
+        /// has no upstream yet.
+        to: Option<(String, String)>,
     },
     AddRemote {
         name: String,
@@ -426,7 +429,11 @@ impl Op {
             Op::Fetch => sync::fetch(path, report, &ctl.cancel),
             Op::FetchRemote(name) => sync::fetch_remote(path, &name, report, &ctl.cancel),
             Op::Pull(mode) => sync::pull(path, mode, report, &ctl.cancel),
-            Op::Push { force } => sync::push(path, force, report, &ctl.cancel),
+            Op::Push { force, to: None } => sync::push(path, force, report, &ctl.cancel),
+            Op::Push {
+                force,
+                to: Some((remote, branch)),
+            } => sync::push_to(path, &remote, &branch, force, report, &ctl.cancel),
             Op::DeleteRemoteBranch(name) => {
                 let (remote, branch) = split_remote(&name)?;
                 sync::delete_remote_branch(path, remote, branch, report, &ctl.cancel)
@@ -1109,6 +1116,13 @@ pub enum Dialog {
         danger: bool,
         op: Op,
     },
+    /// Where to push `branch`, which has no upstream yet: `name` on
+    /// `remote`, which it then pushes to and pulls from.
+    PushTo {
+        branch: String,
+        remote: String,
+        name: String,
+    },
     /// Stash the working changes, with an optional message.
     Stash {
         message: String,
@@ -1534,6 +1548,38 @@ impl RepoView {
             .find(|b| b.is_head)?
             .upstream
             .as_ref()
+    }
+
+    /// Pushes the checked-out branch. One with no upstream yet asks where
+    /// to first: the same name on "origin" (or the only remote) to start.
+    pub fn push(&mut self, ctx: &egui::Context) {
+        let new = self
+            .refs
+            .local
+            .iter()
+            .find(|b| b.is_head && b.upstream.is_none());
+        let remotes = &self.refs.remotes;
+        let remote = remotes
+            .iter()
+            .find(|r| r.name == "origin")
+            .or_else(|| remotes.first());
+        match (new, remote) {
+            (Some(branch), Some(remote)) => {
+                self.dialog = Some(Dialog::PushTo {
+                    branch: branch.name.clone(),
+                    remote: remote.name.clone(),
+                    name: branch.name.clone(),
+                });
+            }
+            // Pushing says why it can't (detached HEAD, no remote).
+            _ => self.run(
+                ctx,
+                Op::Push {
+                    force: false,
+                    to: None,
+                },
+            ),
+        }
     }
 
     /// Undoes the last action, if it can be undone.
@@ -2086,9 +2132,15 @@ impl RepoView {
     /// When Git refused an operation for a reason the user can act on,
     /// offers the way on. Returns whether it did.
     fn offer_way_on(&mut self, op: &Op, error: &Error) -> bool {
-        let upstream = self
-            .head_upstream()
-            .map_or_else(|| "the remote branch".to_string(), |u| u.name.clone());
+        let upstream = match op {
+            Op::Push {
+                to: Some((remote, branch)),
+                ..
+            } => format!("{remote}/{branch}"),
+            _ => self
+                .head_upstream()
+                .map_or_else(|| "the remote branch".to_string(), |u| u.name.clone()),
+        };
         match (error, op) {
             (Error::Cancelled, _) => true,
             (
@@ -2112,7 +2164,7 @@ impl RepoView {
                 });
                 true
             }
-            (Error::Rejected(_), Op::Push { force: false }) => {
+            (Error::Rejected(_), Op::Push { force: false, to }) => {
                 self.dialog = Some(Dialog::Choice {
                     title: "The remote has commits you don't have".into(),
                     body: format!(
@@ -2120,12 +2172,19 @@ impl RepoView {
                     ),
                     choices: vec![
                         ("Pull first".into(), false, Op::Pull(PullMode::FastForward)),
-                        ("Force push".into(), true, Op::Push { force: true }),
+                        (
+                            "Force push".into(),
+                            true,
+                            Op::Push {
+                                force: true,
+                                to: to.clone(),
+                            },
+                        ),
                     ],
                 });
                 true
             }
-            (Error::Rejected(text), Op::Push { force: true }) => {
+            (Error::Rejected(text), Op::Push { force: true, .. }) => {
                 self.refresh_error = Some(format!(
                     "Could not force push: {upstream} has changed since you last fetched, so it wasn't overwritten. Fetch to see the new commits first.\n\n{text}"
                 ));

@@ -2035,6 +2035,80 @@ fn upstream_counts(app: &App) -> Option<(usize, usize)> {
 }
 
 #[test]
+fn asks_where_to_push_a_new_branch() {
+    use git_raccoon::repo_view::Dialog;
+    let sample = Sample::build();
+    let base = std::env::temp_dir().join(format!("git-raccoon-push-to-{}", rand_suffix()));
+    std::fs::create_dir_all(&base).unwrap();
+    let out = std::process::Command::new("git")
+        .args(["init", "-q", "--bare", "remote.git"])
+        .current_dir(&base)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let url = base.join("remote.git").to_str().unwrap().replace('\\', "/");
+    git(&sample, &["remote", "set-url", "origin", &url]);
+    git(&sample, &["checkout", "-q", "-b", "fix/hazel-moves"]);
+
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    assert_eq!(upstream_counts(h.state()), None);
+
+    // No upstream yet: Push asks, with the same name on origin filled in.
+    h.get_by_label("Push").click();
+    wait_for(&mut h, "the question", |app| {
+        app.repo().unwrap().dialog.is_some()
+    });
+    match h.state().repo().unwrap().dialog.as_ref() {
+        Some(Dialog::PushTo {
+            branch,
+            remote,
+            name,
+        }) => assert_eq!(
+            (branch.as_str(), remote.as_str(), name.as_str()),
+            ("fix/hazel-moves", "origin", "fix/hazel-moves")
+        ),
+        _ => panic!("expected the push-to dialog"),
+    }
+    h.get_by_label("Push to origin/fix/hazel-moves");
+    screenshot(&mut h, "25-push-to");
+
+    // Another name on the remote: the branch then pushes to and pulls from it.
+    h.get_by_label("Remote branch name").click();
+    h.run_ok();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+    h.get_by_label("Remote branch name")
+        .type_text("fix/NM3-1026");
+    h.run_ok();
+    h.get_by_label("Push to origin/fix/NM3-1026").click();
+    wait_for(&mut h, "the push", |app| {
+        upstream_counts(app) == Some((0, 0)) && !app.is_busy()
+    });
+    let upstream = h
+        .state()
+        .repo()
+        .unwrap()
+        .head_upstream()
+        .unwrap()
+        .name
+        .clone();
+    assert_eq!(upstream, "origin/fix/NM3-1026");
+    assert_eq!(h.state().repo().unwrap().refresh_error, None);
+
+    // From then on, Push just pushes.
+    git(&sample, &["commit", "-q", "--allow-empty", "-m", "More"]);
+    wait_for(&mut h, "ahead by one", |app| {
+        upstream_counts(app) == Some((1, 0))
+    });
+    h.get_by_label("Push").click();
+    wait_for(&mut h, "the second push", |app| {
+        upstream_counts(app) == Some((0, 0)) && !app.is_busy()
+    });
+    assert!(h.state().repo().unwrap().dialog.is_none());
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
 fn deletes_a_branch_on_the_remote_and_undoes_it() {
     use egui::accesskit::Role;
     let sample = Sample::build();
