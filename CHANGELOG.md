@@ -6,6 +6,8 @@ release page). Newest first; a version's heading is just its number.
 ## 0.5.11
 
 - **A graph with many branches scrolls sideways**: use the horizontal wheel (or Shift and the wheel) over it, or drag the bar under the Graph heading. Jumping to a commit brings its line into view.
+- **Using one side for a whole conflicted file asks first**, as it replaces anything picked or edited in it.
+- **Fetch options**: the arrow beside Fetch fetches from one remote, and sets whether Fetch prunes remote branches deleted there and whether it forces (both remembered). A forced fetch asks first.
 - **The clone dialog has where from down the side** (a URL, GitHub, GitLab.com or a self-managed GitLab, with your repositories there in a list you can search), and clones can be **shallow** (the latest commit only) or **sparse** (only the folders you name).
 - **A new repository dialog**: choose where it goes down the side (only on this computer, GitHub, GitLab.com or a self-managed GitLab), and fill in the rest: on a forge, the account, a description, public or private, and whether to clone it; and what it starts with: its first branch's name, a .gitignore and a licence from the forge's templates, and Git LFS. A first commit made on a forge is pushed there. Making repositories on an account has moved here from the clone dialog, which is now just for cloning.
 - **The command palette (Ctrl+K) scrolls freely**: its list no longer jumps back to the chosen command when scrolled with the wheel or its bar; it follows the arrow keys as before.

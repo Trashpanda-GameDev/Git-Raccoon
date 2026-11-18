@@ -264,7 +264,7 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
                             name: name.clone(),
                             url,
                         },
-                        Op::FetchRemote(name),
+                        Op::FetchRemote(name, git_raccoon_core::sync::FetchOptions::default()),
                     ])),
                     Some(old) => {
                         let current = refs

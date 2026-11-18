@@ -1075,7 +1075,7 @@ impl App {
                         repo.search.focus = true;
                     }
                     Command::Undo => repo.undo(ctx),
-                    Command::Fetch => repo.run(ctx, Op::Fetch),
+                    Command::Fetch => repo.fetch(ctx, None, self.settings.fetch_options()),
                     Command::Pull => {
                         repo.run(ctx, Op::Pull(git_raccoon_core::sync::PullMode::FastForward))
                     }
@@ -1605,6 +1605,8 @@ impl App {
                     }),
                     busy: r.is_staging() || r.is_committing(),
                     lfs: r.extras.lfs,
+                    remotes: r.refs.remotes.iter().map(|r| r.name.as_str()).collect(),
+                    fetch: self.settings.fetch_options(),
                 });
                 toolbar::show(
                     ui,
@@ -1629,11 +1631,16 @@ impl App {
             Some(toolbar::Action::Feedback) => self.run_command(&ctx, Command::Feedback),
             Some(toolbar::Action::Terminal) => self.run_command(&ctx, Command::Terminal),
             Some(toolbar::Action::RestartToUpdate) => self.restart_to_update = true,
-            Some(toolbar::Action::Fetch) => {
-                self.run(&ctx, Op::Fetch);
+            Some(toolbar::Action::Fetch(from)) => {
+                let options = self.settings.fetch_options();
                 if let Some(repo) = &mut self.repo {
+                    repo.fetch(&ctx, from, options);
                     repo.forge_stale = true;
                 }
+            }
+            Some(toolbar::Action::SetFetchOptions(options)) => {
+                self.settings.fetch_prune = options.prune;
+                self.settings.fetch_force = options.force;
             }
             Some(toolbar::Action::Pull) => {
                 self.run(
@@ -2064,7 +2071,7 @@ impl App {
                         Some(conflict::Action::Pick(i, pick)) => repo.pick_conflict(&ctx, i, pick),
                         Some(conflict::Action::TakeSide { ours }) => {
                             let file = open.file.clone();
-                            repo.run(&ctx, Op::TakeSide { file, ours });
+                            repo.confirm_take_side(file, ours);
                         }
                         Some(conflict::Action::MarkResolved) => {
                             let file = open.file.clone();
@@ -2532,7 +2539,10 @@ fn check_out_op(forge: &crate::forge_view::ForgeView, number: u64) -> Option<Op>
         ]))
     } else {
         Some(Op::Then(vec![
-            Op::FetchRemote(remote.clone()),
+            Op::FetchRemote(
+                remote.clone(),
+                git_raccoon_core::sync::FetchOptions::default(),
+            ),
             Op::CheckoutRemote(format!("{remote}/{}", r.source)),
         ]))
     }

@@ -89,31 +89,63 @@ fn run(
     })
 }
 
-/// Fetches from one remote, pruning remote branches deleted there.
-pub fn fetch_remote(
+/// How a fetch goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FetchOptions {
+    /// Remove remote-tracking branches whose branch is gone from the remote.
+    pub prune: bool,
+    /// Let fetched refs overwrite local ones even where that loses commits
+    /// (`--force`).
+    pub force: bool,
+}
+
+impl Default for FetchOptions {
+    fn default() -> Self {
+        FetchOptions {
+            prune: true,
+            force: false,
+        }
+    }
+}
+
+/// `git fetch` with `options`, then `rest`.
+fn fetch_with(
     path: &str,
-    remote: &str,
+    options: &FetchOptions,
+    rest: &[&str],
     on: &mut dyn FnMut(Progress),
     cancel: &AtomicBool,
 ) -> Result<()> {
-    run(
-        path,
-        &["fetch", "--prune", "--progress", remote],
-        on,
-        cancel,
-    )
-    .map(drop)
+    let mut args = vec!["fetch", "--progress"];
+    if options.prune {
+        args.push("--prune");
+    }
+    if options.force {
+        args.push("--force");
+    }
+    args.extend(rest);
+    run(path, &args, on, cancel).map(drop)
 }
 
-/// Fetches from every remote, pruning remote branches deleted there.
-pub fn fetch(path: &str, on: &mut dyn FnMut(Progress), cancel: &AtomicBool) -> Result<()> {
-    run(
-        path,
-        &["fetch", "--all", "--prune", "--progress"],
-        on,
-        cancel,
-    )
-    .map(drop)
+/// Fetches from one remote.
+pub fn fetch_remote(
+    path: &str,
+    remote: &str,
+    options: &FetchOptions,
+    on: &mut dyn FnMut(Progress),
+    cancel: &AtomicBool,
+) -> Result<()> {
+    fetch_with(path, options, &[remote], on, cancel)
+}
+
+/// Fetches from every remote.
+pub fn fetch(
+    path: &str,
+    options: &FetchOptions,
+    on: &mut dyn FnMut(Progress),
+    cancel: &AtomicBool,
+) -> Result<()> {
+    fetch_with(path, options, &["--all"], on, cancel)
 }
 
 /// Deletes `branch` on `remote` ("origin", "feature"), for everyone (like
@@ -395,7 +427,7 @@ mod tests {
             None,
         )
         .unwrap();
-        fetch(b.path(), &mut |_| {}, &none).unwrap();
+        fetch(b.path(), &FetchOptions::default(), &mut |_| {}, &none).unwrap();
         cli::run(
             b.path(),
             &[
@@ -460,7 +492,7 @@ mod tests {
             None,
         )
         .unwrap();
-        fetch(s.a.path(), &mut |_| {}, &none).unwrap();
+        fetch(s.a.path(), &FetchOptions::default(), &mut |_| {}, &none).unwrap();
         assert!(remote_has("topic"));
         let id = crate::undo::ref_target(s.a.path(), "refs/remotes/origin/topic").unwrap();
 
@@ -476,6 +508,42 @@ mod tests {
     }
 
     #[test]
+    fn prunes_deleted_branches_only_when_asked() {
+        let s = setup();
+        let none = AtomicBool::new(false);
+        cli::run(
+            s.a.path(),
+            &["push", "-q", "origin", "HEAD:refs/heads/gone"],
+            None,
+        )
+        .unwrap();
+        let options = |prune| FetchOptions {
+            prune,
+            force: false,
+        };
+        fetch(s.b.path(), &options(true), &mut |_| {}, &none).unwrap();
+        let has_gone = || {
+            refs::load_refs(s.b.path())
+                .unwrap()
+                .remotes
+                .iter()
+                .flat_map(|r| &r.branches)
+                .any(|b| b.name == "gone")
+        };
+        assert!(has_gone());
+        cli::run(
+            s.a.path(),
+            &["push", "-q", "origin", "--delete", "gone"],
+            None,
+        )
+        .unwrap();
+        fetch(s.b.path(), &options(false), &mut |_| {}, &none).unwrap();
+        assert!(has_gone(), "kept without pruning");
+        fetch_remote(s.b.path(), "origin", &options(true), &mut |_| {}, &none).unwrap();
+        assert!(!has_gone(), "pruned");
+    }
+
+    #[test]
     fn pushes_fetches_and_pulls() {
         let s = setup();
         let none = AtomicBool::new(false);
@@ -483,7 +551,7 @@ mod tests {
         let mut phases = Vec::new();
         push(s.a.path(), false, &mut |p| phases.push(p), &none).unwrap();
 
-        fetch(s.b.path(), &mut |_| {}, &none).unwrap();
+        fetch(s.b.path(), &FetchOptions::default(), &mut |_| {}, &none).unwrap();
         let r = refs::load_refs(s.b.path()).unwrap();
         let local = r.local.iter().find(|b| b.name == s.branch).unwrap();
         assert_eq!(local.upstream.as_ref().unwrap().behind, 1);
@@ -555,9 +623,9 @@ mod tests {
         let err = push(s.b.path(), true, &mut |_| {}, &none).unwrap_err();
         assert!(matches!(err, Error::Rejected(_)), "{err}");
         // Once b has fetched (and so has seen it), force replaces it.
-        fetch(s.b.path(), &mut |_| {}, &none).unwrap();
+        fetch(s.b.path(), &FetchOptions::default(), &mut |_| {}, &none).unwrap();
         push(s.b.path(), true, &mut |_| {}, &none).unwrap();
-        fetch(s.a.path(), &mut |_| {}, &none).unwrap();
+        fetch(s.a.path(), &FetchOptions::default(), &mut |_| {}, &none).unwrap();
         let r = refs::load_refs(s.a.path()).unwrap();
         let remote = r.remotes[0]
             .branches
@@ -606,7 +674,7 @@ mod tests {
             flag.store(true, std::sync::atomic::Ordering::Relaxed);
         });
         let start = std::time::Instant::now();
-        let err = fetch(s.b.path(), &mut |_| {}, &cancel).unwrap_err();
+        let err = fetch(s.b.path(), &FetchOptions::default(), &mut |_| {}, &cancel).unwrap_err();
         assert!(matches!(err, Error::Cancelled), "{err}");
         assert!(start.elapsed() < std::time::Duration::from_secs(5));
     }

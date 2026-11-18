@@ -238,9 +238,10 @@ pub enum Op {
     },
     /// Several operations in order, stopping at the first failure.
     Then(Vec<Op>),
-    Fetch,
+    /// Fetch every remote, as the options say.
+    Fetch(sync::FetchOptions),
     /// Fetch one remote.
-    FetchRemote(String),
+    FetchRemote(String, sync::FetchOptions),
     Pull(PullMode),
     /// Delete a branch on its remote ("origin/feature"), for everyone.
     DeleteRemoteBranch(String),
@@ -426,8 +427,10 @@ impl Op {
             }
             Op::StashStore { id, message } => stash::store(path, &id, &message),
             Op::Then(ops) => ops.into_iter().try_for_each(|op| op.run(path, ctl)),
-            Op::Fetch => sync::fetch(path, report, &ctl.cancel),
-            Op::FetchRemote(name) => sync::fetch_remote(path, &name, report, &ctl.cancel),
+            Op::Fetch(options) => sync::fetch(path, &options, report, &ctl.cancel),
+            Op::FetchRemote(name, options) => {
+                sync::fetch_remote(path, &name, &options, report, &ctl.cancel)
+            }
             Op::Pull(mode) => sync::pull(path, mode, report, &ctl.cancel),
             Op::Push { force, to: None } => sync::push(path, force, report, &ctl.cancel),
             Op::Push {
@@ -518,7 +521,7 @@ impl Op {
             | Op::StashStore { .. } => "undo",
             // Named after its first step ("add the remote", then fetch).
             Op::Then(ops) => ops.first().map_or("undo", Op::verb),
-            Op::Fetch | Op::FetchRemote(_) => "fetch",
+            Op::Fetch(_) | Op::FetchRemote(..) => "fetch",
             Op::Pull(_) => "pull",
             Op::Push { .. } => "push",
             Op::DeleteRemoteBranch(_) => "delete the remote branch",
@@ -1522,8 +1525,8 @@ impl RepoView {
         let running = self.op.as_ref()?;
         if !matches!(
             running.op,
-            Op::Fetch
-                | Op::FetchRemote(_)
+            Op::Fetch(_)
+                | Op::FetchRemote(..)
                 | Op::Pull(_)
                 | Op::Push { .. }
                 | Op::UpdateSubmodule(_)
@@ -2015,6 +2018,54 @@ impl RepoView {
         });
     }
 
+    /// Fetches from `remote` (else every remote) as `options` say; asks
+    /// first when it forces, since that can lose commits.
+    pub fn fetch(
+        &mut self,
+        ctx: &egui::Context,
+        remote: Option<String>,
+        options: sync::FetchOptions,
+    ) {
+        let from = remote.clone().unwrap_or_else(|| "every remote".into());
+        let op = match remote {
+            Some(r) => Op::FetchRemote(r, options),
+            None => Op::Fetch(options),
+        };
+        if !options.force {
+            self.run(ctx, op);
+            return;
+        }
+        self.dialog = Some(Dialog::Confirm {
+            title: "Fetch with Force?".into(),
+            body: format!(
+                "Fetching from {from}, refs that come in replace yours even where that drops commits they don't have. Turn Force off in Fetch's options to fetch without it."
+            ),
+            button: "Fetch with Force".into(),
+            danger: true,
+            op,
+        });
+    }
+
+    /// Asks before taking one side's whole version of a conflicted file:
+    /// the other side's changes in it, and what was picked or edited here,
+    /// are replaced.
+    pub fn confirm_take_side(&mut self, file: String, ours: bool) {
+        let (side, whose) = if ours {
+            ("ours", "the current branch's")
+        } else {
+            ("theirs", "the incoming")
+        };
+        self.dialog = Some(Dialog::Confirm {
+            title: format!("Use {side} for {file}?"),
+            body: format!(
+                "The whole file becomes {whose} version: the other side's changes in it, and anything picked or edited here, are replaced."
+            ),
+            button: format!("Use {side}"),
+            danger: true,
+            op: Op::TakeSide { file, ours },
+        });
+    }
+
     pub fn confirm_abort(&mut self) {
         let what = self
             .status
@@ -2431,7 +2482,9 @@ impl RepoView {
                 Ok(Some(undo)) => self.undo = Some(undo),
                 // Something changed that can't be undone: older undos would be out of order.
                 // (A fetch only moves remote branches, so local undos still hold.)
-                Ok(None) if op.changes_refs() && !matches!(op, Op::Fetch | Op::FetchRemote(_)) => {
+                Ok(None)
+                    if op.changes_refs() && !matches!(op, Op::Fetch(_) | Op::FetchRemote(..)) =>
+                {
                     self.undo = None
                 }
                 Ok(None) => {}

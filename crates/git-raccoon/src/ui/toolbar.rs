@@ -5,6 +5,7 @@
 
 use eframe::egui::{self, RichText};
 use egui_phosphor::regular as icon;
+use git_raccoon_core::sync::FetchOptions;
 
 use crate::settings::RecentRepo;
 use crate::theme;
@@ -17,7 +18,10 @@ pub enum Action {
     Refresh,
     NewBranch,
     Undo,
-    Fetch,
+    /// Fetch from this remote, or every remote (`None`).
+    Fetch(Option<String>),
+    /// How Fetch goes from now on.
+    SetFetchOptions(FetchOptions),
     Pull,
     Push,
     CancelSync,
@@ -54,6 +58,10 @@ pub struct OpenRepo<'a> {
     pub busy: bool,
     /// `Some(installed)` if the repository uses Git LFS.
     pub lfs: Option<bool>,
+    /// Its remotes' names, to fetch from one.
+    pub remotes: Vec<&'a str>,
+    /// How Fetch goes.
+    pub fetch: FetchOptions,
 }
 
 pub fn show(
@@ -324,7 +332,7 @@ fn sync_buttons(ui: &mut egui::Ui, repo: &OpenRepo<'_>) -> Option<Action> {
             icon::CLOUD_ARROW_DOWN,
             String::new(),
             "Fetch from all remotes: see new commits without changing your branches".to_string(),
-            Action::Fetch,
+            Action::Fetch(None),
         ),
         (
             "Pull",
@@ -349,19 +357,100 @@ fn sync_buttons(ui: &mut egui::Ui, repo: &OpenRepo<'_>) -> Option<Action> {
     ];
     for (name, glyph, extra, tip, act) in buttons {
         let enabled = !repo.busy && (name != "Pull" || repo.upstream.is_some());
-        let button = ui.add_enabled(
-            enabled,
-            egui::Button::new(RichText::new(format!("{glyph}  {name}{extra}")).size(12.0)),
-        );
-        ui.ctx()
-            .accesskit_node_builder(button.id, |n| n.set_label(name));
-        if button
-            .on_hover_text(&tip)
-            .on_disabled_hover_text(&tip)
-            .clicked()
-        {
-            action = Some(act);
-        }
+        // Fetch is a split button: its options' arrow joined on at the right.
+        let split = name == "Fetch";
+        ui.scope(|ui| {
+            let round = ui.visuals().widgets.inactive.corner_radius;
+            let mut button =
+                egui::Button::new(RichText::new(format!("{glyph}  {name}{extra}")).size(12.0));
+            if split {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                button = button.corner_radius(egui::CornerRadius {
+                    ne: 0,
+                    se: 0,
+                    ..round
+                });
+            }
+            let button = ui.add_enabled(enabled, button);
+            ui.ctx()
+                .accesskit_node_builder(button.id, |n| n.set_label(name));
+            let height = button.rect.height();
+            if button
+                .on_hover_text(&tip)
+                .on_disabled_hover_text(&tip)
+                .clicked()
+            {
+                action = Some(act);
+            }
+            if split && let Some(a) = fetch_menu(ui, repo, enabled, height) {
+                action = Some(a);
+            }
+        });
     }
+    action
+}
+
+/// The menu beside Fetch: where from (every remote, or one), and how
+/// (pruning, forcing), remembered for Fetch itself.
+fn fetch_menu(
+    ui: &mut egui::Ui,
+    repo: &OpenRepo<'_>,
+    enabled: bool,
+    height: f32,
+) -> Option<Action> {
+    let mut action = None;
+    let menu = ui.add_enabled_ui(enabled, |ui| {
+        // Ticking the options leaves it open; choosing where from closes it.
+        let config = egui::containers::menu::MenuConfig::new()
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+        // The right half of Fetch's split button: as tall, rounded at the right.
+        let round = ui.visuals().widgets.inactive.corner_radius;
+        let arrow = egui::Button::new(RichText::new(icon::CARET_DOWN).size(12.0))
+            .corner_radius(egui::CornerRadius {
+                nw: 0,
+                sw: 0,
+                ..round
+            })
+            .min_size(egui::vec2(0.0, height));
+        egui::containers::menu::MenuButton::from_button(arrow)
+            .config(config)
+            .ui(ui, |ui| {
+                ui.label(RichText::new("Fetch from").size(12.0).color(theme::muted()));
+                if ui.button("All remotes").clicked() {
+                    action = Some(Action::Fetch(None));
+                    ui.close();
+                }
+                for remote in &repo.remotes {
+                    if ui.button(*remote).clicked() {
+                        action = Some(Action::Fetch(Some((*remote).to_string())));
+                        ui.close();
+                    }
+                }
+                ui.separator();
+                let mut options = repo.fetch;
+                ui.checkbox(
+                    &mut options.prune,
+                    "Prune: remove remote branches deleted there",
+                );
+                ui.checkbox(
+                    &mut options.force,
+                    "Force: let fetched refs overwrite local ones",
+                );
+                if options != repo.fetch {
+                    action = Some(Action::SetFetchOptions(options));
+                }
+            })
+            .0
+    });
+    let button = menu.inner;
+    // A line between the halves.
+    ui.painter().vline(
+        button.rect.left(),
+        button.rect.y_range().shrink(5.0),
+        egui::Stroke::new(1.0, theme::border()),
+    );
+    ui.ctx()
+        .accesskit_node_builder(button.id, |n| n.set_label("Fetch options"));
+    button.on_hover_text("Fetch from one remote, or change how Fetch goes");
     action
 }

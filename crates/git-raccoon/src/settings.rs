@@ -91,6 +91,10 @@ pub struct Settings {
     /// Which of them was showing.
     pub active_tab: usize,
     pub split_diff: bool,
+    /// How Fetch goes: pruning remote branches deleted there, and letting
+    /// fetched refs overwrite local ones.
+    pub fetch_prune: bool,
+    pub fetch_force: bool,
     pub hide_sidebar: bool,
     /// Where the last clone went; new clones start there.
     pub clone_dir: Option<String>,
@@ -201,6 +205,8 @@ impl Default for Settings {
             open_tabs: Vec::new(),
             active_tab: 0,
             split_diff: false,
+            fetch_prune: true,
+            fetch_force: false,
             hide_sidebar: false,
             clone_dir: None,
             theme: ThemeChoice::default(),
@@ -220,6 +226,14 @@ impl Default for Settings {
 
 impl Settings {
     pub const KEY: &'static str = "settings";
+
+    /// How Fetch goes.
+    pub fn fetch_options(&self) -> git_raccoon_core::sync::FetchOptions {
+        git_raccoon_core::sync::FetchOptions {
+            prune: self.fetch_prune,
+            force: self.fetch_force,
+        }
+    }
 
     /// How big everything is drawn (1 is normal).
     pub fn zoom(&self) -> f32 {

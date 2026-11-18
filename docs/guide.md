@@ -72,7 +72,7 @@ Tags can be lightweight, or annotated (with a message).
 
 ## Syncing with a remote
 
-- **Fetch** gets new commits from every remote without changing your branches; the sidebar and toolbar then show how far behind you are.
+- **Fetch** gets new commits from every remote without changing your branches; the sidebar and toolbar then show how far behind you are. The arrow beside it fetches from just one remote, and sets how Fetch goes (remembered): **Prune** removes remote branches that were deleted there (on to start with), and **Force** lets fetched refs overwrite local ones even where that would lose commits; a forced fetch asks first.
 - **Pull** brings the upstream's new commits into your branch. It only fast-forwards by default; if both sides have new commits, it asks whether to **merge** or **rebase**. Uncommitted changes are put aside and restored.
 - **Push** sends your commits. Pushing a branch that isn't on a remote yet asks where it should go, in a bar under the toolbar: the same name on `origin` to start with, or pick another remote (when there are several) or name. From then on it pushes to and pulls from there. If the remote has commits you don't, it offers to pull first, or to **force push** — which is always done *with lease*, so it never deletes commits you haven't seen.
 
@@ -113,7 +113,7 @@ For a repository on **GitHub**, **GitLab.com** or a **self-managed GitLab**, the
 If changes conflict, a banner says a merge (or rebase) is in progress, and the conflicted files open:
 
 - Each conflict shows both versions. Choose **Use ours**, **Use theirs** or **Use both**, or edit the file yourself with **Edit**.
-- **Use ours / theirs for the file** resolves a whole file at once.
+- **Use ours / theirs for the file** resolves a whole file at once. It asks first, as it replaces anything picked or edited in that file.
 - When no conflict markers remain, **Mark resolved**.
 - When every file is resolved, **Continue** in the banner. **Abort** goes back to how things were.
 

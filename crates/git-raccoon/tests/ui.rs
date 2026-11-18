@@ -3083,6 +3083,75 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
 }
 
 #[test]
+fn fetches_from_one_remote_with_options() {
+    let sample = Sample::build();
+    let base = std::env::temp_dir().join(format!("git-raccoon-fetch-{}", rand_suffix()));
+    std::fs::create_dir_all(&base).unwrap();
+    let out = std::process::Command::new("git")
+        .args(["init", "-q", "--bare", "remote.git"])
+        .current_dir(&base)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let url = base.join("remote.git").to_str().unwrap().replace('\\', "/");
+    git(&sample, &["remote", "set-url", "origin", &url]);
+    git(
+        &sample,
+        &["push", "-q", "origin", "main", "main:refs/heads/gone"],
+    );
+    git(&sample, &["fetch", "-q", "origin"]);
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    assert!(h.state().settings().fetch_prune && !h.state().settings().fetch_force);
+
+    // Beside Fetch: where from, and how (remembered).
+    h.get_by_label("Fetch options").click();
+    h.run_ok();
+    h.get_by_label("All remotes");
+    h.get_by_label_contains("Prune").click();
+    h.run_ok();
+    h.get_by_label_contains("Force").click();
+    h.run_ok();
+    assert!(!h.state().settings().fetch_prune && h.state().settings().fetch_force);
+    screenshot(&mut h, "21-fetch-options");
+
+    // From origin only, without pruning: a branch deleted there stays, and
+    // one new there arrives.
+    let on_remote = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .arg("--git-dir")
+            .arg(&url)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+    };
+    on_remote(&["update-ref", "-d", "refs/heads/gone"]);
+    on_remote(&["branch", "fresh", "main"]);
+    // (The sidebar lists origin too; the menu's is drawn last.)
+    h.get_all_by_label("origin").last().unwrap().click();
+    // Force can overwrite local refs, so it asks first.
+    h.run_ok();
+    h.get_by_label("Fetch with Force?");
+    h.get_by_label("Fetch with Force").click();
+    wait_for(&mut h, "the fetch", |app| !app.is_busy());
+    assert_eq!(h.state().repo().unwrap().refresh_error, None);
+    let has = |h: &Harness<'_, App>, name: &str| {
+        h.state()
+            .repo()
+            .unwrap()
+            .refs
+            .remotes
+            .iter()
+            .flat_map(|r| &r.branches)
+            .any(|b| b.name == name)
+    };
+    assert!(has(&h, "fresh"), "fetched");
+    assert!(has(&h, "gone"), "not pruned");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
 fn fetches_pulls_and_pushes() {
     let sample = Sample::build();
     let base = std::env::temp_dir().join(format!("git-raccoon-remote-{}", rand_suffix()));
@@ -3674,6 +3743,16 @@ fn merges_resolves_conflicts_continues_and_aborts() {
             c.edit.is_none() && c.text.as_ref().is_ok_and(|t| t.contains("by hand"))
         })
     });
+    // Taking a whole side would replace that edit, so it asks first.
+    h.get_by_label("Use theirs for the file").click();
+    h.run_ok();
+    h.get_by_label("Use theirs for README.md?");
+    h.get_by_label("Cancel").click();
+    h.run_ok();
+    assert_eq!(
+        read(&sample, "README.md").as_deref(),
+        Some("# Sample\n\nwritten by hand\n")
+    );
     h.get_by_label("Abort merge").click();
     h.run_ok();
     h.get_by_label("Yes, abort").click();
