@@ -3850,6 +3850,43 @@ const CTRL_SHIFT: egui::Modifiers = egui::Modifiers {
 };
 
 #[test]
+fn the_palette_scrolls_freely_and_follows_the_arrows() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    press(&mut h, egui::Modifiers::COMMAND, Key::K);
+    let first = |h: &Harness<'_, App>| h.get_by_label("Settings…").rect().top();
+    let top = first(&h);
+
+    // The wheel scrolls the list away from the chosen (first) line, and it
+    // stays there rather than jumping back (#24).
+    h.event(egui::Event::PointerMoved(
+        h.get_by_label("New tab").rect().center(),
+    ));
+    h.run_ok();
+    h.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, -200.0),
+        modifiers: egui::Modifiers::NONE,
+        phase: egui::TouchPhase::Move,
+    });
+    for _ in 0..8 {
+        h.step();
+    }
+    let scrolled = first(&h);
+    assert!(scrolled < top - 50.0, "scrolled: {top} -> {scrolled}");
+    for _ in 0..8 {
+        h.step();
+    }
+    assert_eq!(first(&h), scrolled, "stays scrolled");
+
+    // The arrows still bring the line they choose into view.
+    press(&mut h, egui::Modifiers::NONE, Key::ArrowDown);
+    press(&mut h, egui::Modifiers::NONE, Key::ArrowUp);
+    assert!(first(&h) > scrolled + 50.0, "back to the chosen line");
+}
+
+#[test]
 fn runs_commands_from_the_palette_and_shortcuts() {
     let sample = Sample::build();
     let mut h = harness(Settings::default());

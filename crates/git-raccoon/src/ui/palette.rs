@@ -43,6 +43,9 @@ pub fn show(ctx: &egui::Context, state: &mut State, entries: &[Entry]) -> Option
     if up {
         state.selected = state.selected.saturating_sub(1);
     }
+    // The list follows the chosen line only when it moves (or the list
+    // changes): otherwise it scrolls freely, by the wheel or its bar.
+    let mut follow = down || up;
     if enter
         && let Some(e) = matches.get(state.selected)
         && e.enabled
@@ -68,6 +71,7 @@ pub fn show(ctx: &egui::Context, state: &mut State, entries: &[Entry]) -> Option
             field.request_focus();
             if field.changed() {
                 state.selected = 0;
+                follow = true;
             }
         });
         ui.separator();
@@ -90,7 +94,9 @@ pub fn show(ctx: &egui::Context, state: &mut State, entries: &[Entry]) -> Option
                     });
                     if chosen {
                         ui.painter().rect_filled(rect, 4, theme::bg_selected());
-                        response.scroll_to_me(None);
+                        if follow {
+                            response.scroll_to_me(None);
+                        }
                     } else if response.hovered() {
                         ui.painter().rect_filled(rect, 4, theme::bg_hover());
                     }

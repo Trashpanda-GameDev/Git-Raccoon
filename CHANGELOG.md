@@ -6,6 +6,7 @@ release page). Newest first; a version's heading is just its number.
 ## 0.5.11
 
 - **A graph with many branches scrolls sideways**: use the horizontal wheel (or Shift and the wheel) over it, or drag the bar under the Graph heading. Jumping to a commit brings its line into view.
+- **The command palette (Ctrl+K) scrolls freely**: its list no longer jumps back to the chosen command when scrolled with the wheel or its bar; it follows the arrow keys as before.
 - **Side-by-side diffs scroll sideways** for long lines: each half has a scrollbar along the bottom, as the unified view has, and the two halves move together, by either bar or the horizontal wheel (or Shift and the wheel). The line numbers stay put. They used to cut long lines off.
 - **Diffs, file history and blame fill the window**: the lines went only part of the way down, and the rest was left to scroll into.
 - **Right-click a branch or tag on the graph** for its menu: what the sidebar offers for it (check out, merge, rebase, rename, delete…), then what can be done with its commit. Before, nothing opened.
