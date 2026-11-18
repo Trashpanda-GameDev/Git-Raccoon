@@ -3,6 +3,11 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.12
+
+- **The clone and new repository dialogs start with what needs no account**: a URL to clone from, or a repository only on this computer. Choose one of your accounts at the top to add what it can do: a list of your repositories there to clone from, or making the new one there (with a description, public or private, and cloned or not). The places down the side are gone.
+- **Unticked checkboxes in these dialogs show their box** clearly, as the options in the Fetch and Pull menus now do.
+
 ## 0.5.11
 
 - **A graph with many branches scrolls sideways**: use the horizontal wheel (or Shift and the wheel) over it, or drag the bar under the Graph heading. Jumping to a commit brings its line into view.

@@ -3545,9 +3545,15 @@ fn clones_from_an_account_and_makes_new_repositories_there() {
     });
     h.run_ok();
 
-    // The account's repositories, to pick from (the account's forge is
-    // chosen, and its list is a dropdown).
+    // Just a URL to start with; choosing the account adds its
+    // repositories, to pick from in a dropdown.
     h.get_by_label("Clone a repository…").click();
+    h.run_ok();
+    h.get_by_label("Repository URL");
+    assert!(h.query_by_label("Repository to clone").is_none());
+    h.get_by_label("Account to clone from").click();
+    h.run_ok();
+    h.get_by_label_contains("rocky (").click();
     h.run_ok();
     h.get_by_label("Repository to clone").click();
     let mut listed = false;
@@ -3585,8 +3591,12 @@ fn clones_from_an_account_and_makes_new_repositories_there() {
     h.run_ok();
     h.get_by_label("New repository…").click();
     h.run_ok();
-    // Where it goes down the side; the account's own forge here.
-    h.get_by_label_contains("Self-managed GitLab").click();
+    // Only on this computer to start with; choosing the account makes it
+    // on its forge, with what can be set there.
+    assert!(h.query_by_label("New repository description").is_none());
+    h.get_by_label("Account to make it on").click();
+    h.run_ok();
+    h.get_by_label_contains("rocky (").click();
     h.run_ok();
     type_into(&mut h, "New repository name", "fresh");
     type_into(&mut h, "New repository description", "Brand new");

@@ -231,10 +231,7 @@ impl App {
     /// Opens the clone dialog.
     pub fn show_clone(&mut self) {
         // Signed in somewhere: start with the first account's repositories.
-        self.clone_form = Some(clone::Form::new(
-            self.clone_parent(),
-            &self.settings.accounts,
-        ));
+        self.clone_form = Some(clone::Form::new(self.clone_parent()));
     }
 
     /// Opens the new-repository dialog: on this computer only, to start with.
@@ -291,7 +288,12 @@ impl App {
                         return;
                     }
                     Ok(Made::There(path)) => {
-                        form.done = Some(format!("Made {path} on {}.", form.place_name()));
+                        let place = form
+                            .account
+                            .and_then(|i| self.settings.accounts.get(i))
+                            .map(|a| a.place())
+                            .unwrap_or_default();
+                        form.done = Some(format!("Made {path} on {place}."));
                     }
                     Err(Some(e)) => form.error = Some(e),
                     Err(None) => {}
@@ -308,12 +310,6 @@ impl App {
                 {
                     form.parent = dir.to_string_lossy().into_owned();
                 }
-            }
-            Some(new_repo::Action::SignIn(place)) => {
-                self.sign_in = Some(crate::ui::sign_in::SignIn {
-                    place,
-                    ..crate::ui::sign_in::SignIn::default()
-                });
             }
             Some(new_repo::Action::Create) => {
                 form.error = None;
@@ -415,12 +411,6 @@ impl App {
             .as_ref()
             .map(|c| c.progress.lock().ok().and_then(|p| p.clone()));
         match clone::show(ctx, form, progress, &self.settings.accounts) {
-            Some(clone::Action::SignIn(place)) => {
-                self.sign_in = Some(crate::ui::sign_in::SignIn {
-                    place,
-                    ..crate::ui::sign_in::SignIn::default()
-                });
-            }
             Some(clone::Action::Clone) => self.start_clone(ctx),
             Some(clone::Action::Browse) => {
                 if let Some(dir) = rfd::FileDialog::new()
@@ -2395,7 +2385,7 @@ fn start_making(
     let gitignore = form.gitignore.as_ref().map(|t| t.key.clone());
     let license = form.license.as_ref().map(|t| t.key.clone());
     let lfs = form.lfs;
-    let place = form.place_name();
+    let place = account.as_ref().map(|a| a.place()).unwrap_or_default();
     let task = Task::spawn(ctx, move || {
         let failed = |e: String| Some(e);
         let stopped = || c.load(Ordering::Relaxed);

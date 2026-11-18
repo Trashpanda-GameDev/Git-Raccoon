@@ -500,11 +500,10 @@ fn pull_menu(ui: &mut egui::Ui, repo: &OpenRepo<'_>, enabled: bool, height: f32)
     action
 }
 
-/// Checkboxes and radio buttons in a menu, with the edge egui's menu style
-/// takes off: without it, unticked ones are the menu's colour, and unseen.
+/// Checkboxes and radio buttons in a menu, outlined so unticked ones show.
 fn toggles(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     ui.scope(|ui| {
-        ui.visuals_mut().widgets.inactive.bg_stroke = egui::Stroke::new(1.0, theme::muted());
+        theme::outline_toggles(ui);
         add(ui);
     });
 }

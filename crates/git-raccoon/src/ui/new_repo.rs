@@ -1,64 +1,22 @@
-//! The new-repository dialog: where it goes down the side (this computer
-//! only, or a forge: made there, and cloned unless asked not to), and what
-//! it starts with on the right (its first branch's name, a .gitignore and a
-//! licence from the forge's templates, Git LFS).
+//! The new-repository dialog: what it starts with on this computer (its
+//! first branch's name, a .gitignore and a licence from the templates, Git
+//! LFS), and, with one of your accounts chosen, made on its forge too (with
+//! a description, public or private, and cloned unless asked not to).
 
 use std::path::PathBuf;
 
 use eframe::egui::{self, RichText};
-use egui_phosphor::regular as icon;
 use git_raccoon_core::{branch, create};
 
 use crate::forge::Account;
 use crate::forge::templates::{Template, Templates};
 use crate::theme;
-use crate::ui::side_form::{self, FIELDS, LIST_HEIGHT, check, field, label, place_row};
-use crate::ui::sign_in;
-
-/// Where a new repository goes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Place {
-    /// On this computer only.
-    Here,
-    /// On a forge (and, cloned, here too).
-    Forge(sign_in::Place),
-}
-
-impl Place {
-    const ALL: [Place; 4] = [
-        Place::Here,
-        Place::Forge(sign_in::Place::GitHub),
-        Place::Forge(sign_in::Place::GitLab),
-        Place::Forge(sign_in::Place::SelfManaged),
-    ];
-
-    fn name(self) -> &'static str {
-        match self {
-            Place::Here => "Only on this computer",
-            Place::Forge(forge) => side_form::forge_name(forge),
-        }
-    }
-
-    fn glyph(self) -> &'static str {
-        match self {
-            Place::Here => icon::DESKTOP,
-            Place::Forge(forge) => side_form::forge_glyph(forge),
-        }
-    }
-
-    /// Whether `account` is on this place.
-    fn has(self, account: &Account) -> bool {
-        match self {
-            Place::Here => false,
-            Place::Forge(forge) => side_form::forge_has(forge, account),
-        }
-    }
-}
+use crate::ui::repo_form::{self, FIELDS, LIST_HEIGHT, check, field, label};
 
 /// What has been filled in.
 pub struct Form {
-    pub place: Place,
-    /// The account it's made on (an index into the accounts).
+    /// The account it's made on (an index into the accounts); `None`: only
+    /// on this computer.
     pub account: Option<usize>,
     pub name: String,
     pub description: String,
@@ -93,7 +51,6 @@ pub type TemplatesFrom = Option<usize>;
 impl Form {
     pub fn new(parent: String, lfs_installed: bool) -> Self {
         Form {
-            place: Place::Here,
             account: None,
             name: String::new(),
             description: String::new(),
@@ -122,27 +79,17 @@ impl Form {
     /// Whether there'll be a copy on this computer (what starts it, a
     /// branch, templates and LFS, are for that copy).
     pub fn here_too(&self) -> bool {
-        self.place == Place::Here || self.clone
-    }
-
-    /// Where it's going, to name it.
-    pub fn place_name(&self) -> &'static str {
-        self.place.name()
+        self.account.is_none() || self.clone
     }
 
     /// Whose templates to offer: the account's forge, or GitHub's.
     pub fn templates_wanted(&self) -> TemplatesFrom {
-        match self.place {
-            Place::Here => None,
-            Place::Forge(_) => self.account,
-        }
+        self.account
     }
 }
 
 pub enum Action {
     Browse,
-    /// Sign in to this place first.
-    SignIn(sign_in::Place),
     Create,
     Cancel,
     /// Stop it while it's being made.
@@ -189,31 +136,20 @@ fn template_picker(
     combo.inner.is_some()
 }
 
-/// The form on the right, for `accounts` on the place chosen.
+/// The form, for `accounts` signed in to.
 fn details(ui: &mut egui::Ui, form: &mut Form, accounts: &[Account], action: &mut Option<Action>) {
-    let place = form.place;
-    let forge = matches!(place, Place::Forge(_));
-    let here_too = form.here_too();
     egui::Grid::new("new-repo-form")
         .num_columns(2)
         .spacing(egui::vec2(12.0, 10.0))
         .show(ui, |ui| {
-            if forge {
-                label(ui, "Account");
-                let name = |i: usize| accounts.get(i).map_or("", |a| a.login.as_str());
-                let combo = egui::ComboBox::from_id_salt("new-repo-account")
-                    .selected_text(form.account.map_or("", name))
-                    .width(FIELDS)
-                    .show_ui(ui, |ui| {
-                        for (i, a) in accounts.iter().enumerate().filter(|(_, a)| place.has(a)) {
-                            ui.selectable_value(&mut form.account, Some(i), &a.login);
-                        }
-                    });
-                ui.ctx().accesskit_node_builder(combo.response.id, |n| {
-                    n.set_label("Account to make it on");
-                });
-                ui.end_row();
+            label(ui, "Account");
+            if repo_form::account_picker(ui, &mut form.account, accounts, "Account to make it on") {
+                form.error = None;
             }
+            ui.end_row();
+            // What an account adds: made on its forge, maybe without a copy here.
+            let forge = form.account.is_some();
+            let here_too = form.here_too();
             label(ui, "Name");
             field(ui, &mut form.name, "New repository name", "my-project");
             ui.end_row();
@@ -260,7 +196,7 @@ fn details(ui: &mut egui::Ui, form: &mut Form, accounts: &[Account], action: &mu
             ui.end_row();
             label(ui, "Full path");
             ui.add_enabled_ui(here_too, |ui| {
-                side_form::path(ui, &form.dest().display().to_string());
+                repo_form::path(ui, &form.dest().display().to_string());
             });
             ui.end_row();
             label(ui, "Default branch name");
@@ -303,6 +239,7 @@ fn details(ui: &mut egui::Ui, form: &mut Form, accounts: &[Account], action: &mu
             ui.end_row();
         });
     // Templates: loading, or why there aren't any.
+    let here_too = form.here_too();
     match &form.templates {
         None if here_too && form.want_templates => {
             ui.horizontal(|ui| {
@@ -333,8 +270,6 @@ fn problem(form: &Form) -> Option<&'static str> {
         Some("")
     } else if name.contains(['/', '\\']) {
         Some("A name without slashes.")
-    } else if matches!(form.place, Place::Forge(_)) && form.account.is_none() {
-        Some("Choose the account to make it on.")
     } else if form.here_too() && form.parent.trim().is_empty() {
         Some("")
     } else if form.here_too() && !create::can_clone_into(&form.dest()) {
@@ -353,93 +288,58 @@ fn problem(form: &Form) -> Option<&'static str> {
 pub fn show(ctx: &egui::Context, form: &mut Form, accounts: &[Account]) -> Option<Action> {
     let mut action = None;
     let making = form.progress.is_some();
-    // Signed in since (from here): that account.
-    if form.account.is_none() {
-        form.account = accounts.iter().position(|a| form.place.has(a));
+    // Signed out of since: only on this computer.
+    if form.account.is_some_and(|i| i >= accounts.len()) {
+        form.account = None;
     }
     let modal = egui::Modal::new(egui::Id::new("new-repo")).show(ctx, |ui| {
-        ui.set_width(760.0);
+        ui.set_width(repo_form::WIDTH);
         ui.label(RichText::new("New repository").strong().size(15.0));
         ui.add_space(8.0);
-        ui.horizontal_top(|ui| {
-            // Where it goes.
-            ui.add_enabled_ui(!making && form.done.is_none(), |ui| {
-                ui.vertical(|ui| {
-                    ui.set_width(side_form::PLACES);
-                    for place in Place::ALL {
-                        let row = place_row(ui, place.glyph(), place.name(), form.place == place);
-                        if row.clicked() && form.place != place {
-                            form.place = place;
-                            form.account = accounts.iter().position(|a| place.has(a));
-                            form.error = None;
-                        }
-                    }
-                });
-            });
-            ui.separator();
-            ui.vertical(|ui| {
-                ui.set_min_height(430.0);
-                if let Some(done) = &form.done {
-                    ui.label(done);
-                    ui.add_space(12.0);
-                    if ui.button("Close").clicked() {
-                        action = Some(Action::Cancel);
-                    }
-                    return;
+        if let Some(done) = &form.done {
+            ui.label(done);
+            ui.add_space(12.0);
+            if ui.button("Close").clicked() {
+                action = Some(Action::Cancel);
+            }
+            return;
+        }
+        ui.add_enabled_ui(!making, |ui| details(ui, form, accounts, &mut action));
+        ui.add_space(12.0);
+        if let Some(e) = &form.error {
+            ui.label(RichText::new(e).size(12.0).color(theme::danger()));
+            ui.add_space(4.0);
+        }
+        let problem = problem(form);
+        if let Some(p) = problem.filter(|p| !p.is_empty()) {
+            ui.label(RichText::new(p).size(12.0).color(theme::danger()));
+            ui.add_space(4.0);
+        }
+        ui.horizontal(|ui| {
+            if let Some(doing) = &form.progress {
+                ui.spinner();
+                ui.label(RichText::new(doing).size(12.0).color(theme::muted()));
+                let stop = ui.button("Cancel");
+                ui.ctx()
+                    .accesskit_node_builder(stop.id, |n| n.set_label("Stop making it"));
+                if stop.clicked() {
+                    action = Some(Action::Stop);
                 }
-                let signed_in = match form.place {
-                    Place::Here => true,
-                    place => accounts.iter().any(|a| place.has(a)),
-                };
-                if let (false, Place::Forge(place)) = (signed_in, form.place) {
-                    ui.label(format!(
-                        "Sign in to {} to make repositories there.",
-                        form.place.name()
-                    ));
-                    ui.add_space(8.0);
-                    if ui.button("Sign in…").clicked() {
-                        action = Some(Action::SignIn(place));
-                    }
-                    return;
-                }
-                ui.add_enabled_ui(!making, |ui| details(ui, form, accounts, &mut action));
-                ui.add_space(12.0);
-                if let Some(e) = &form.error {
-                    ui.label(RichText::new(e).size(12.0).color(theme::danger()));
-                    ui.add_space(4.0);
-                }
-                let problem = problem(form);
-                if let Some(p) = problem.filter(|p| !p.is_empty()) {
-                    ui.label(RichText::new(p).size(12.0).color(theme::danger()));
-                    ui.add_space(4.0);
-                }
-                ui.horizontal(|ui| {
-                    if let Some(doing) = &form.progress {
-                        ui.spinner();
-                        ui.label(RichText::new(doing).size(12.0).color(theme::muted()));
-                        let stop = ui.button("Cancel");
-                        ui.ctx()
-                            .accesskit_node_builder(stop.id, |n| n.set_label("Stop making it"));
-                        if stop.clicked() {
-                            action = Some(Action::Stop);
-                        }
-                        return;
-                    }
-                    let label = match (form.place, form.clone) {
-                        (Place::Here, _) | (Place::Forge(_), false) => "Create repository",
-                        (Place::Forge(_), true) => "Create repository and clone",
-                    };
-                    let go =
-                        egui::Button::new(RichText::new(label).color(theme::on_accent()).strong())
-                            .fill(theme::accent());
-                    if ui.add_enabled(problem.is_none(), go).clicked() {
-                        action = Some(Action::Create);
-                    }
-                    if ui.button("Cancel").clicked() {
-                        action = Some(Action::Cancel);
-                    }
-                });
-            });
+                return;
+            }
+            let label = if form.account.is_some() && form.clone {
+                "Create repository and clone"
+            } else {
+                "Create repository"
+            };
+            let go = egui::Button::new(RichText::new(label).color(theme::on_accent()).strong())
+                .fill(theme::accent());
+            if ui.add_enabled(problem.is_none(), go).clicked() {
+                action = Some(Action::Create);
+            }
+            if ui.button("Cancel").clicked() {
+                action = Some(Action::Cancel);
+            }
         });
     });
     if modal.should_close() && action.is_none() {

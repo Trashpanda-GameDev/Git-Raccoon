@@ -685,6 +685,13 @@ pub fn muted() -> Color32 {
     palette().muted
 }
 
+/// Gives unticked checkboxes and radio buttons in `ui` an edge that shows:
+/// otherwise they're filled with the dialog's or menu's own colour, with at
+/// most a faint border (and in menus none: egui's menu style takes it off).
+pub fn outline_toggles(ui: &mut egui::Ui) {
+    ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::new(1.0, muted());
+}
+
 /// The brand colour: primary buttons, focus.
 pub fn accent() -> Color32 {
     palette().accent
