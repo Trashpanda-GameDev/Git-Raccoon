@@ -14,6 +14,7 @@ pub mod forge;
 pub mod history;
 pub mod licenses;
 pub mod palette;
+pub mod push_to;
 pub mod rebase;
 pub mod search_bar;
 pub mod settings;

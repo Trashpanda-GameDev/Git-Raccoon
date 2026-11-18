@@ -1588,6 +1588,42 @@ impl App {
                 });
         }
 
+        // Where to push a branch that isn't on a remote yet.
+        if let Some(repo) = &mut self.repo {
+            let head = repo.refs.local.iter().find(|b| b.is_head);
+            // Another branch checked out since: the question is moot.
+            if repo
+                .push_to
+                .as_ref()
+                .is_some_and(|t| head.is_none_or(|h| h.name != t.branch))
+            {
+                repo.push_to = None;
+            }
+            if let Some(target) = &mut repo.push_to {
+                let mut answer = None;
+                Panel::top("push-to")
+                    .frame(
+                        Frame::new()
+                            .fill(theme::bg_raised())
+                            .stroke(egui::Stroke::new(1.0, theme::accent()))
+                            .inner_margin(Margin::symmetric(12, 8)),
+                    )
+                    .show(ui, |ui| {
+                        answer = crate::ui::push_to::show(ui, target, &repo.refs);
+                    });
+                match answer {
+                    Some(crate::ui::push_to::Answer::Push) => {
+                        if let Some(t) = repo.push_to.take() {
+                            let to = Some((t.remote, t.name.trim().to_string()));
+                            repo.run(&ctx, Op::Push { force: false, to });
+                        }
+                    }
+                    Some(crate::ui::push_to::Answer::Cancel) => repo.push_to = None,
+                    None => {}
+                }
+            }
+        }
+
         // A merge (rebase, ...) waiting to be finished.
         if let Some(repo) = &mut self.repo
             && let Some(status) = &repo.status

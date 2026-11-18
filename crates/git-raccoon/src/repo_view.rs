@@ -1106,6 +1106,15 @@ pub fn trash_name() -> &'static str {
     }
 }
 
+/// Where to push `branch`, which has no upstream yet: `name` on `remote`,
+/// which it then pushes to and pulls from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PushTarget {
+    pub branch: String,
+    pub remote: String,
+    pub name: String,
+}
+
 /// A question to answer before something happens.
 pub enum Dialog {
     /// "Are you sure?" before an operation. `danger` colours the button red.
@@ -1115,13 +1124,6 @@ pub enum Dialog {
         button: String,
         danger: bool,
         op: Op,
-    },
-    /// Where to push `branch`, which has no upstream yet: `name` on
-    /// `remote`, which it then pushes to and pulls from.
-    PushTo {
-        branch: String,
-        remote: String,
-        name: String,
     },
     /// Stash the working changes, with an optional message.
     Stash {
@@ -1228,6 +1230,8 @@ pub struct RepoView {
     op: Option<Running>,
     /// A dialog waiting for an answer.
     pub dialog: Option<Dialog>,
+    /// Asking where to push a branch that isn't on a remote yet.
+    pub push_to: Option<PushTarget>,
     /// Tests only: where discarded files go instead of the Recycle Bin.
     pub trash_override: Option<std::path::PathBuf>,
     pub diff: Keyed<DiffKey, Result<Arc<RenderedDiff>, String>>,
@@ -1291,6 +1295,7 @@ impl RepoView {
             pick_anchor: None,
             op: None,
             dialog: None,
+            push_to: None,
             trash_override: None,
             draft: CommitDraft::default(),
             file_selection: crate::ui::working::FileSelection::default(),
@@ -1565,7 +1570,7 @@ impl RepoView {
             .or_else(|| remotes.first());
         match (new, remote) {
             (Some(branch), Some(remote)) => {
-                self.dialog = Some(Dialog::PushTo {
+                self.push_to = Some(PushTarget {
                     branch: branch.name.clone(),
                     remote: remote.name.clone(),
                     name: branch.name.clone(),

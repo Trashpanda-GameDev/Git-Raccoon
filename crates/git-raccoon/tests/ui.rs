@@ -2036,51 +2036,61 @@ fn upstream_counts(app: &App) -> Option<(usize, usize)> {
 
 #[test]
 fn asks_where_to_push_a_new_branch() {
-    use git_raccoon::repo_view::Dialog;
     let sample = Sample::build();
     let base = std::env::temp_dir().join(format!("git-raccoon-push-to-{}", rand_suffix()));
     std::fs::create_dir_all(&base).unwrap();
-    let out = std::process::Command::new("git")
-        .args(["init", "-q", "--bare", "remote.git"])
-        .current_dir(&base)
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    let url = base.join("remote.git").to_str().unwrap().replace('\\', "/");
-    git(&sample, &["remote", "set-url", "origin", &url]);
+    let bare = |name: &str| {
+        let out = std::process::Command::new("git")
+            .args(["init", "-q", "--bare", name])
+            .current_dir(&base)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        base.join(name).to_str().unwrap().replace('\\', "/")
+    };
+    git(
+        &sample,
+        &["remote", "set-url", "origin", &bare("origin.git")],
+    );
+    git(&sample, &["remote", "add", "fork", &bare("fork.git")]);
     git(&sample, &["checkout", "-q", "-b", "fix/hazel-moves"]);
 
     let mut h = harness(Settings::default());
     open(&mut h, sample.path());
     assert_eq!(upstream_counts(h.state()), None);
 
-    // No upstream yet: Push asks, with the same name on origin filled in.
+    // No upstream yet: Push asks, in a bar, with the same name on origin.
     h.get_by_label("Push").click();
     wait_for(&mut h, "the question", |app| {
-        app.repo().unwrap().dialog.is_some()
+        app.repo().unwrap().push_to.is_some()
     });
-    match h.state().repo().unwrap().dialog.as_ref() {
-        Some(Dialog::PushTo {
-            branch,
-            remote,
-            name,
-        }) => assert_eq!(
-            (branch.as_str(), remote.as_str(), name.as_str()),
-            ("fix/hazel-moves", "origin", "fix/hazel-moves")
+    let target = |app: &App| app.repo().unwrap().push_to.clone().unwrap();
+    let asked = target(h.state());
+    assert_eq!(
+        (
+            asked.branch.as_str(),
+            asked.remote.as_str(),
+            asked.name.as_str()
         ),
-        _ => panic!("expected the push-to dialog"),
-    }
+        ("fix/hazel-moves", "origin", "fix/hazel-moves")
+    );
+    h.get_by_label_contains("Where should fix/hazel-moves push to");
     h.get_by_label("Push to origin/fix/hazel-moves");
     screenshot(&mut h, "25-push-to");
 
-    // Another name on the remote: the branch then pushes to and pulls from it.
+    // With two remotes, the other can be chosen; and another name there.
+    h.get_by_label("Push to remote").click();
+    h.run_ok();
+    h.get_all_by_label("fork").last().unwrap().click();
+    h.run_ok();
+    assert_eq!(target(h.state()).remote, "fork");
     h.get_by_label("Remote branch name").click();
     h.run_ok();
     h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
     h.get_by_label("Remote branch name")
         .type_text("fix/NM3-1026");
     h.run_ok();
-    h.get_by_label("Push to origin/fix/NM3-1026").click();
+    h.get_by_label("Push to fork/fix/NM3-1026").click();
     wait_for(&mut h, "the push", |app| {
         upstream_counts(app) == Some((0, 0)) && !app.is_busy()
     });
@@ -2092,8 +2102,12 @@ fn asks_where_to_push_a_new_branch() {
         .unwrap()
         .name
         .clone();
-    assert_eq!(upstream, "origin/fix/NM3-1026");
+    assert_eq!(upstream, "fork/fix/NM3-1026");
     assert_eq!(h.state().repo().unwrap().refresh_error, None);
+    assert!(
+        h.state().repo().unwrap().push_to.is_none(),
+        "the bar is gone"
+    );
 
     // From then on, Push just pushes.
     git(&sample, &["commit", "-q", "--allow-empty", "-m", "More"]);
@@ -2104,7 +2118,7 @@ fn asks_where_to_push_a_new_branch() {
     wait_for(&mut h, "the second push", |app| {
         upstream_counts(app) == Some((0, 0)) && !app.is_busy()
     });
-    assert!(h.state().repo().unwrap().dialog.is_none());
+    assert!(h.state().repo().unwrap().push_to.is_none());
     let _ = std::fs::remove_dir_all(&base);
 }
 

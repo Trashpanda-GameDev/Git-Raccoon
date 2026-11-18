@@ -102,68 +102,6 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
                 heading(ui, title, Some(body));
                 (button.clone(), *danger, true)
             }
-            Dialog::PushTo {
-                branch,
-                remote,
-                name,
-            } => {
-                heading(
-                    ui,
-                    &format!("Push {branch}"),
-                    Some("It isn't on a remote yet. It goes to this branch, which it then pushes to and pulls from:"),
-                );
-                let mut enter = false;
-                ui.horizontal(|ui| {
-                    if refs.remotes.len() > 1 {
-                        let combo = egui::ComboBox::from_id_salt("push-remote")
-                            .selected_text(remote.as_str())
-                            .show_ui(ui, |ui| {
-                                for r in &refs.remotes {
-                                    ui.selectable_value(remote, r.name.clone(), &r.name);
-                                }
-                            });
-                        ui.ctx()
-                            .accesskit_node_builder(combo.response.id, |n| n.set_label("Remote"));
-                    } else {
-                        ui.label(remote.as_str());
-                    }
-                    ui.label("/");
-                    let field = ui.add(
-                        egui::TextEdit::singleline(name)
-                            .hint_text("Branch name")
-                            .desired_width(f32::INFINITY),
-                    );
-                    ui.ctx()
-                        .accesskit_node_builder(field.id, |n| n.set_label("Remote branch name"));
-                    if ui.ctx().memory(|m| m.focused().is_none()) {
-                        field.request_focus();
-                    }
-                    enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                });
-                let target = name.trim();
-                let problem = branch_name_problem(target);
-                if let Some(problem) = problem.filter(|p| !p.is_empty()) {
-                    ui.label(RichText::new(problem).size(12.0).color(theme::danger()));
-                } else if refs
-                    .remotes
-                    .iter()
-                    .filter(|r| r.name == *remote)
-                    .flat_map(|r| &r.branches)
-                    .any(|b| b.name == target)
-                {
-                    ui.label(
-                        RichText::new(format!(
-                            "{remote}/{target} already exists: your commits go on top of it."
-                        ))
-                        .size(12.0)
-                        .color(theme::muted()),
-                    );
-                }
-                if enter && problem.is_none() {
-                    answer = Some(Some(0));
-                }
-                (format!("Push to {remote}/{target}"), false, problem.is_none())
-            }
             Dialog::Stash {
                 message,
                 untracked,
@@ -349,10 +287,6 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
                 }
             }
             Dialog::Confirm { op, .. } => Some(op),
-            Dialog::PushTo { remote, name, .. } => Some(Op::Push {
-                force: false,
-                to: Some((remote, name.trim().to_string())),
-            }),
             Dialog::Stash {
                 message,
                 untracked,
@@ -437,7 +371,7 @@ fn branch_problem(name: &str, refs: &Refs, renaming: Option<&str>) -> Option<&'s
 }
 
 /// Why `name` isn't a branch name Git accepts; empty for "nothing typed yet".
-fn branch_name_problem(name: &str) -> Option<&'static str> {
+pub fn branch_name_problem(name: &str) -> Option<&'static str> {
     if name.is_empty() {
         Some("")
     } else if !branch::is_valid_branch_name(name) {
