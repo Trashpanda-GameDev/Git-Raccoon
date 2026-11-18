@@ -1647,8 +1647,15 @@ fn moves_columns_by_dragging_their_headings() {
     let message_was = x(&h, "Commit message");
     let from = h.get_by_label("Author").rect().center();
     let to = egui::pos2(message_was + 10.0, from.y);
+    // The pointer is an open hand over a heading, a closed one holding it
+    // (images of hands: the system's show four arrows on Windows).
+    let cursor = |h: &Harness<'_, App>| {
+        let out = &h.output().platform_output;
+        (out.cursor_icon, out.cursor_image.is_some())
+    };
     h.event(egui::Event::PointerMoved(from));
     h.run_ok();
+    assert_eq!(cursor(&h), (egui::CursorIcon::Grab, true));
     h.event(egui::Event::PointerButton {
         pos: from,
         button: egui::PointerButton::Primary,
@@ -1663,6 +1670,7 @@ fn moves_columns_by_dragging_their_headings() {
         h.step();
     }
     h.step();
+    assert_eq!(cursor(&h), (egui::CursorIcon::Grabbing, true));
     assert!((h.get_by_label("Author").rect().center().x - to.x).abs() < 1.0);
     assert!(
         x(&h, "Commit message") > message_was + 50.0,
@@ -1704,6 +1712,25 @@ fn moves_columns_by_dragging_their_headings() {
     h.get_by_label("Put the columns back in order").click();
     settle(&mut h);
     assert_eq!(h.state().settings().columns, Column::ALL);
+
+    // A wide column lands where the pointer is, not where its middle is:
+    // taken by its left end and moved a little right, the message column
+    // goes just past Author (its middle is far beyond Sha's).
+    let message = h.get_by_label("Commit message").rect();
+    let from = egui::pos2(message.left() + 20.0, message.center().y);
+    drag(&mut h, from, from + egui::vec2(100.0, 0.0));
+    settle(&mut h);
+    assert_eq!(
+        h.state().settings().columns,
+        [
+            Column::Refs,
+            Column::Graph,
+            Column::Author,
+            Column::Message,
+            Column::Date,
+            Column::Sha
+        ]
+    );
 }
 
 #[test]

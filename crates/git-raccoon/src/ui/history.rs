@@ -105,20 +105,21 @@ impl Columns {
     }
 
     /// The order with `column` moved to where it would land if dropped with
-    /// its left edge at `left` (in a list starting at `start`).
-    fn dropped_at(&self, column: Column, left: f32, start: f32, width: f32) -> Vec<Column> {
+    /// the pointer at `pointer` (in a list starting at `start`): before the
+    /// first of the others whose middle is right of the pointer, however
+    /// wide the moved column is.
+    fn dropped_at(&self, column: Column, pointer: f32, start: f32, width: f32) -> Vec<Column> {
         let mut order: Vec<Column> = self
             .order
             .iter()
             .copied()
             .filter(|c| *c != column)
             .collect();
-        let centre = left + self.w(column, width) / 2.0;
         let mut x = start;
         let mut at = order.len();
         for (i, c) in order.iter().enumerate() {
             let w = self.w(*c, width);
-            if x + w / 2.0 > centre {
+            if x + w / 2.0 > pointer {
                 at = i;
                 break;
             }
@@ -242,8 +243,10 @@ fn headings(
         response.widget_info(|| {
             egui::WidgetInfo::labeled(egui::WidgetType::Button, true, column.title())
         });
-        // The hand (Grab and Grabbing show four arrows on Windows).
-        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+        // An open hand over it, a closed one while it's held.
+        if response.hovered() && moved.is_none() {
+            crate::ui::cursors::grab(ui.ctx());
+        }
         // No tip while one is on the move.
         let response = if moved.is_none() {
             response.on_hover_text("Drag to move this column")
@@ -267,7 +270,7 @@ fn headings(
             ui.data_mut(|d| d.insert_temp(state, (column, p.x - cell.left())));
         }
         if response.dragged() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            crate::ui::cursors::grabbing(ui.ctx());
         }
         if response.drag_stopped() {
             ui.data_mut(|d| d.remove::<(Column, f32)>(state));
@@ -627,8 +630,8 @@ pub fn show(
     // While one is moved, everything is shown in the order it would have
     // if dropped now.
     let moved = moving(ui);
-    if let Some((column, left)) = moved {
-        cols.order = cols.dropped_at(column, left, header.left(), width);
+    if let (Some((column, _)), Some(pointer)) = (moved, ui.ctx().pointer_interact_pos()) {
+        cols.order = cols.dropped_at(column, pointer.x, header.left(), width);
     }
     match headings(ui, header, &cols, width, moved) {
         Some(Heading::Moved(new)) => *order = new,

@@ -7,7 +7,7 @@ release page). Newest first; a version's heading is just its number.
 
 - **A graph with many branches scrolls sideways**: use the horizontal wheel (or Shift and the wheel) over it, or drag the bar under the Graph heading. Jumping to a commit brings its line into view.
 - **Resize the graph's columns**: drag the edge after a heading, or double-click it to fit the column to what's on screen. No column gets narrower than its heading, and right-click a heading to put the widths back.
-- **Moving a column shows where it will go**: its heading follows the pointer and the columns make room, like the tabs.
+- **Moving a column shows where it will go**: its heading follows the pointer and the columns make room, like the tabs; it goes where the pointer is, however wide it is. Over a heading the pointer is an open hand, and a closed one while it's held.
 - **Dragging a tab shows where it will go**: it follows the pointer, see-through, and the other tabs slide aside to make room; let go to put it there.
 - **Branch labels no longer stop the graph scrolling**: they only spread out when the pointer rests on them, not while the list scrolls past.
 - **Write the commit summary in the WIP row** at the top of the graph: it's the same text as the box under Commit, and the stash dialog starts with it as the stash's title. The field starts small, so the change counts stay in view, and grows as you write.
