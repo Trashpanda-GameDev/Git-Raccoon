@@ -815,7 +815,8 @@ pub fn show(
 }
 
 /// The "Working changes" row above the commits, shown while there are
-/// uncommitted changes. Returns whether it was clicked.
+/// uncommitted changes, with the commit summary to write in. Returns
+/// whether it was clicked.
 fn working_row(
     ui: &mut egui::Ui,
     repo: &mut RepoView,
@@ -837,7 +838,8 @@ fn working_row(
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Working changes")
     });
-    let painter = ui.painter();
+    // Cloned: the summary field below needs `ui` again.
+    let painter = ui.painter().clone();
     if repo.working_selected {
         painter.rect_filled(rect, 0, theme::bg_selected());
         painter.rect_filled(
@@ -856,7 +858,7 @@ fn working_row(
         )
     };
     widgets::pill(
-        painter,
+        &painter,
         Pos2::new(
             rect.left() + cols.x(Column::Refs, width) + 8.0,
             rect.center().y,
@@ -874,10 +876,10 @@ fn working_row(
             ..=rect.left() + cols.x(Column::Graph, width) + cols.graph,
         rect.y_range(),
     );
-    let painter = &painter.with_clip_rect(column.intersect(painter.clip_rect()));
+    let graph = painter.with_clip_rect(column.intersect(painter.clip_rect()));
     let centre = Pos2::new(lane_x(column.left() - graph_x, lane), rect.center().y);
     let dashed = Stroke::new(2.0, theme::muted());
-    painter.extend(egui::Shape::dashed_line(
+    graph.extend(egui::Shape::dashed_line(
         &[
             Pos2::new(centre.x, centre.y + DOT_RADIUS),
             Pos2::new(centre.x, rect.bottom()),
@@ -886,7 +888,7 @@ fn working_row(
         3.0,
         3.0,
     ));
-    painter.circle_filled(centre, DOT_RADIUS, theme::bg());
+    graph.circle_filled(centre, DOT_RADIUS, theme::bg());
     let points: Vec<Pos2> = (0..=24)
         .map(|i| {
             #[expect(clippy::cast_precision_loss, reason = "i <= 24")]
@@ -894,18 +896,12 @@ fn working_row(
             centre + egui::vec2(a.cos(), a.sin()) * (DOT_RADIUS - 1.0)
         })
         .collect();
-    painter.extend(egui::Shape::dashed_line(&points, dashed, 2.5, 2.0));
+    graph.extend(egui::Shape::dashed_line(&points, dashed, 2.5, 2.0));
 
-    // Title, then the counts in the same (wide) column so they never get cut.
+    // The commit summary (the same text as under Commit, and the stash's
+    // title), then the counts after it in the same (wide) column.
     let (start, run) = cols.message_run(width);
     let message = cell(start, run);
-    let title = widgets::text_in(
-        painter,
-        message,
-        "Working changes",
-        theme::body(theme::FONT_SIZE),
-        theme::text(),
-    );
     let mut parts = Vec::new();
     if unstaged > 0 {
         parts.push(format!("{unstaged} unstaged"));
@@ -913,12 +909,28 @@ fn working_row(
     if staged > 0 {
         parts.push(format!("{staged} staged"));
     }
-    let counts = Rect::from_min_max(Pos2::new(title.right() + 12.0, message.top()), message.max);
-    widgets::text_in(
-        painter,
+    let counts = painter.layout_no_wrap(parts.join(" · "), theme::body(12.0), theme::muted());
+    let field_right = (message.right() - counts.size().x - 12.0).max(message.left());
+    let field = Rect::from_min_max(
+        Pos2::new(message.left() - 4.0, message.top() + 3.0),
+        Pos2::new(field_right, message.bottom() - 3.0),
+    );
+    let committing = repo.is_committing();
+    let summary = ui.put(
+        field,
+        egui::TextEdit::singleline(&mut repo.draft.summary)
+            // Kept while the row's selection redraws what's around it.
+            .id(egui::Id::new("wip-summary"))
+            .hint_text("Working changes: write a summary")
+            .font(theme::body(theme::FONT_SIZE))
+            .vertical_align(egui::Align::Center)
+            .interactive(!committing),
+    );
+    ui.ctx()
+        .accesskit_node_builder(summary.id, |n| n.set_label("WIP summary"));
+    painter.galley(
+        Pos2::new(field_right + 12.0, message.center().y - counts.size().y / 2.0),
         counts,
-        &parts.join(" · "),
-        theme::body(12.0),
         theme::muted(),
     );
     painter.hline(
@@ -926,7 +938,8 @@ fn working_row(
         rect.bottom(),
         Stroke::new(1.0, theme::border()),
     );
-    response.clicked()
+    // Writing the summary shows the changes being committed.
+    response.clicked() || summary.gained_focus()
 }
 
 /// The labels to show for a commit. A local branch and its remote copy

@@ -1556,12 +1556,13 @@ impl RepoView {
     }
 
     /// Checks out a local branch (nothing to do if it is already checked out).
-    /// The stash dialog: stashing just the staged changes is offered (and
-    /// chosen) when some are staged.
+    /// The stash dialog, titled with the commit summary written so far:
+    /// stashing just the staged changes is offered (and chosen) when some
+    /// are staged.
     pub fn stash_dialog(&self) -> Dialog {
         let staged_files = self.status.as_ref().map_or(0, |s| s.staged.len());
         Dialog::Stash {
-            message: String::new(),
+            message: self.draft.summary.trim().to_string(),
             untracked: true,
             staged_files,
             staged: staged_files > 0,

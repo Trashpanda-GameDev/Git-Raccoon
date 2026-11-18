@@ -1221,12 +1221,20 @@ fn stashes_pops_and_drops() {
             .as_ref()
             .is_some_and(|s| !s.is_clean())
     });
-    h.get_by_label("Working changes").click();
+    // The summary written in the WIP row is the commit's, and titles the stash.
+    type_into(&mut h, "WIP summary", "try another approach");
     settle(&mut h);
+    assert!(
+        h.state().repo().unwrap().working_selected,
+        "writing there shows the changes"
+    );
+    assert_eq!(
+        h.state().repo().unwrap().draft.summary,
+        "try another approach"
+    );
 
     h.get_by_label("Stash changes").click();
     h.run_ok();
-    type_into(&mut h, "Stash message", "try another approach");
     screenshot(&mut h, "14-stash-dialog");
     h.get_by_role_and_label(egui::accesskit::Role::Button, "Stash")
         .click();
