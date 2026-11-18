@@ -489,6 +489,54 @@ fn searches_the_whole_history() {
 }
 
 #[test]
+fn moves_through_the_graph_with_modifier_keys() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    let press = |h: &mut Harness<'_, App>, mods: egui::Modifiers, key: Key| {
+        h.key_press_modifiers(mods, key);
+        settle(h);
+    };
+    let at = |h: &Harness<'_, App>| selected_summary(h).unwrap_or_default();
+
+    // Shift follows the branch: from the merge, down its own line (main),
+    // not into the branch it took in, which is the next row.
+    h.get_by_label("Merge branch 'feature/graph'").click();
+    settle(&mut h);
+    press(&mut h, egui::Modifiers::NONE, Key::ArrowDown);
+    assert_eq!(at(&h), "Colour lanes");
+    press(&mut h, egui::Modifiers::NONE, Key::ArrowUp);
+    press(&mut h, egui::Modifiers::SHIFT, Key::ArrowDown);
+    assert_eq!(at(&h), "Reject bare repositories when loading");
+    // And back up the same line.
+    press(&mut h, egui::Modifiers::SHIFT, Key::ArrowUp);
+    assert_eq!(at(&h), "Merge branch 'feature/graph'");
+    // Along feature/graph, up to where it ends: the merge isn't its own.
+    h.get_by_label("Lay out commit lanes").click();
+    settle(&mut h);
+    press(&mut h, egui::Modifiers::SHIFT, Key::ArrowUp);
+    assert_eq!(at(&h), "Colour lanes");
+
+    // Ctrl goes from label to label.
+    h.get_by_label("Add icon").click();
+    settle(&mut h);
+    press(&mut h, egui::Modifiers::COMMAND, Key::ArrowDown);
+    assert_eq!(at(&h), "Merge branch 'feature/graph'", "tagged v0.1.0");
+    press(&mut h, egui::Modifiers::COMMAND, Key::ArrowDown);
+    assert_eq!(at(&h), "Colour lanes", "feature/graph");
+    press(&mut h, egui::Modifiers::COMMAND, Key::ArrowUp);
+    assert_eq!(at(&h), "Merge branch 'feature/graph'");
+
+    // Home and End: the newest and oldest; Ctrl+H: the checked-out commit.
+    press(&mut h, egui::Modifiers::NONE, Key::End);
+    assert_eq!(at(&h), "Add repository loader");
+    press(&mut h, egui::Modifiers::NONE, Key::Home);
+    assert_eq!(at(&h), "Fix toolbar glitch");
+    press(&mut h, egui::Modifiers::COMMAND, Key::H);
+    assert_eq!(at(&h), "Redraw icon and rename loader");
+}
+
+#[test]
 fn refreshes_when_the_repo_changes_on_disk() {
     let sample = Sample::build();
     let mut h = harness(Settings::default());

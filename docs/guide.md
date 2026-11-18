@@ -41,7 +41,7 @@ Your open repositories come back the next time you start Git Raccoon.
 
 ## The window
 
-- **The graph** (middle) shows every commit, newest at the top, with lines for branches and merges, and labels for branches, remote branches and tags. A cloud after a branch's name means the remote's copy of it is at the same commit. When a commit has several labels ("main +2"), point at them to see them all. A label too long for its column grows to its whole name when you point at it. Double-click a label to check that branch out. Double-clicking a remote branch (such as `origin/feature`) checks out your branch of the same name and brings it up to that commit; if both have new commits, it asks whether to merge or rebase. Click a commit to see its details; use the arrow keys and Page Up/Down to move. When there are more branches side by side than the graph's column shows, it scrolls sideways: use the horizontal wheel (or Shift and the wheel) over it, or drag the bar under the Graph heading.
+- **The graph** (middle) shows every commit, newest at the top, with lines for branches and merges, and labels for branches, remote branches and tags. A cloud after a branch's name means the remote's copy of it is at the same commit. When a commit has several labels ("main +2"), point at them to see them all. A label too long for its column grows to its whole name when you point at it. Double-click a label to check that branch out. Double-clicking a remote branch (such as `origin/feature`) checks out your branch of the same name and brings it up to that commit; if both have new commits, it asks whether to merge or rebase. Click a commit to see its details; use the arrow keys and Page Up/Down to move. Shift+↓/↑ follows the selected commit's branch (down to its parent, up to the commit that continues it), Ctrl+↓/↑ goes to the next or previous commit with a label, Home and End to the newest and oldest, and Ctrl+H to the checked-out commit. When there are more branches side by side than the graph's column shows, it scrolls sideways: use the horizontal wheel (or Shift and the wheel) over it, or drag the bar under the Graph heading.
 - **The sidebar** (left) lists local branches (with how far ahead or behind their upstream they are), remotes and their branches, tags, stashes, worktrees and submodules. Click one to jump to its commit. The filter box at the top narrows the lists. Every section's heading stays in view: a long list scrolls inside its own section, and you can drag the line under a section to make it taller or shorter (double-click the line to let it fit its contents again).
 - **Sizes and columns:** drag the edge of the sidebar or the details pane to make it as wide or narrow as you like. Drag a column heading in the graph (Graph, Commit message, Author…) left or right to move that column: the others make room as you go. Drag the edge after a heading to make that column wider or narrower (the commit message takes the room that's left, and no column gets narrower than its heading), or double-click the edge to fit the column to what's on screen. Right-click a heading to put the order or the widths back as they were.
 - **The details pane** (right) shows the selected commit: its message, author, date, parents and changed files. Click a file to see its diff.
@@ -153,6 +153,10 @@ After most actions, the toolbar shows exactly what **Undo** would do ("Undo comm
 | New tab / Close tab | Ctrl+T / Ctrl+W |
 | Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab |
 | Search commits | Ctrl+F |
+| Follow the branch down / up | Shift+↓ / Shift+↑ |
+| Next / previous labelled commit | Ctrl+↓ / Ctrl+↑ |
+| Newest / oldest commit | Home / End |
+| Go to the checked-out commit | Ctrl+H |
 | Undo | Ctrl+Z |
 | Fetch / Pull / Push | Ctrl+Shift+F / D / U |
 | Show working changes | Ctrl+Shift+W |

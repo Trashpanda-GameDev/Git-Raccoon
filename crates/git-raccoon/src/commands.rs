@@ -31,6 +31,8 @@ pub enum Command {
     Pull,
     Push,
     ShowWorking,
+    /// Select the checked-out commit.
+    GoToHead,
     WriteCommit,
     StageAll,
     UnstageAll,
@@ -133,6 +135,7 @@ pub const SHORTCUTS: &[(Command, Option<KeyboardShortcut>)] = &[
         Command::ShowWorking,
         Some(KeyboardShortcut::new(CTRL_SHIFT, Key::W)),
     ),
+    (Command::GoToHead, Some(KeyboardShortcut::new(CTRL, Key::H))),
     (
         Command::WriteCommit,
         Some(KeyboardShortcut::new(CTRL_SHIFT, Key::M)),

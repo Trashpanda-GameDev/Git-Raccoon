@@ -814,6 +814,7 @@ impl App {
             Command::FileHistory | Command::Blame => {
                 repo.diff_key().is_some() || repo.file_view.is_some()
             }
+            Command::GoToHead => repo.history.head_row().is_some(),
             Command::Undo => repo.undo.is_some() && !busy,
             Command::Fetch => !busy,
             Command::Pull => !busy && repo.head_upstream().is_some(),
@@ -873,6 +874,7 @@ impl App {
         add(Command::Pull, format!("Pull into {head}"));
         add(Command::Push, format!("Push {head}"));
         add(Command::ShowWorking, "Show working changes".into());
+        add(Command::GoToHead, "Go to the checked-out commit".into());
         add(Command::WriteCommit, "Write a commit message".into());
         add(Command::StageAll, "Stage all changes".into());
         add(Command::UnstageAll, "Unstage all changes".into());
@@ -1011,6 +1013,11 @@ impl App {
                     }
                     Command::Push => repo.push(ctx),
                     Command::ShowWorking => repo.select_working(),
+                    Command::GoToHead => {
+                        if let Some(row) = repo.history.head_row() {
+                            repo.select_index(row);
+                        }
+                    }
                     Command::WriteCommit => {
                         repo.select_working();
                         ctx.memory_mut(|m| m.request_focus(working::summary_id()));
@@ -1446,18 +1453,37 @@ impl App {
         {
             return;
         }
-        let step = ctx.input(|i| {
+        // The arrows move a row; with Shift they follow the branch, with
+        // Ctrl they go to the next commit with a label.
+        let (down, up, mods) = ctx.input(|i| {
+            (
+                i.key_pressed(egui::Key::ArrowDown),
+                i.key_pressed(egui::Key::ArrowUp),
+                i.modifiers,
+            )
+        });
+        if down || up {
+            if mods.shift {
+                repo.follow_branch(down);
+            } else if mods.command {
+                repo.step_label(down);
+            } else {
+                repo.step(if down { 1 } else { -1 });
+            }
+            return;
+        }
+        let jump = ctx.input(|i| {
             [
-                (egui::Key::ArrowDown, 1),
-                (egui::Key::ArrowUp, -1),
                 (egui::Key::PageDown, 20),
                 (egui::Key::PageUp, -20),
+                (egui::Key::Home, isize::MIN),
+                (egui::Key::End, isize::MAX),
             ]
             .into_iter()
             .find(|(k, _)| i.key_pressed(*k))
             .map(|(_, s)| s)
         });
-        if let Some(step) = step {
+        if let Some(step) = jump {
             repo.step(step);
         }
     }

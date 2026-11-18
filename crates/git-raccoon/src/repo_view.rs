@@ -2665,8 +2665,69 @@ impl RepoView {
             .selected_row()
             .map_or(-1, |r| isize::try_from(r).unwrap_or(isize::MAX));
         let last = isize::try_from(total - 1).unwrap_or(isize::MAX);
-        let next = (current + step).clamp(0, last);
+        let next = current.saturating_add(step).clamp(0, last);
         self.select_index(usize::try_from(next).unwrap_or(0));
+    }
+
+    /// Follows the selected commit's branch: down to its first parent, or
+    /// up to the newer commit that continues it (the one in the same lane,
+    /// when a commit has several). With nothing selected, the newest.
+    pub fn follow_branch(&mut self, down: bool) {
+        let Some(row) = self.selected_row() else {
+            return self.step(1);
+        };
+        self.rows.ensure(row..row + 1);
+        let Some(commit) = self.rows.get(row) else {
+            return;
+        };
+        let (id, lane) = (commit.id.clone(), commit.column);
+        let target = if down {
+            commit
+                .parents
+                .first()
+                .and_then(|parent| self.history.locate(parent))
+        } else {
+            // Its children are above it: the nearest in its own lane, or
+            // else the nearest.
+            let mut nearest = None;
+            let mut found = None;
+            for r in (0..row).rev() {
+                self.rows.ensure(r..r + 1);
+                let Some(c) = self.rows.get(r) else { continue };
+                if c.parents.first() == Some(&id) {
+                    nearest.get_or_insert(r);
+                    if c.column == lane {
+                        found = Some(r);
+                        break;
+                    }
+                }
+            }
+            found.or(nearest)
+        };
+        if let Some(target) = target {
+            self.select_index(target);
+        }
+    }
+
+    /// Selects the next (or previous) commit with a label: a branch, tag,
+    /// remote branch or stash.
+    pub fn step_label(&mut self, down: bool) {
+        let from = self.selected_row();
+        let found = if down {
+            let start = from.map_or(0, |r| r + 1);
+            (start..self.history.total()).find(|&r| self.labelled(r))
+        } else {
+            (0..from.unwrap_or(0)).rev().find(|&r| self.labelled(r))
+        };
+        if let Some(row) = found {
+            self.select_index(row);
+        }
+    }
+
+    /// Whether the commit at `row` has a label.
+    fn labelled(&mut self, row: usize) -> bool {
+        self.rows.ensure(row..row + 1);
+        self.rows.get(row).is_some_and(|c| !c.refs.is_empty())
     }
 
     /// Rows matching the current search, in history order.
