@@ -240,8 +240,9 @@ fn body(
         d.unified.len()
     };
     let available = ui.available_width();
-    // Side by side, each half gets half the window and long lines are cut
-    // off (unified view scrolls sideways instead).
+    // Unified, the whole view scrolls sideways. Side by side, each half
+    // keeps half the window, and the code in each scrolls sideways on its
+    // own, with its own scrollbar (under its numbers, which stay put).
     let width = if split {
         available
     } else {
@@ -252,123 +253,160 @@ fn body(
     } else {
         egui::ScrollArea::both()
     };
+    let sideways_id = egui::Id::new("diff-split-sideways");
+    let sideways = ui
+        .data(|d| d.get_temp::<f32>(sideways_id))
+        .unwrap_or_default();
 
-    area.id_salt(("diff", split))
-        .auto_shrink([false, false])
-        .show_rows(ui, LINE, rows, |ui, range| {
-            let start_y = ui.cursor().top();
-            let left = ui.max_rect().left();
+    // Where the last line drawn ends, if it's on screen.
+    let mut end = None;
+    let area = area.id_salt(("diff", split)).auto_shrink([false, false]);
+    let output = widgets::gapless_rows(ui, area, LINE, rows, |ui, range| {
+        let start_y = ui.cursor().top();
+        let left = ui.max_rect().left();
+        #[expect(clippy::cast_precision_loss, reason = "visible row count is small")]
+        ui.allocate_exact_size(egui::vec2(width, LINE * range.len() as f32), Sense::hover());
+        let painter = ui.painter().clone();
+        let painter = &painter;
+        let shift = ui.input(|i| i.modifiers.shift);
+        // A click on a changed line's numbers picks it (working diffs only).
+        let gutter = |ui: &mut egui::Ui, rect: Rect, h: usize, l: usize| -> Option<Action> {
+            let st = staging?;
+            let line = &d.diff.hunks[h].lines[l];
+            if !matches!(line.kind, LineKind::Add | LineKind::Delete) {
+                return None;
+            }
+            let response = ui.interact(rect, ui.id().with(("pick", h, l)), Sense::click());
+            let name = format!("Pick line: {}", line.content.trim());
+            response
+                .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Checkbox, true, &name));
+            let picked = st.picked.contains(&(h, l));
+            if picked {
+                painter.rect_filled(rect, 0, theme::accent().gamma_multiply(0.35));
+                painter.text(
+                    Pos2::new(rect.left() + 9.0, rect.center().y),
+                    egui::Align2::CENTER_CENTER,
+                    icon::CHECK,
+                    theme::body(11.0),
+                    theme::text(),
+                );
+            } else if response.hovered() {
+                painter.rect_filled(rect, 0, theme::accent().gamma_multiply(0.15));
+            }
+            response
+                .on_hover_text("Pick this line to stage it on its own (Shift: a range)")
+                .clicked()
+                .then_some(Action::ToggleLine {
+                    hunk: h,
+                    line: l,
+                    extend: shift,
+                })
+        };
+        if range.end == rows {
             #[expect(clippy::cast_precision_loss, reason = "visible row count is small")]
-            ui.allocate_exact_size(egui::vec2(width, LINE * range.len() as f32), Sense::hover());
-            let painter = ui.painter().clone();
-            let painter = &painter;
-            let shift = ui.input(|i| i.modifiers.shift);
-            // A click on a changed line's numbers picks it (working diffs only).
-            let gutter = |ui: &mut egui::Ui, rect: Rect, h: usize, l: usize| -> Option<Action> {
-                let st = staging?;
-                let line = &d.diff.hunks[h].lines[l];
-                if !matches!(line.kind, LineKind::Add | LineKind::Delete) {
-                    return None;
-                }
-                let response = ui.interact(rect, ui.id().with(("pick", h, l)), Sense::click());
-                let name = format!("Pick line: {}", line.content.trim());
-                response.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::WidgetType::Checkbox, true, &name)
-                });
-                let picked = st.picked.contains(&(h, l));
-                if picked {
-                    painter.rect_filled(rect, 0, theme::accent().gamma_multiply(0.35));
-                    painter.text(
-                        Pos2::new(rect.left() + 9.0, rect.center().y),
-                        egui::Align2::CENTER_CENTER,
-                        icon::CHECK,
-                        theme::body(11.0),
-                        theme::text(),
-                    );
-                } else if response.hovered() {
-                    painter.rect_filled(rect, 0, theme::accent().gamma_multiply(0.15));
-                }
-                response
-                    .on_hover_text("Pick this line to stage it on its own (Shift: a range)")
-                    .clicked()
-                    .then_some(Action::ToggleLine {
-                        hunk: h,
-                        line: l,
-                        extend: shift,
-                    })
-            };
-            for (n, row) in range.enumerate() {
-                #[expect(clippy::cast_precision_loss, reason = "visible row count is small")]
-                let top = start_y + n as f32 * LINE;
-                let rect = Rect::from_min_size(Pos2::new(left, top), egui::vec2(width, LINE));
-                if split {
-                    match d.split[row] {
-                        SplitRow::Header(h) => {
-                            header(painter, rect, &d.diff.hunks[h].header);
-                            if let Some(a) = hunk_button(ui, rect, h, staging) {
-                                action = Some(a);
-                            }
-                        }
-                        SplitRow::Pair(a, b) => {
-                            let half = width / 2.0;
-                            let l = Rect::from_min_size(rect.min, egui::vec2(half, LINE));
-                            let r = Rect::from_min_size(
-                                Pos2::new(rect.left() + half, top),
-                                egui::vec2(half, LINE),
-                            );
-                            side(painter, l, d, a, false);
-                            side(painter, r, d, b, true);
-                            // Deletions are picked on the left, additions on the right.
-                            let deleted = a.filter(|&(h, i)| {
-                                d.diff.hunks[h].lines[i].kind == LineKind::Delete
-                            });
-                            let added =
-                                b.filter(|&(h, i)| d.diff.hunks[h].lines[i].kind == LineKind::Add);
-                            for (at, half_rect) in [(deleted, l), (added, r)] {
-                                if let Some((h, i)) = at
-                                    && let Some(picked) = gutter(
-                                        ui,
-                                        Rect::from_min_size(
-                                            half_rect.min,
-                                            egui::vec2(NUMBER, LINE),
-                                        ),
-                                        h,
-                                        i,
-                                    )
-                                {
-                                    action = Some(picked);
-                                }
-                            }
-                            painter.vline(
-                                l.right(),
-                                l.y_range(),
-                                Stroke::new(1.0, theme::border()),
-                            );
+            let drawn = start_y + range.len() as f32 * LINE;
+            end = Some(drawn);
+        }
+        for (n, row) in range.enumerate() {
+            #[expect(clippy::cast_precision_loss, reason = "visible row count is small")]
+            let top = start_y + n as f32 * LINE;
+            let rect = Rect::from_min_size(Pos2::new(left, top), egui::vec2(width, LINE));
+            if split {
+                match d.split[row] {
+                    SplitRow::Header(h) => {
+                        header(painter, rect, &d.diff.hunks[h].header);
+                        if let Some(a) = hunk_button(ui, rect, h, staging) {
+                            action = Some(a);
                         }
                     }
-                } else {
-                    match d.unified[row] {
-                        Row::Header(h) => {
-                            header(painter, rect, &d.diff.hunks[h].header);
-                            if let Some(a) = hunk_button(ui, rect, h, staging) {
-                                action = Some(a);
+                    SplitRow::Pair(a, b) => {
+                        let half = width / 2.0;
+                        let l = Rect::from_min_size(rect.min, egui::vec2(half, LINE));
+                        let r = Rect::from_min_size(
+                            Pos2::new(rect.left() + half, top),
+                            egui::vec2(half, LINE),
+                        );
+                        side(painter, l, d, a, false, sideways);
+                        side(painter, r, d, b, true, sideways);
+                        // Deletions are picked on the left, additions on the right.
+                        let deleted =
+                            a.filter(|&(h, i)| d.diff.hunks[h].lines[i].kind == LineKind::Delete);
+                        let added =
+                            b.filter(|&(h, i)| d.diff.hunks[h].lines[i].kind == LineKind::Add);
+                        for (at, half_rect) in [(deleted, l), (added, r)] {
+                            if let Some((h, i)) = at
+                                && let Some(picked) = gutter(
+                                    ui,
+                                    Rect::from_min_size(half_rect.min, egui::vec2(NUMBER, LINE)),
+                                    h,
+                                    i,
+                                )
+                            {
+                                action = Some(picked);
                             }
                         }
-                        Row::Line(h, l) => {
-                            unified_line(painter, rect, &d.diff.hunks[h].lines[l], &d.jobs[h][l]);
-                            if let Some(a) = gutter(
-                                ui,
-                                Rect::from_min_size(rect.min, egui::vec2(2.0 * NUMBER, LINE)),
-                                h,
-                                l,
-                            ) {
-                                action = Some(a);
-                            }
+                        painter.vline(l.right(), l.y_range(), Stroke::new(1.0, theme::border()));
+                    }
+                }
+            } else {
+                match d.unified[row] {
+                    Row::Header(h) => {
+                        header(painter, rect, &d.diff.hunks[h].header);
+                        if let Some(a) = hunk_button(ui, rect, h, staging) {
+                            action = Some(a);
+                        }
+                    }
+                    Row::Line(h, l) => {
+                        unified_line(painter, rect, &d.diff.hunks[h].lines[l], &d.jobs[h][l]);
+                        if let Some(a) = gutter(
+                            ui,
+                            Rect::from_min_size(rect.min, egui::vec2(2.0 * NUMBER, LINE)),
+                            h,
+                            l,
+                        ) {
+                            action = Some(a);
                         }
                     }
                 }
             }
-        });
+        }
+    });
+    // Side by side, the two halves go on down to the bottom of the view,
+    // past the last line.
+    let view = output.inner_rect;
+    // Each half's code has a scrollbar of its own, and the two move
+    // together: either one (or the wheel over either half) scrolls both.
+    if split {
+        let half = view.width() / 2.0;
+        let code = |i: f32| {
+            Rect::from_x_y_ranges(
+                view.left() + i * half + NUMBER + MARKER..=view.left() + (i + 1.0) * half,
+                view.y_range(),
+            )
+        };
+        let mut x = sideways;
+        for which in [0u8, 1] {
+            x = widgets::sideways_scrollbar(
+                ui,
+                sideways_id.with(which),
+                (code(f32::from(which)), view),
+                x,
+                code_width,
+            );
+        }
+        ui.data_mut(|d| d.insert_temp(sideways_id, x));
+        if x != sideways {
+            // The bar drawn first shows where they are next frame.
+            ui.ctx().request_repaint();
+        }
+    }
+    if split && let Some(end) = end.filter(|&end| end < view.bottom()) {
+        ui.painter().with_clip_rect(view).vline(
+            view.left() + width / 2.0,
+            end.max(view.top())..=view.bottom(),
+            Stroke::new(1.0, theme::border()),
+        );
+    }
     if d.diff.truncated {
         notice(
             ui,
@@ -448,7 +486,15 @@ fn number(painter: &egui::Painter, rect: Rect, n: Option<u32>) {
     }
 }
 
-fn code(painter: &egui::Painter, rect: Rect, line: &DiffLine, job: &egui::text::LayoutJob) {
+/// A line's marker and its code, scrolled `shift` to the left (under the
+/// marker, which stays put).
+fn code(
+    painter: &egui::Painter,
+    rect: Rect,
+    line: &DiffLine,
+    job: &egui::text::LayoutJob,
+    shift: f32,
+) {
     painter.text(
         Pos2::new(rect.left() + MARKER / 2.0, rect.center().y),
         egui::Align2::CENTER_CENTER,
@@ -457,12 +503,10 @@ fn code(painter: &egui::Painter, rect: Rect, line: &DiffLine, job: &egui::text::
         theme::muted(),
     );
     let galley = painter.layout_job(job.clone());
-    let clipped = painter.with_clip_rect(rect.intersect(painter.clip_rect()));
+    let text = Rect::from_min_max(Pos2::new(rect.left() + MARKER, rect.top()), rect.max);
+    let clipped = painter.with_clip_rect(text.intersect(painter.clip_rect()));
     clipped.galley(
-        Pos2::new(
-            rect.left() + MARKER,
-            rect.center().y - galley.size().y / 2.0,
-        ),
+        Pos2::new(text.left() - shift, rect.center().y - galley.size().y / 2.0),
         galley,
         theme::text(),
     );
@@ -487,15 +531,17 @@ fn unified_line(painter: &egui::Painter, rect: Rect, line: &DiffLine, job: &egui
         ),
         line.new_line,
     );
-    code(painter, body, line, job);
+    code(painter, body, line, job, 0.0);
 }
 
+/// One half of a side-by-side row; its code is `shift` scrolled sideways.
 fn side(
     painter: &egui::Painter,
     rect: Rect,
     d: &RenderedDiff,
     at: Option<(usize, usize)>,
     new: bool,
+    shift: f32,
 ) {
     let Some((h, l)) = at else {
         // Nothing on this side: a faint filler.
@@ -513,7 +559,7 @@ fn side(
         gutter,
         if new { line.new_line } else { line.old_line },
     );
-    code(painter, body, line, &d.jobs[h][l]);
+    code(painter, body, line, &d.jobs[h][l], shift);
 }
 
 fn image_preview(ui: &mut egui::Ui, pair: &ImagePair) {

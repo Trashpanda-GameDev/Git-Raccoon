@@ -489,6 +489,124 @@ fn searches_the_whole_history() {
 }
 
 #[test]
+fn a_long_diff_fills_the_view_to_the_bottom() {
+    let sample = Sample::build();
+    // 300 new lines: green from top to bottom.
+    let lines: String = (0..300).map(|i| format!("line {i}\n")).collect();
+    sample.write("long.txt", lines);
+    git(&sample, &["add", "long.txt"]);
+    git(&sample, &["commit", "-q", "-m", "Add a long file"]);
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    h.get_by_label("Add a long file").click();
+    settle(&mut h);
+    h.get_by_label("long.txt").click();
+    settle(&mut h);
+
+    for view in ["Unified", "Split"] {
+        h.get_by_label(view).click();
+        settle(&mut h);
+        // The lines go on down to the bottom of the window, with no gap
+        // left to scroll into (#38).
+        let image = h.render().expect("render");
+        let scale = h.ctx.pixels_per_point();
+        let heading = h.get_by_label("Unified").rect();
+        // Just left of the view buttons: on the added side when split.
+        let x = ((heading.left() - 20.0) * scale) as u32;
+        let bottom = image.get_pixel(x, ((h.ctx.content_rect().bottom() - 6.0) * scale) as u32);
+        // An added line's background is green; the empty view's isn't.
+        let [r, g, b, _] = bottom.0;
+        assert!(
+            g > r && g > b,
+            "{view}: green down to the bottom, not {bottom:?}"
+        );
+    }
+}
+
+#[test]
+fn side_by_side_diffs_scroll_sideways() {
+    let sample = Sample::build();
+    // A changed line whose only text, before and after, is far to the right.
+    let wide = |text: &str| {
+        format!(
+            "{}{}
+",
+            " ".repeat(300),
+            text.repeat(20)
+        )
+    };
+    sample.write("wide.txt", wide("OLD"));
+    git(&sample, &["add", "wide.txt"]);
+    git(&sample, &["commit", "-q", "-m", "Add a wide file"]);
+    sample.write("wide.txt", wide("NEW"));
+    git(&sample, &["commit", "-q", "-am", "Change the wide file"]);
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    h.get_by_label("Change the wide file").click();
+    settle(&mut h);
+    h.get_by_label("wide.txt").click();
+    settle(&mut h);
+    h.get_by_label("Split").click();
+    settle(&mut h);
+    // How much text shows in each half's code, under the hunk's heading:
+    // (old, new).
+    let text_shown = |h: &mut Harness<'_, App>| {
+        let image = h.render().expect("render");
+        let scale = h.ctx.pixels_per_point();
+        let buttons = h.get_by_label("Unified").rect();
+        let count = |from: f32| {
+            let mut bright = 0;
+            for x in from as u32..(from + 200.0) as u32 {
+                for y in (buttons.bottom() + 40.0) as u32..(buttons.bottom() + 90.0) as u32 {
+                    let [r, g, b, _] = image
+                        .get_pixel((x as f32 * scale) as u32, (y as f32 * scale) as u32)
+                        .0;
+                    if r > 150 && g > 150 && b > 150 {
+                        bright += 1;
+                    }
+                }
+            }
+            bright
+        };
+        (count(buttons.left() - 300.0), count(buttons.left() + 40.0))
+    };
+    assert_eq!(text_shown(&mut h), (0, 0), "the text is off to the right");
+
+    // Each half has a scrollbar along the bottom, and they move together:
+    // dragging the new half's to the end brings both halves' text in.
+    let bottom = h.ctx.content_rect().bottom() - 4.0;
+    let buttons = h.get_by_label("Unified").rect();
+    drag(
+        &mut h,
+        egui::pos2(buttons.left() + 30.0, bottom),
+        egui::pos2(buttons.left() + 2000.0, bottom),
+    );
+    settle(&mut h);
+    // (The bars show while the pointer is over the view.)
+    h.hover_at(buttons.left_bottom() + egui::vec2(100.0, 300.0));
+    settle(&mut h);
+    screenshot(&mut h, "38-split-sideways");
+    let (old, new) = text_shown(&mut h);
+    assert!(
+        old > 50 && new > 50,
+        "both scrolled to the text: {old}, {new}"
+    );
+
+    // The horizontal wheel over the old half moves both too: back to the start.
+    let over = buttons.left_bottom() + egui::vec2(-200.0, 120.0);
+    h.event(egui::Event::PointerMoved(over));
+    h.run_ok();
+    h.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(100_000.0, 0.0),
+        modifiers: egui::Modifiers::NONE,
+        phase: egui::TouchPhase::Move,
+    });
+    settle(&mut h);
+    assert_eq!(text_shown(&mut h), (0, 0), "both back at the start");
+}
+
+#[test]
 fn moves_through_the_graph_with_modifier_keys() {
     let sample = Sample::build();
     let mut h = harness(Settings::default());

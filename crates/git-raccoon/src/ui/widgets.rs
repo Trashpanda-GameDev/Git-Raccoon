@@ -78,6 +78,132 @@ pub const DRAG_SLIDE: f32 = 0.12;
 /// How see-through a dragged tab or heading is.
 pub const DRAG_OPACITY: f32 = 0.65;
 
+/// `area.show_rows` for rows exactly `row` tall with no gaps between
+/// them. egui works out which rows are on screen, and how tall the list
+/// is, from the row height plus the spacing it finds *before* drawing
+/// them: left in, it draws too few rows and leaves room to scroll past.
+pub fn gapless_rows<R>(
+    ui: &mut Ui,
+    area: egui::ScrollArea,
+    row: f32,
+    total: usize,
+    add: impl FnOnce(&mut Ui, std::ops::Range<usize>) -> R,
+) -> egui::scroll_area::ScrollAreaOutput<R> {
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        area.show_rows(ui, row, total, add)
+    })
+    .inner
+}
+
+/// A horizontal scrollbar along the bottom of `view`, for something
+/// `content` wide shown there `offset` scrolled; the horizontal wheel (or
+/// Shift and the wheel) over `view` moves it too. Drawn as egui draws its
+/// own (thin until pointed at, in the theme's colours, showing while the
+/// pointer is over `around`), for when one view has more than one thing
+/// scrolling sideways. Returns the new offset.
+pub fn sideways_scrollbar(
+    ui: &mut Ui,
+    id: egui::Id,
+    (view, around): (Rect, Rect),
+    offset: f32,
+    content: f32,
+) -> f32 {
+    let spare = (content - view.width()).max(0.0);
+    if spare <= 0.0 {
+        return 0.0;
+    }
+    let mut offset = offset;
+    let over_view = ui.rect_contains_pointer(view);
+    if over_view {
+        let dx = ui.input(|i| i.smooth_scroll_delta.x);
+        if dx != 0.0 {
+            offset -= dx;
+            ui.ctx().request_repaint();
+        }
+    }
+
+    let style = ui.spacing().scroll;
+    let bottom = view.bottom() - style.bar_outer_margin;
+    let full = Rect::from_x_y_ranges(view.x_range(), bottom - style.bar_width..=bottom);
+    let response = ui.interact(full, id, Sense::click_and_drag());
+    response.widget_info(|| egui::WidgetInfo::new(egui::WidgetType::ScrollBar));
+    let active = response.hovered() || response.dragged();
+    let grown = ui.ctx().animate_bool_responsive(id.with("grown"), active);
+    let thickness = if style.floating {
+        egui::lerp(style.floating_width..=style.bar_width, grown)
+    } else {
+        style.bar_width
+    };
+    let track = Rect::from_x_y_ranges(view.x_range(), bottom - thickness..=bottom);
+    let handle_width = (track.width() * view.width() / content).max(style.handle_min_length);
+    let travel = (track.width() - handle_width).max(1.0);
+
+    if response.dragged() {
+        offset += response.drag_delta().x * spare / travel;
+    } else if response.clicked()
+        && let Some(p) = response.interact_pointer_pos()
+    {
+        offset = (p.x - track.left() - handle_width / 2.0) / travel * spare;
+    }
+    let offset = offset.clamp(0.0, spare);
+
+    let handle = Rect::from_min_size(
+        Pos2::new(track.left() + offset / spare * travel, track.top()),
+        egui::vec2(handle_width, thickness),
+    );
+    let on_handle = response.hovered()
+        && ui.input(|i| i.pointer.latest_pos().is_some_and(|p| handle.contains(p)));
+    let visuals = if response.is_pointer_button_down_on() {
+        &ui.visuals().widgets.active
+    } else if on_handle {
+        &ui.visuals().widgets.hovered
+    } else {
+        &ui.visuals().widgets.inactive
+    };
+    let (handle_opacity, background_opacity) = if !style.floating {
+        (1.0, 1.0)
+    } else if active {
+        (
+            style.interact_handle_opacity,
+            style.interact_background_opacity,
+        )
+    } else {
+        let over = ui.rect_contains_pointer(around);
+        let shown = ui.ctx().animate_bool_responsive(id.with("shown"), over);
+        (
+            egui::lerp(
+                style.dormant_handle_opacity..=style.active_handle_opacity,
+                shown,
+            ),
+            if over {
+                style.active_background_opacity
+            } else {
+                style.dormant_background_opacity
+            },
+        )
+    };
+    let handle_colour = if style.foreground_color {
+        visuals.fg_stroke.color
+    } else {
+        visuals.bg_fill
+    };
+    let painter = ui.painter();
+    painter.rect_filled(
+        track,
+        visuals.corner_radius,
+        ui.visuals()
+            .extreme_bg_color
+            .gamma_multiply(background_opacity),
+    );
+    painter.rect_filled(
+        handle,
+        visuals.corner_radius,
+        handle_colour.gamma_multiply(handle_opacity),
+    );
+    offset
+}
+
 /// A filled accent button.
 pub fn primary_button(ui: &mut Ui, label: &str) -> Response {
     ui.add(

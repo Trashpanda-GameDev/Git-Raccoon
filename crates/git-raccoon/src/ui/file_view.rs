@@ -100,64 +100,50 @@ fn history(ui: &mut egui::Ui, view: &FileView, selected: Option<&str>, now: i64)
             if changes.is_empty() {
                 return message(ui, "No commits changed this file.", theme::muted());
             }
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show_rows(ui, 44.0, changes.len(), |ui, range| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    for c in &changes[range] {
-                        let (rect, response) = ui.allocate_exact_size(
-                            egui::vec2(ui.available_width(), 44.0),
-                            Sense::click(),
-                        );
-                        response.widget_info(|| {
-                            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &c.summary)
-                        });
-                        let painter = ui.painter();
-                        if selected == Some(c.id.as_str()) {
-                            painter.rect_filled(rect, 0, theme::bg_selected());
-                        } else if response.hovered() {
-                            painter.rect_filled(rect, 0, theme::bg_hover());
-                        }
-                        let inner = rect.shrink2(egui::vec2(12.0, 4.0));
-                        let top = egui::Rect::from_min_max(
-                            inner.min,
-                            egui::pos2(inner.max.x, inner.center().y),
-                        );
-                        let bottom = egui::Rect::from_min_max(
-                            egui::pos2(inner.min.x, inner.center().y),
-                            inner.max,
-                        );
-                        widgets::text_in(
-                            painter,
-                            top,
-                            &c.summary,
-                            theme::body(13.0),
-                            theme::text(),
-                        );
-                        let mut detail = format!(
-                            "{}  ·  {}  ·  {}",
-                            format::short_sha(&c.id),
-                            c.author,
-                            format::age(c.time, now)
-                        );
-                        if c.path != view.file {
-                            detail.push_str(&format!("  ·  as {}", c.path));
-                        }
-                        widgets::text_in(
-                            painter,
-                            bottom,
-                            &detail,
-                            theme::body(11.0),
-                            theme::muted(),
-                        );
-                        if response.clicked() {
-                            action = Some(Action::Pick {
-                                id: c.id.clone(),
-                                path: c.path.clone(),
-                            });
-                        }
+            let area = egui::ScrollArea::vertical().auto_shrink([false, false]);
+            widgets::gapless_rows(ui, area, 44.0, changes.len(), |ui, range| {
+                for c in &changes[range] {
+                    let (rect, response) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), 44.0),
+                        Sense::click(),
+                    );
+                    response.widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &c.summary)
+                    });
+                    let painter = ui.painter();
+                    if selected == Some(c.id.as_str()) {
+                        painter.rect_filled(rect, 0, theme::bg_selected());
+                    } else if response.hovered() {
+                        painter.rect_filled(rect, 0, theme::bg_hover());
                     }
-                });
+                    let inner = rect.shrink2(egui::vec2(12.0, 4.0));
+                    let top = egui::Rect::from_min_max(
+                        inner.min,
+                        egui::pos2(inner.max.x, inner.center().y),
+                    );
+                    let bottom = egui::Rect::from_min_max(
+                        egui::pos2(inner.min.x, inner.center().y),
+                        inner.max,
+                    );
+                    widgets::text_in(painter, top, &c.summary, theme::body(13.0), theme::text());
+                    let mut detail = format!(
+                        "{}  ·  {}  ·  {}",
+                        format::short_sha(&c.id),
+                        c.author,
+                        format::age(c.time, now)
+                    );
+                    if c.path != view.file {
+                        detail.push_str(&format!("  ·  as {}", c.path));
+                    }
+                    widgets::text_in(painter, bottom, &detail, theme::body(11.0), theme::muted());
+                    if response.clicked() {
+                        action = Some(Action::Pick {
+                            id: c.id.clone(),
+                            path: c.path.clone(),
+                        });
+                    }
+                }
+            });
         });
     action
 }
@@ -191,92 +177,90 @@ fn blame(ui: &mut egui::Ui, view: &FileView, now: i64) -> Option<Action> {
         times.iter().copied().max().unwrap_or(1),
     );
     let digits = blame.lines.len().to_string().len();
-    egui::ScrollArea::both()
-        .auto_shrink([false, false])
-        .show_rows(ui, ROW, blame.lines.len(), |ui, range| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            for n in range {
-                let line = &blame.lines[n];
-                let commit = &blame.commits[line.commit];
-                let width = ui.available_width().max(GUTTER + 400.0);
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(width, ROW), Sense::hover());
-                let gutter = egui::Rect::from_min_size(rect.min, egui::vec2(GUTTER, ROW));
-                let response = ui.interact(gutter, ui.id().with(("blame", n)), Sense::click());
-                let painter = ui.painter();
-                painter.rect_filled(gutter, 0, theme::bg_raised());
-                // The age stripe.
-                #[expect(clippy::cast_precision_loss, reason = "a colour weight")]
-                let recency = if commit.time == 0 {
-                    1.0
-                } else {
-                    (commit.time - oldest) as f32 / ((newest - oldest).max(1)) as f32
+    let area = egui::ScrollArea::both().auto_shrink([false, false]);
+    widgets::gapless_rows(ui, area, ROW, blame.lines.len(), |ui, range| {
+        for n in range {
+            let line = &blame.lines[n];
+            let commit = &blame.commits[line.commit];
+            let width = ui.available_width().max(GUTTER + 400.0);
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(width, ROW), Sense::hover());
+            let gutter = egui::Rect::from_min_size(rect.min, egui::vec2(GUTTER, ROW));
+            let response = ui.interact(gutter, ui.id().with(("blame", n)), Sense::click());
+            let painter = ui.painter();
+            painter.rect_filled(gutter, 0, theme::bg_raised());
+            // The age stripe.
+            #[expect(clippy::cast_precision_loss, reason = "a colour weight")]
+            let recency = if commit.time == 0 {
+                1.0
+            } else {
+                (commit.time - oldest) as f32 / ((newest - oldest).max(1)) as f32
+            };
+            painter.rect_filled(
+                egui::Rect::from_min_size(gutter.min, egui::vec2(3.0, ROW)),
+                0,
+                theme::accent().gamma_multiply(0.25 + 0.75 * recency),
+            );
+            if line.starts_run {
+                painter.hline(
+                    rect.x_range(),
+                    rect.top(),
+                    Stroke::new(1.0, theme::border()),
+                );
+                let who = match &commit.id {
+                    Some(id) => format!(
+                        "{}  {}  {}",
+                        format::short_sha(id),
+                        commit.author,
+                        format::age(commit.time, now)
+                    ),
+                    None => "Not committed yet".to_string(),
                 };
-                painter.rect_filled(
-                    egui::Rect::from_min_size(gutter.min, egui::vec2(3.0, ROW)),
-                    0,
-                    theme::accent().gamma_multiply(0.25 + 0.75 * recency),
+                widgets::text_in(
+                    painter,
+                    gutter.shrink2(egui::vec2(10.0, 0.0)),
+                    &who,
+                    theme::body(11.0),
+                    if response.hovered() {
+                        theme::text()
+                    } else {
+                        theme::muted()
+                    },
                 );
-                if line.starts_run {
-                    painter.hline(
-                        rect.x_range(),
-                        rect.top(),
-                        Stroke::new(1.0, theme::border()),
+                if let Some(id) = &commit.id {
+                    let label = format!(
+                        "Commit {} by {}: {}",
+                        format::short_sha(id),
+                        commit.author,
+                        commit.summary
                     );
-                    let who = match &commit.id {
-                        Some(id) => format!(
-                            "{}  {}  {}",
-                            format::short_sha(id),
-                            commit.author,
-                            format::age(commit.time, now)
-                        ),
-                        None => "Not committed yet".to_string(),
-                    };
-                    widgets::text_in(
-                        painter,
-                        gutter.shrink2(egui::vec2(10.0, 0.0)),
-                        &who,
-                        theme::body(11.0),
-                        if response.hovered() {
-                            theme::text()
-                        } else {
-                            theme::muted()
-                        },
-                    );
-                    if let Some(id) = &commit.id {
-                        let label = format!(
-                            "Commit {} by {}: {}",
-                            format::short_sha(id),
-                            commit.author,
-                            commit.summary
-                        );
-                        response.widget_info(|| {
-                            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label)
-                        });
-                        if response.clicked() {
-                            action = Some(Action::GoTo(id.clone()));
-                        }
-                        let tip = format!("{}\n{}", commit.summary, format::date_time(commit.time));
-                        response.on_hover_text(tip);
+                    response.widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label)
+                    });
+                    if response.clicked() {
+                        action = Some(Action::GoTo(id.clone()));
                     }
+                    let tip = format!("{}\n{}", commit.summary, format::date_time(commit.time));
+                    response.on_hover_text(tip);
                 }
-                let number = format!("{:>digits$}", n + 1);
-                painter.text(
-                    egui::pos2(gutter.right() + 8.0, rect.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    number,
-                    egui::FontId::monospace(12.0),
-                    theme::muted(),
-                );
-                #[expect(clippy::cast_precision_loss, reason = "a few digits")]
-                let text_x = gutter.right() + 20.0 + digits as f32 * 8.0;
-                painter.text(
-                    egui::pos2(text_x, rect.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    line.text.replace('\t', "    "),
-                    egui::FontId::monospace(12.0),
-                    theme::text(),
-                );
             }
-        });
+            let number = format!("{:>digits$}", n + 1);
+            painter.text(
+                egui::pos2(gutter.right() + 8.0, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                number,
+                egui::FontId::monospace(12.0),
+                theme::muted(),
+            );
+            #[expect(clippy::cast_precision_loss, reason = "a few digits")]
+            let text_x = gutter.right() + 20.0 + digits as f32 * 8.0;
+            painter.text(
+                egui::pos2(text_x, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                line.text.replace('\t', "    "),
+                egui::FontId::monospace(12.0),
+                theme::text(),
+            );
+        }
+    });
     action
 }

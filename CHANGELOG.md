@@ -6,6 +6,8 @@ release page). Newest first; a version's heading is just its number.
 ## 0.5.11
 
 - **A graph with many branches scrolls sideways**: use the horizontal wheel (or Shift and the wheel) over it, or drag the bar under the Graph heading. Jumping to a commit brings its line into view.
+- **Side-by-side diffs scroll sideways** for long lines: each half has a scrollbar along the bottom, as the unified view has, and the two halves move together, by either bar or the horizontal wheel (or Shift and the wheel). The line numbers stay put. They used to cut long lines off.
+- **Diffs, file history and blame fill the window**: the lines went only part of the way down, and the rest was left to scroll into.
 - **Right-click a branch or tag on the graph** for its menu: what the sidebar offers for it (check out, merge, rebase, rename, delete…), then what can be done with its commit. Before, nothing opened.
 - **Move through the graph faster**: Shift+↓/↑ follows the selected commit's branch, past commits on other branches, Ctrl+↓/↑ jumps between commits with a branch or tag, Home and End go to the newest and oldest commit, and Ctrl+H to the checked-out one.
 - **Search from the toolbar, in a small box over the graph**: the new Search button does what Ctrl+F does, and the search now opens in a box at the top right of the graph instead of a bar across it. It shows which match you're on ("3 of 40").
