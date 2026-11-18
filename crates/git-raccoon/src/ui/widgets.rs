@@ -63,6 +63,12 @@ pub fn icon_button(ui: &mut Ui, glyph: &str, tooltip: &str) -> Response {
     response.on_hover_text(tooltip)
 }
 
+/// How long things take to slide out of the way of one being dragged
+/// (a tab, a column heading), in seconds.
+pub const DRAG_SLIDE: f32 = 0.12;
+/// How see-through a dragged tab or heading is.
+pub const DRAG_OPACITY: f32 = 0.65;
+
 /// A filled accent button.
 pub fn primary_button(ui: &mut Ui, label: &str) -> Response {
     ui.add(

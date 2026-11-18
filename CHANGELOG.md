@@ -6,6 +6,7 @@ release page). Newest first; a version's heading is just its number.
 ## 0.5.11
 
 - **A graph with many branches scrolls sideways**: use the horizontal wheel (or Shift and the wheel) over it, or drag the bar under the Graph heading. Jumping to a commit brings its line into view.
+- **Dragging a tab shows where it will go**: it follows the pointer, see-through, and the other tabs slide aside to make room; let go to put it there.
 - **Branch labels no longer stop the graph scrolling**: they only spread out when the pointer rests on them, not while the list scrolls past.
 - **Write the commit summary in the WIP row** at the top of the graph: it's the same text as the box under Commit, and the stash dialog starts with it as the stash's title. The field starts small, so the change counts stay in view, and grows as you write.
 - **The WIP row's dashed line runs down to the commit you're on**, past any newer commits on other branches.

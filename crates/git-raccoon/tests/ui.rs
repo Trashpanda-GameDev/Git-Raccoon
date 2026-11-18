@@ -3852,11 +3852,44 @@ fn keeps_repositories_in_tabs() {
             .unwrap()
     };
     let from = tab(&h, &name_a);
-    drag(
-        &mut h,
-        from.center(),
-        from.center() + egui::vec2(from.width() * 1.6, 0.0),
+    let other = tab(&h, &name_b);
+    let to = from.center() + egui::vec2(from.width() * 1.6, 0.0);
+    h.event(egui::Event::PointerMoved(from.center()));
+    h.run_ok();
+    h.event(egui::Event::PointerButton {
+        pos: from.center(),
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_ok();
+    for i in 1..=10 {
+        h.event(egui::Event::PointerMoved(
+            from.center() + (to - from.center()) * (i as f32 / 10.0),
+        ));
+        h.step();
+    }
+    h.step();
+    // While it's held, it follows the pointer and the other slides over to
+    // make room; nothing has moved yet.
+    assert_eq!(tab_names(&h).0, vec![name_a.clone(), name_b.clone()]);
+    let held = tab(&h, &name_a);
+    assert!((held.center().x - to.x).abs() < 1.0, "under the pointer");
+    let made_room = tab(&h, &name_b);
+    assert!(
+        (made_room.left() - from.left()).abs() < 1.0,
+        "slid from {} to {}",
+        other.left(),
+        made_room.left()
     );
+    screenshot(&mut h, "41-tab-drag");
+    h.event(egui::Event::PointerButton {
+        pos: to,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_ok();
     assert_eq!(tab_names(&h), (vec![name_b.clone(), name_a.clone()], 1));
     assert!(h.state().repo().unwrap().path().contains(&name_a));
     assert_eq!(h.state().settings().open_tabs.len(), 2);
