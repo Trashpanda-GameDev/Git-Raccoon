@@ -13,6 +13,10 @@ pub const LABELS: f32 = 150.0;
 pub const FIELDS: f32 = 400.0;
 /// The width of the places down the side.
 pub const PLACES: f32 = 190.0;
+/// How tall a dropdown with a long list is. It's this tall from when it
+/// opens: egui keeps a dropdown the size it opened at, which would be a line
+/// or two if its list is still loading.
+pub const LIST_HEIGHT: f32 = 280.0;
 
 /// The forges, in the order they're listed.
 pub const FORGES: [Forge; 3] = [Forge::GitHub, Forge::GitLab, Forge::SelfManaged];

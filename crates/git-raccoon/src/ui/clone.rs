@@ -11,7 +11,9 @@ use git_raccoon_core::sync::Progress;
 
 use crate::forge::Account;
 use crate::theme;
-use crate::ui::side_form::{self, FIELDS, check, field, field_sized, label, place_row};
+use crate::ui::side_form::{
+    self, FIELDS, LIST_HEIGHT, check, field, field_sized, label, place_row,
+};
 use crate::ui::sign_in;
 
 /// Where a clone comes from.
@@ -146,10 +148,11 @@ fn repository_picker(ui: &mut egui::Ui, form: &mut Form) {
     let combo = egui::ComboBox::from_id_salt("clone-repo")
         .selected_text(shown)
         .width(FIELDS)
-        .height(280.0)
+        .height(LIST_HEIGHT)
         // Typing in its search field mustn't close it.
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show_ui(ui, |ui| {
+            ui.set_min_height(LIST_HEIGHT);
             let search = field_sized(
                 ui,
                 &mut form.search,

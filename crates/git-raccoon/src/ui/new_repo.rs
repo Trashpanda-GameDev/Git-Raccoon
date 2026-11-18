@@ -12,7 +12,7 @@ use git_raccoon_core::{branch, create};
 use crate::forge::Account;
 use crate::forge::templates::{Template, Templates};
 use crate::theme;
-use crate::ui::side_form::{self, FIELDS, check, field, label, place_row};
+use crate::ui::side_form::{self, FIELDS, LIST_HEIGHT, check, field, label, place_row};
 use crate::ui::sign_in;
 
 /// Where a new repository goes.
@@ -149,23 +149,39 @@ pub enum Action {
     Stop,
 }
 
-/// A template picker: "None" or one of `offered`; `id` is its name for
-/// screen readers. Returns whether it's open.
+/// A template picker: "None" or one of `offered` (`None` while they load,
+/// or why they couldn't be had); `id` is its name for screen readers.
+/// Returns whether it's open.
 fn template_picker(
     ui: &mut egui::Ui,
     id: &str,
     chosen: &mut Option<Template>,
-    offered: Option<&[Template]>,
+    offered: Option<Result<&[Template], &str>>,
 ) -> bool {
     let shown = chosen.as_ref().map_or("None", |t| t.name.as_str());
     let combo = egui::ComboBox::from_id_salt(id)
         .selected_text(shown)
         .width(FIELDS)
-        .height(320.0)
+        .height(LIST_HEIGHT)
         .show_ui(ui, |ui| {
+            // (Its list is fetched once it's first opened.)
+            ui.set_min_height(LIST_HEIGHT);
             ui.selectable_value(chosen, None, "None");
-            for t in offered.unwrap_or_default() {
-                ui.selectable_value(chosen, Some(t.clone()), &t.name);
+            match offered {
+                Some(Ok(offered)) => {
+                    for t in offered {
+                        ui.selectable_value(chosen, Some(t.clone()), &t.name);
+                    }
+                }
+                Some(Err(e)) => {
+                    ui.label(RichText::new(e).color(theme::danger()));
+                }
+                None => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(RichText::new("Loading…").color(theme::muted()));
+                    });
+                }
             }
         });
     ui.ctx()
@@ -252,14 +268,18 @@ fn details(ui: &mut egui::Ui, form: &mut Form, accounts: &[Account], action: &mu
                 field(ui, &mut form.branch, "First branch name", "main");
             });
             ui.end_row();
-            let offered = form.templates.as_ref().and_then(|t| t.as_ref().ok());
+            let offered = |list: fn(&Templates) -> &[Template]| {
+                form.templates
+                    .as_ref()
+                    .map(|t| t.as_ref().map(list).map_err(String::as_str))
+            };
             label(ui, ".gitignore template");
             ui.add_enabled_ui(here_too, |ui| {
                 let open = template_picker(
                     ui,
                     "Choose a .gitignore template",
                     &mut form.gitignore,
-                    offered.map(|t| t.gitignores.as_slice()),
+                    offered(|t| &t.gitignores),
                 );
                 form.want_templates |= open;
             });
@@ -270,7 +290,7 @@ fn details(ui: &mut egui::Ui, form: &mut Form, accounts: &[Account], action: &mu
                     ui,
                     "Choose a licence",
                     &mut form.license,
-                    offered.map(|t| t.licenses.as_slice()),
+                    offered(|t| &t.licenses),
                 );
                 form.want_templates |= open;
             });
