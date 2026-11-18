@@ -16,6 +16,12 @@ const GRAPH_PADDING: f32 = 12.0;
 const DOT_RADIUS: f32 = 6.0;
 /// The length of the dashes (and gaps) in the working changes' line.
 const WIP_DASH: f32 = 3.0;
+/// The working changes' summary field grows with what's written, from
+/// this...
+const WIP_FIELD_MIN: f32 = 140.0;
+/// ...to this (or the room there is), then scrolls.
+const WIP_FIELD_MAX: f32 = 520.0;
+const WIP_HINT: &str = "Write a summary";
 /// Very wide graphs are clipped to this.
 const MAX_GRAPH_COLUMN: f32 = 320.0;
 /// Rows drawn above and below the visible ones.
@@ -931,7 +937,7 @@ fn working_row(
     graph.extend(egui::Shape::dashed_line(&points, dashed, 2.5, 2.0));
 
     // The commit summary (the same text as under Commit, and the stash's
-    // title), then the counts after it in the same (wide) column.
+    // title), then the counts right after it in the same (wide) column.
     let (start, run) = cols.message_run(width);
     let message = cell(start, run);
     let mut parts = Vec::new();
@@ -942,7 +948,19 @@ fn working_row(
         parts.push(format!("{staged} staged"));
     }
     let counts = painter.layout_no_wrap(parts.join(" · "), theme::body(12.0), theme::muted());
-    let field_right = (message.right() - counts.size().x - 12.0).max(message.left());
+    // Only as wide as what's written, so the counts stay close by.
+    let font = theme::body(theme::FONT_SIZE);
+    let written = match repo.draft.summary.as_str() {
+        "" => WIP_HINT,
+        s => s,
+    };
+    let text = painter.layout_no_wrap(written.to_string(), font.clone(), theme::text());
+    let room = message.width() - counts.size().x - 12.0;
+    let field_width = (text.size().x + 24.0)
+        .clamp(WIP_FIELD_MIN, WIP_FIELD_MAX)
+        .min(room)
+        .max(0.0);
+    let field_right = message.left() + field_width;
     let field = Rect::from_min_max(
         Pos2::new(message.left() - 4.0, message.top() + 3.0),
         Pos2::new(field_right, message.bottom() - 3.0),
@@ -953,8 +971,8 @@ fn working_row(
         egui::TextEdit::singleline(&mut repo.draft.summary)
             // Kept while the row's selection redraws what's around it.
             .id(egui::Id::new("wip-summary"))
-            .hint_text("Working changes: write a summary")
-            .font(theme::body(theme::FONT_SIZE))
+            .hint_text(WIP_HINT)
+            .font(font)
             .vertical_align(egui::Align::Center)
             .interactive(!committing),
     );

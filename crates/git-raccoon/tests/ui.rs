@@ -1222,7 +1222,22 @@ fn stashes_pops_and_drops() {
             .is_some_and(|s| !s.is_clean())
     });
     // The summary written in the WIP row is the commit's, and titles the stash.
+    // Its field starts small, and grows with what's written.
+    let empty = h.get_by_label("WIP summary").rect().width();
     type_into(&mut h, "WIP summary", "try another approach");
+    settle(&mut h);
+    let written = h.get_by_label("WIP summary").rect().width();
+    assert!(written > empty, "{empty} grew to {written}");
+    h.get_by_label("WIP summary")
+        .type_text(&" and then another, and another".repeat(10));
+    settle(&mut h);
+    let long = h.get_by_label("WIP summary").rect().width();
+    assert!(long > written && long <= 520.5, "capped: {long}");
+    h.get_by_label("WIP summary").click();
+    h.run_ok();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+    h.get_by_label("WIP summary")
+        .type_text("try another approach");
     settle(&mut h);
     assert!(
         h.state().repo().unwrap().working_selected,
