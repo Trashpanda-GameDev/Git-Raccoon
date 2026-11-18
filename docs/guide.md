@@ -46,7 +46,7 @@ Your open repositories come back the next time you start Git Raccoon.
 - **Sizes and columns:** drag the edge of the sidebar or the details pane to make it as wide or narrow as you like. Drag a column heading in the graph (Graph, Commit message, Author…) left or right to move that column: the others make room as you go. Drag the edge after a heading to make that column wider or narrower (the commit message takes the room that's left, and no column gets narrower than its heading), or double-click the edge to fit the column to what's on screen. Right-click a heading to put the order or the widths back as they were.
 - **The details pane** (right) shows the selected commit: its message, author, date, parents and changed files. Click a file to see its diff.
 - **Diffs** show unified or side by side, with syntax highlighting, the changed words marked, and images previewed.
-- **Search:** press Ctrl+F for the search bar, to find commits by message, author or SHA, or by the files they touch. Enter and Shift+Enter go through the matches; Esc closes it.
+- **Search:** press Ctrl+F, or **Search** in the toolbar, for the search box over the top right of the graph, to find commits by message, author or SHA, or (with the file button) by the files they touch. Enter and Shift+Enter, or the arrows, go through the matches, and the box shows which one you're on ("3 of 40"); Esc closes it.
 
 The toolbar has the repository menu (your recent repositories, to switch to one), the current branch, Branch (a new branch from the checked-out commit), Fetch, Pull and Push, Undo, the command palette and settings.
 

@@ -22,6 +22,8 @@ pub enum Action {
     Push,
     CancelSync,
     Palette,
+    /// Search the commits (as Ctrl+F does).
+    Search,
     Settings,
     Feedback,
     /// Open a terminal in the repository's folder.
@@ -64,6 +66,8 @@ pub fn show(
     update: Option<&str>,
 ) -> Option<Action> {
     let mut action = None;
+    // Commits can only be searched in a repository.
+    let searchable = repo.is_some();
     ui.horizontal_centered(|ui| {
         if widgets::icon_button(ui, icon::SIDEBAR_SIMPLE, "Show or hide the sidebar").clicked() {
             action = Some(Action::ToggleSidebar);
@@ -243,6 +247,23 @@ pub fn show(
                 .clicked()
             {
                 action = Some(Action::Palette);
+            }
+            if searchable {
+                let shortcut = crate::commands::shortcut(&crate::commands::Command::Find)
+                    .map(|s| ui.ctx().format_shortcut(&s))
+                    .unwrap_or_default();
+                let button = ui.button(
+                    RichText::new(format!("{}  Search  {shortcut}", icon::MAGNIFYING_GLASS))
+                        .size(12.0),
+                );
+                ui.ctx()
+                    .accesskit_node_builder(button.id, |n| n.set_label("Search"));
+                if button
+                    .on_hover_text("Search the commits: messages, authors, SHAs or changed files")
+                    .clicked()
+                {
+                    action = Some(Action::Search);
+                }
             }
         });
         if opening {

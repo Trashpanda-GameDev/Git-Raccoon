@@ -63,6 +63,15 @@ pub fn icon_button(ui: &mut Ui, glyph: &str, tooltip: &str) -> Response {
     response.on_hover_text(tooltip)
 }
 
+/// The shadow under a panel floating over the rest (the search box, a
+/// commit's spread-out labels).
+pub const POPUP_SHADOW: egui::Shadow = egui::Shadow {
+    offset: [0, 4],
+    blur: 12,
+    spread: 0,
+    color: Color32::from_black_alpha(90),
+};
+
 /// How long things take to slide out of the way of one being dragged
 /// (a tab, a column heading), in seconds.
 pub const DRAG_SLIDE: f32 = 0.12;

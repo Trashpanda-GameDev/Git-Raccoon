@@ -1378,12 +1378,7 @@ fn all_labels(
                 .stroke(Stroke::new(1.0, theme::border()))
                 .corner_radius(6)
                 .inner_margin(PAD)
-                .shadow(egui::Shadow {
-                    offset: [0, 4],
-                    blur: 12,
-                    spread: 0,
-                    color: Color32::from_black_alpha(90),
-                })
+                .shadow(widgets::POPUP_SHADOW)
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = GAP;
                     for (r, on_remote) in labels(c) {

@@ -24,6 +24,8 @@ enum Update {
 pub struct Search {
     /// Whether the search bar is showing (Ctrl+F opens it, Esc closes it).
     pub open: bool,
+    /// Put the cursor in the search field the next time it's drawn.
+    pub focus: bool,
     pub query: String,
     pub field: SearchField,
     /// Matching rows found so far, in history order.
@@ -48,6 +50,7 @@ impl Default for Search {
     fn default() -> Self {
         Search {
             open: false,
+            focus: false,
             query: String::new(),
             field: SearchField::Text,
             rows: Vec::new(),

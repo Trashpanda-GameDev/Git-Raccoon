@@ -429,19 +429,23 @@ fn searches_the_whole_history() {
     settle(&mut h);
     let rows = h.state().repo().unwrap().search_rows().to_vec();
     assert_eq!(rows.len(), 2, "two commits mention lanes");
+    h.get_by_label("2 matches");
+    // Enter steps through them, and the box says which one is showing.
     h.key_press(Key::Enter);
     settle(&mut h);
     assert_eq!(selected_summary(&h).as_deref(), Some("Colour lanes"));
+    h.get_by_label("1 of 2");
     h.key_press(Key::Enter);
     settle(&mut h);
     assert_eq!(
         selected_summary(&h).as_deref(),
         Some("Lay out commit lanes")
     );
+    h.get_by_label("2 of 2");
     screenshot(&mut h, "7-search");
 
     // File-path search.
-    h.get_by_label("File").click();
+    h.get_by_label("Search file paths").click();
     h.run_ok();
     h.get_by_label("Search commits").click();
     h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
@@ -474,6 +478,14 @@ fn searches_the_whole_history() {
     h.get_by_label("Close search (Esc)").click();
     h.run_ok();
     assert!(h.query_by_label("Search commits").is_none());
+
+    // The toolbar's Search button opens it as Ctrl+F does, ready to type in.
+    h.get_by_label("Search").click();
+    h.run_ok();
+    h.get_by_label("Search commits");
+    h.event(egui::Event::Text("lanes".into()));
+    h.run_ok();
+    assert_eq!(h.state().repo().unwrap().search.query, "lanes");
 }
 
 #[test]

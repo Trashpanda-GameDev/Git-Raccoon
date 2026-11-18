@@ -1002,7 +1002,7 @@ impl App {
                         repo.planner = None;
                         repo.conflict = None;
                         repo.search.open = true;
-                        ctx.memory_mut(|m| m.request_focus(search_bar::input_id()));
+                        repo.search.focus = true;
                     }
                     Command::Undo => repo.undo(ctx),
                     Command::Fetch => repo.run(ctx, Op::Fetch),
@@ -1529,6 +1529,7 @@ impl App {
             Some(toolbar::Action::Forget(p)) => self.settings.forget(&p),
             Some(toolbar::Action::NewBranch) => self.run_command(&ctx, Command::NewBranch),
             Some(toolbar::Action::Palette) => self.run_command(&ctx, Command::Palette),
+            Some(toolbar::Action::Search) => self.run_command(&ctx, Command::Find),
             Some(toolbar::Action::Settings) => self.run_command(&ctx, Command::Settings),
             Some(toolbar::Action::Feedback) => self.run_command(&ctx, Command::Feedback),
             Some(toolbar::Action::Terminal) => self.run_command(&ctx, Command::Terminal),
@@ -2069,19 +2070,9 @@ impl App {
                     }
                     return;
                 }
-                // The search bar, while searching (Ctrl+F).
+                // The search box over the history, while searching (Ctrl+F).
                 if repo.search.open {
-                    Frame::new()
-                        .inner_margin(Margin::symmetric(12, 0))
-                        .show(ui, |ui| {
-                            ui.set_height(36.0);
-                            search_bar::show(ui, repo);
-                        });
-                    ui.painter().hline(
-                        ui.max_rect().x_range(),
-                        ui.cursor().top(),
-                        egui::Stroke::new(1.0, theme::border()),
-                    );
+                    search_bar::show(&ctx, ui.max_rect(), repo);
                 }
                 match history::show(
                     ui,
