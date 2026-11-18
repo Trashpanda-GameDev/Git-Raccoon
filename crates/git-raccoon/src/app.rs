@@ -15,7 +15,7 @@ use git_raccoon_core::sync::Progress;
 
 use crate::commands::{self, Command, Entry};
 use crate::repo_view::FileMode;
-use crate::ui::{clone, conflict, file_view, palette, rebase, tabs};
+use crate::ui::{clone, conflict, file_view, new_repo, palette, rebase, tabs};
 use crate::ui::{
     details, dialog, diff, history, search_bar, sidebar, toolbar, welcome, widgets, working,
 };
@@ -44,7 +44,10 @@ pub struct App {
     /// Loading an account's repositories (for that account), and making
     /// a new one there, for the clone dialog.
     clone_repos: Option<(usize, Task<RepoList>)>,
-    clone_make: Option<Task<Result<crate::forge::accounts::Repo, String>>>,
+    /// The new-repository dialog, its templates loading, and the job making it.
+    new_repo: Option<new_repo::Form>,
+    new_repo_templates: Option<(new_repo::TemplatesFrom, Task<TemplateList>)>,
+    making: Option<Making>,
     cloning: Option<Cloning>,
     /// The command palette, while open.
     palette: Option<palette::State>,
@@ -97,6 +100,25 @@ fn side_range(ui: &egui::Ui, min: f32) -> std::ops::RangeInclusive<f32> {
 
 /// An account's repositories, or why they couldn't be listed.
 type RepoList = Result<Vec<crate::forge::accounts::Repo>, String>;
+
+/// A forge's templates, or why they couldn't be listed.
+type TemplateList = Result<crate::forge::templates::Templates, String>;
+
+/// A new repository being made in the background: what it's doing, and
+/// where it opens when it's done (`Err(None)`: stopped).
+struct Making {
+    doing: Arc<Mutex<String>>,
+    cancel: Arc<AtomicBool>,
+    task: Task<Result<Made, Option<String>>>,
+}
+
+/// What making a new repository came to.
+enum Made {
+    /// A copy on this computer, to open.
+    Here(PathBuf),
+    /// Made on a forge only: its path there ("owner/name").
+    There(String),
+}
 
 /// A clone running in the background.
 struct Cloning {
@@ -169,7 +191,9 @@ impl App {
             prompt: None,
             clone_form: None,
             clone_repos: None,
-            clone_make: None,
+            new_repo: None,
+            new_repo_templates: None,
+            making: None,
             cloning: None,
             palette: None,
             settings_open: false,
@@ -190,10 +214,10 @@ impl App {
         }
     }
 
-    /// Opens the clone dialog.
-    pub fn show_clone(&mut self) {
-        let parent = self
-            .settings
+    /// Where clones and new repositories go to start with: where the last
+    /// one went, or the home folder.
+    fn clone_parent(&self) -> String {
+        self.settings
             .clone_dir
             .clone()
             .or_else(|| {
@@ -201,14 +225,119 @@ impl App {
                     .or_else(|_| std::env::var("HOME"))
                     .ok()
             })
-            .unwrap_or_default();
+            .unwrap_or_default()
+    }
+
+    /// Opens the clone dialog.
+    pub fn show_clone(&mut self) {
         // Signed in somewhere: start with the first account's repositories.
         let account = (!self.settings.accounts.is_empty()).then_some(0);
         self.clone_form = Some(clone::Form {
-            parent,
+            parent: self.clone_parent(),
             account,
             ..clone::Form::default()
         });
+    }
+
+    /// Opens the new-repository dialog: on this computer only, to start with.
+    pub fn show_new_repository(&mut self) {
+        self.new_repo = Some(new_repo::Form::new(
+            self.clone_parent(),
+            git_raccoon_core::modules::lfs_installed(),
+        ));
+    }
+
+    /// The new-repository dialog: its templates, and making it.
+    fn new_repo_dialog(&mut self, ctx: &egui::Context) {
+        let Some(form) = &mut self.new_repo else {
+            self.new_repo_templates = None;
+            return;
+        };
+        // The templates for where it's going (an account's forge, or
+        // GitHub's), once a picker is opened.
+        let wanted = form.templates_wanted();
+        if form.want_templates && form.templates_from != Some(wanted) {
+            form.templates_from = Some(wanted);
+            form.templates = None;
+            form.gitignore = None;
+            form.license = None;
+            let account = wanted.and_then(|i| self.settings.accounts.get(i)).cloned();
+            self.new_repo_templates = Some((
+                wanted,
+                Task::spawn(ctx, move || {
+                    let source = match &account {
+                        Some(a) => crate::forge::accounts::templates_source(a)?,
+                        None => crate::forge::templates::Source::github(),
+                    };
+                    crate::forge::templates::list(&source)
+                }),
+            ));
+        }
+        if let Some((from, task)) = &self.new_repo_templates
+            && let Some(result) = task.poll()
+        {
+            if form.templates_from == Some(*from) {
+                form.templates = Some(result);
+            }
+            self.new_repo_templates = None;
+        }
+        // Being made, or made.
+        if let Some(making) = &self.making {
+            if let Some(result) = making.task.poll() {
+                self.making = None;
+                form.progress = None;
+                match result {
+                    Ok(Made::Here(dir)) => {
+                        self.new_repo = None;
+                        self.open(ctx, dir.to_string_lossy());
+                        return;
+                    }
+                    Ok(Made::There(path)) => {
+                        form.done = Some(format!("Made {path} on {}.", form.place_name()));
+                    }
+                    Err(Some(e)) => form.error = Some(e),
+                    Err(None) => {}
+                }
+            } else if let Ok(doing) = making.doing.lock() {
+                form.progress = Some(doing.clone());
+            }
+        }
+        match new_repo::show(ctx, form, &self.settings.accounts) {
+            Some(new_repo::Action::Browse) => {
+                if let Some(dir) = rfd::FileDialog::new()
+                    .set_title("Where to put the new repository")
+                    .pick_folder()
+                {
+                    form.parent = dir.to_string_lossy().into_owned();
+                }
+            }
+            Some(new_repo::Action::SignIn(place)) => {
+                self.sign_in = Some(crate::ui::sign_in::SignIn {
+                    place,
+                    ..crate::ui::sign_in::SignIn::default()
+                });
+            }
+            Some(new_repo::Action::Create) => {
+                form.error = None;
+                form.progress = Some("Starting…".into());
+                if form.here_too() {
+                    self.settings.clone_dir = Some(form.parent.trim().to_string());
+                }
+                let account = form
+                    .account
+                    .and_then(|i| self.settings.accounts.get(i))
+                    .cloned();
+                self.making = Some(start_making(ctx, form, account));
+            }
+            Some(new_repo::Action::Stop) => {
+                if let Some(m) = &self.making {
+                    m.cancel.store(true, Ordering::Relaxed);
+                }
+            }
+            // (Not while it's being made: Stop first.)
+            Some(new_repo::Action::Cancel) if self.making.is_none() => self.new_repo = None,
+            Some(new_repo::Action::Cancel) | None => {}
+        }
     }
 
     pub fn is_cloning(&self) -> bool {
@@ -262,7 +391,6 @@ impl App {
     fn clone_dialog(&mut self, ctx: &egui::Context) {
         let Some(form) = &mut self.clone_form else {
             self.clone_repos = None;
-            self.clone_make = None;
             return;
         };
         // The picked account's repositories.
@@ -284,58 +412,12 @@ impl App {
                 Task::spawn(ctx, move || crate::forge::accounts::repositories(&account)),
             ));
         }
-        // A new repository, made: clone it.
-        let mut made = false;
-        if let Some(result) = self.clone_make.as_ref().and_then(Task::poll) {
-            self.clone_make = None;
-            form.making = false;
-            match result {
-                Ok(repo) => {
-                    form.url = repo.clone_url;
-                    if !form.name_edited {
-                        form.name = create::folder_name(&form.url);
-                    }
-                    form.new_repo = None;
-                    form.repos = None;
-                    made = true;
-                }
-                Err(e) => form.error = Some(format!("Could not make it:\n{e}")),
-            }
-        }
-        if made {
-            self.start_clone(ctx);
-            return;
-        }
         let progress = self
             .cloning
             .as_ref()
             .map(|c| c.progress.lock().ok().and_then(|p| p.clone()));
         match clone::show(ctx, form, progress, &self.settings.accounts) {
             Some(clone::Action::LoadRepos) => {}
-            Some(clone::Action::MakeAndClone) => {
-                if let (Some(account), Some(new)) = (
-                    form.account
-                        .and_then(|i| self.settings.accounts.get(i))
-                        .cloned(),
-                    &form.new_repo,
-                ) {
-                    form.making = true;
-                    form.error = None;
-                    let (name, description, private) = (
-                        new.name.trim().to_string(),
-                        new.description.trim().to_string(),
-                        new.private,
-                    );
-                    self.clone_make = Some(Task::spawn(ctx, move || {
-                        crate::forge::accounts::create_repository(
-                            &account,
-                            &name,
-                            &description,
-                            private,
-                        )
-                    }));
-                }
-            }
             Some(clone::Action::Clone) => self.start_clone(ctx),
             Some(clone::Action::Browse) => {
                 if let Some(dir) = rfd::FileDialog::new()
@@ -352,23 +434,6 @@ impl App {
                 }
             }
             None => {}
-        }
-    }
-
-    /// Starts a repository in `dir` (or just opens it, if it is one) and opens it.
-    pub fn new_repository(&mut self, ctx: &egui::Context, dir: &std::path::Path) {
-        match create::init(dir) {
-            Ok(()) => self.open(ctx, dir.to_string_lossy()),
-            Err(e) => self.error = Some(format!("Could not create the repository:\n{e}")),
-        }
-    }
-
-    fn pick_new_repository(&mut self, ctx: &egui::Context) {
-        if let Some(dir) = rfd::FileDialog::new()
-            .set_title("Choose a folder for the new repository")
-            .pick_folder()
-        {
-            self.new_repository(ctx, &dir);
         }
     }
 
@@ -973,7 +1038,7 @@ impl App {
             }
             Command::OpenRepo => self.browse(ctx),
             Command::CloneRepo => self.show_clone(),
-            Command::NewRepo => self.pick_new_repository(ctx),
+            Command::NewRepo => self.show_new_repository(),
             Command::CloseRepo => self.close(ctx),
             Command::ToggleSidebar => self.settings.hide_sidebar = !self.settings.hide_sidebar,
             Command::ToggleSplitDiff => self.settings.split_diff = !self.settings.split_diff,
@@ -1369,6 +1434,7 @@ impl App {
             || !self.crash_reports.is_empty()
             || self.palette.is_some()
             || self.clone_form.is_some()
+            || self.new_repo.is_some()
             || self.settings_open
             || self.licenses.is_some()
             || !self.whats_new.is_empty()
@@ -1731,7 +1797,7 @@ impl App {
                     match welcome::show(ui, &self.logo, &self.settings.recent, now) {
                         Some(welcome::Action::Browse) => self.browse(&ctx),
                         Some(welcome::Action::Clone) => self.show_clone(),
-                        Some(welcome::Action::Init) => self.pick_new_repository(&ctx),
+                        Some(welcome::Action::Init) => self.show_new_repository(),
                         Some(welcome::Action::Open(p)) => self.open(&ctx, p),
                         Some(welcome::Action::Forget(p)) => self.settings.forget(&p),
                         None => {}
@@ -2161,8 +2227,10 @@ impl eframe::App for App {
         self.panels(ui);
         // A branch being dragged (from the sidebar or the graph) follows the pointer.
         sidebar::drag_label(ui.ctx());
-        // Above everything: the clone dialog, then Git's questions.
+        // Above everything: the clone and new-repository dialogs, then Git's
+        // questions.
         self.clone_dialog(&ctx);
+        self.new_repo_dialog(&ctx);
         if self.settings_open {
             match crate::ui::settings::show(&ctx, &mut self.settings) {
                 Some(crate::ui::settings::Action::Close) => self.settings_open = false,
@@ -2291,6 +2359,114 @@ fn repo_action(repo: &mut RepoView, ctx: &egui::Context, action: sidebar::Action
         | sidebar::Action::SignInToForge
         | sidebar::Action::NewRequest
         | sidebar::Action::Terminal(_) => {}
+    }
+}
+
+/// Makes the new repository in `form` in the background, on `account` (else
+/// on this computer only): its templates fetched, made on the forge, cloned
+/// (or started here), then started with its branch, templates and Git LFS;
+/// a first commit on a forge is pushed there.
+fn start_making(
+    ctx: &egui::Context,
+    form: &new_repo::Form,
+    account: Option<crate::forge::Account>,
+) -> Making {
+    use crate::forge::{accounts, templates};
+    let doing = Arc::new(Mutex::new(String::new()));
+    let cancel = Arc::new(AtomicBool::new(false));
+    let (d, c, repaint) = (doing.clone(), cancel.clone(), ctx.clone());
+    let say = move |what: &str| {
+        if let Ok(mut slot) = d.lock() {
+            *slot = what.to_string();
+        }
+        repaint.request_repaint();
+    };
+    let (name, description, private) = (
+        form.name.trim().to_string(),
+        form.description.trim().to_string(),
+        form.private,
+    );
+    let (here_too, dest) = (form.here_too(), form.dest());
+    let branch = Some(form.branch.trim().to_string()).filter(|b| !b.is_empty());
+    let gitignore = form.gitignore.as_ref().map(|t| t.key.clone());
+    let license = form.license.as_ref().map(|t| t.key.clone());
+    let lfs = form.lfs;
+    let place = form.place_name();
+    let task = Task::spawn(ctx, move || {
+        let failed = |e: String| Some(e);
+        let stopped = || c.load(Ordering::Relaxed);
+        // The templates' text first, so nothing is made if they can't be had.
+        let source = match &account {
+            Some(a) => accounts::templates_source(a).map_err(failed)?,
+            None => templates::Source::github(),
+        };
+        let mut files = Vec::new();
+        if here_too && let Some(key) = &gitignore {
+            say("Getting the .gitignore…");
+            files.push((
+                ".gitignore".to_string(),
+                templates::gitignore(&source, key).map_err(failed)?,
+            ));
+        }
+        if here_too && let Some(key) = &license {
+            say("Getting the licence…");
+            let holder = git_raccoon_core::create::user_name()
+                .or_else(|| account.as_ref().map(|a| a.login.clone()))
+                .unwrap_or_default();
+            let year = chrono::Datelike::year(&chrono::Local::now());
+            files.push((
+                "LICENSE".to_string(),
+                templates::license(&source, key, &holder, year).map_err(failed)?,
+            ));
+        }
+        if stopped() {
+            return Err(None);
+        }
+        let starter = create::Starter {
+            branch: branch.clone(),
+            files,
+            lfs,
+        };
+        let Some(account) = account else {
+            say("Starting it…");
+            create::init(&dest, branch.as_deref()).map_err(|e| failed(e.to_string()))?;
+            create::start(&dest, &starter).map_err(|e| failed(e.to_string()))?;
+            return Ok(Made::Here(dest));
+        };
+        say(&format!("Making it on {place}…"));
+        let made = accounts::create_repository(&account, &name, &description, private)
+            .map_err(|e| failed(format!("Could not make it on {place}: {e}")))?;
+        if !here_too {
+            return Ok(Made::There(made.path));
+        }
+        say("Cloning it…");
+        create::clone(&made.clone_url, &dest, &mut |p| say(&p.phase), &c).map_err(|e| match e {
+            git_raccoon_core::Error::Cancelled => None,
+            e => failed(format!("Made {}, but could not clone it: {e}", made.path)),
+        })?;
+        let first = create::start(&dest, &starter).map_err(|e| failed(e.to_string()))?;
+        if let Some(b) = first {
+            say("Pushing the first commit…");
+            git_raccoon_core::sync::push_to(
+                &dest.to_string_lossy(),
+                "origin",
+                &b,
+                false,
+                &mut |_| {},
+                &c,
+            )
+            .map_err(|e| {
+                failed(format!(
+                    "Made and cloned it, but could not push the first commit: {e}"
+                ))
+            })?;
+        }
+        Ok(Made::Here(dest))
+    });
+    Making {
+        doing,
+        cancel,
+        task,
     }
 }
 

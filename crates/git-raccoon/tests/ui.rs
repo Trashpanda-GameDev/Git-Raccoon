@@ -3311,6 +3311,14 @@ fn clones_from_an_account_and_makes_new_repositories_there() {
                     "http_url_to_repo": "{base}/team/app.git"}"#
                     .into(),
             ),
+            (
+                "GET /api/v4/templates/gitignores",
+                r#"[{"key": "Rust", "name": "Rust"}]"#.into(),
+            ),
+            (
+                "GET /api/v4/templates/licenses",
+                r#"[{"key": "mit", "name": "MIT License"}]"#.into(),
+            ),
         ],
         bare.clone(),
     );
@@ -3368,20 +3376,38 @@ fn clones_from_an_account_and_makes_new_repositories_there() {
     wait_for(&mut h, "the clone to open", |app| app.repo().is_some());
     assert!(h.state().repo().unwrap().history.total() > 5);
 
-    // A new one, made on the account and cloned.
+    // A new one, made on the account and cloned: New repository asks where
+    // (#23), and the clone dialog doesn't make them any more.
     press(&mut h, egui::Modifiers::COMMAND, Key::T);
     h.run_ok();
     h.get_by_label("Clone a repository…").click();
     h.run_ok();
-    h.get_by_label_contains("New repository on").click();
+    assert!(h.query_by_label_contains("New repository on").is_none());
+    h.get_by_label("Cancel").click();
+    h.run_ok();
+    h.get_by_label("New repository…").click();
+    h.run_ok();
+    // Where it goes down the side; the account's own forge here.
+    h.get_by_label_contains("Self-managed GitLab").click();
     h.run_ok();
     type_into(&mut h, "New repository name", "fresh");
     type_into(&mut h, "New repository description", "Brand new");
-    h.get_by_label("Clone name").click();
-    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
-    h.get_by_label("Clone name").type_text("fresh");
+    // The forge's templates, fetched once a picker is opened.
+    h.get_by_label("Choose a .gitignore template").click();
+    let mut offered = false;
+    for _ in 0..200 {
+        h.run_ok();
+        if h.query_by_label("Rust").is_some() {
+            offered = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(offered, "the forge's .gitignore templates");
+    screenshot(&mut h, "59-new-on-account");
+    h.key_press(Key::Escape);
     h.run_ok();
-    h.get_by_label("Make it and clone it").click();
+    h.get_by_label("Create repository and clone").click();
     wait_for(&mut h, "the new one to open", |app| {
         app.repo().is_some_and(|r| {
             r.path()
@@ -3391,7 +3417,7 @@ fn clones_from_an_account_and_makes_new_repositories_there() {
         })
     });
     settle(&mut h);
-    screenshot(&mut h, "59-made-on-account");
+    screenshot(&mut h, "60-made-on-account");
     let made = seen
         .lock()
         .unwrap()
@@ -3466,15 +3492,30 @@ fn clones_and_starts_repositories() {
     h.get_by_label("Cancel").click();
     h.run_ok();
 
-    // A new, empty repository opens too.
-    let fresh = base.join("fresh");
-    let ctx = h.ctx.clone();
-    h.state_mut().new_repository(&ctx, &fresh);
+    // A new, empty repository, on this computer only, opens too.
+    press(&mut h, egui::Modifiers::COMMAND, Key::T);
+    h.get_by_label("New repository…").click();
+    h.run_ok();
+    type_into(&mut h, "New repository name", "fresh");
+    h.get_by_label("First branch name").click();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+    h.get_by_label("First branch name").type_text("trunk");
+    h.run_ok();
+    h.get_by_label("Create repository").click();
     wait_for(&mut h, "the new repository", |app| {
         app.repo().is_some_and(|r| r.path().contains("fresh"))
     });
     assert_eq!(h.state().error(), None);
     assert_eq!(h.state().repo().unwrap().history.total(), 0);
+    assert!(
+        h.state()
+            .repo()
+            .unwrap()
+            .history
+            .branch()
+            .is_some_and(|b| b.ends_with("trunk")),
+        "its first branch"
+    );
     screenshot(&mut h, "27-new-repository");
     let _ = std::fs::remove_dir_all(&base);
 }

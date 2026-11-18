@@ -1,6 +1,6 @@
 //! The clone dialog: where from (a URL, or one of your repositories on an
-//! account you're signed in to, or a new one made there), where to, and
-//! progress while cloning.
+//! account you're signed in to), where to, and progress while cloning. (New
+//! repositories have a dialog of their own.)
 
 use std::path::PathBuf;
 
@@ -19,10 +19,6 @@ pub struct Form {
     pub repos: Option<Result<Vec<crate::forge::accounts::Repo>, String>>,
     /// Narrows the list.
     pub search: String,
-    /// A new repository to make on the account, while it's being filled in.
-    pub new_repo: Option<NewRepo>,
-    /// Making it.
-    pub making: bool,
     pub url: String,
     /// The folder the clone goes in.
     pub parent: String,
@@ -39,19 +35,9 @@ impl Form {
     }
 }
 
-/// A new repository on an account.
-#[derive(Default)]
-pub struct NewRepo {
-    pub name: String,
-    pub description: String,
-    pub private: bool,
-}
-
 pub enum Action {
     /// Load the repositories of the account picked.
     LoadRepos,
-    /// Make the new repository on the account, then clone it.
-    MakeAndClone,
     Clone,
     Browse,
     Cancel,
@@ -59,7 +45,7 @@ pub enum Action {
     Stop,
 }
 
-/// Picking one of an account's repositories, or making a new one there.
+/// Picking one of an account's repositories.
 fn from_account(
     ui: &mut egui::Ui,
     form: &mut Form,
@@ -88,70 +74,15 @@ fn from_account(
     if form.account != before {
         form.repos = None;
         form.search.clear();
-        form.new_repo = None;
         if form.account.is_some() {
             *action = Some(Action::LoadRepos);
         }
     }
-    let Some(account) = form.account.and_then(|i| accounts.get(i)) else {
+    if form.account.and_then(|i| accounts.get(i)).is_none() {
         ui.add_space(4.0);
-        return;
-    };
-    ui.add_space(6.0);
-    if let Some(new) = &mut form.new_repo {
-        // A new repository there.
-        ui.label(
-            RichText::new(format!("A new repository on {}", name(account)))
-                .size(12.0)
-                .color(theme::muted()),
-        );
-        labelled(
-            ui,
-            "Name",
-            "New repository name",
-            &mut new.name,
-            "my-project",
-        );
-        labelled(
-            ui,
-            "Description",
-            "New repository description",
-            &mut new.description,
-            "Optional",
-        );
-        ui.checkbox(
-            &mut new.private,
-            "Private (only you, and who you invite, can see it)",
-        );
-        ui.add_space(4.0);
-        let named = !new.name.trim().is_empty();
-        let making = form.making;
-        let mut back = false;
-        ui.horizontal(|ui| {
-            let label = if making {
-                "Making it…"
-            } else {
-                "Make it and clone it"
-            };
-            if ui
-                .add_enabled(named && !making, egui::Button::new(label))
-                .clicked()
-            {
-                *action = Some(Action::MakeAndClone);
-            }
-            if making {
-                ui.spinner();
-            }
-            back = ui
-                .add_enabled(!making, egui::Button::new("Back to the list"))
-                .clicked();
-        });
-        if back {
-            form.new_repo = None;
-        }
-        ui.add_space(8.0);
         return;
     }
+    ui.add_space(6.0);
     let search = ui.add(
         egui::TextEdit::singleline(&mut form.search)
             .hint_text(format!("{}  Find a repository…", icon::MAGNIFYING_GLASS))
@@ -212,20 +143,6 @@ fn from_account(
                     }
                 });
         });
-    ui.add_space(2.0);
-    if ui
-        .link(format!(
-            "{}  New repository on {}…",
-            icon::PLUS,
-            account.place()
-        ))
-        .clicked()
-    {
-        form.new_repo = Some(NewRepo {
-            private: true,
-            ..NewRepo::default()
-        });
-    }
     ui.add_space(8.0);
 }
 

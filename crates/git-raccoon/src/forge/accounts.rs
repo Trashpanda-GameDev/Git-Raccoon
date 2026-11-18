@@ -120,7 +120,7 @@ pub fn forget(account: &Account) {
 }
 
 /// The forge's API address.
-fn api_root(kind: Kind, base: &str) -> String {
+pub(super) fn api_root(kind: Kind, base: &str) -> String {
     match (kind, base) {
         (Kind::GitHub, "https://github.com") => "https://api.github.com".into(),
         (Kind::GitHub, base) => format!("{base}/api/v3"),
@@ -242,6 +242,15 @@ fn git_username(account: &Account) -> String {
         (Kind::GitLab, Some(_)) => "oauth2".into(),
         _ => account.login.clone(),
     }
+}
+
+/// Where the account's forge offers its templates from, signed in.
+pub fn templates_source(account: &Account) -> Result<super::templates::Source, String> {
+    Ok(super::templates::Source {
+        kind: account.kind,
+        base: account.base.clone(),
+        token: Some(token(account)?),
+    })
 }
 
 /// A repository of an account's (its own, or one it's a member of).

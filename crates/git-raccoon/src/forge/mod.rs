@@ -9,6 +9,7 @@ mod github;
 mod gitlab;
 mod http;
 pub mod oauth;
+pub mod templates;
 
 use serde::{Deserialize, Serialize};
 

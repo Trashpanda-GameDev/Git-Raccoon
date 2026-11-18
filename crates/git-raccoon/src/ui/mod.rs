@@ -14,6 +14,7 @@ pub mod file_view;
 pub mod forge;
 pub mod history;
 pub mod licenses;
+pub mod new_repo;
 pub mod palette;
 pub mod push_to;
 pub mod rebase;
