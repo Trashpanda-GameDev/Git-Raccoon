@@ -28,6 +28,7 @@ pub mod stash;
 pub mod sync;
 #[cfg(test)]
 mod testutil;
+pub mod trust;
 pub mod undo;
 pub mod watch;
 pub mod words;

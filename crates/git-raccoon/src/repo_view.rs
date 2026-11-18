@@ -51,6 +51,7 @@ pub struct Extras {
 }
 
 pub fn load(path: &str) -> Result<Loaded, String> {
+    git_raccoon_core::trust::check(path).map_err(|e| e.to_string())?;
     let history = History::load(path, 0).map_err(|e| e.to_string())?;
     let refs = refs::load_refs(path).map_err(|e| e.to_string())?;
     let head = undo::head_id(path).ok().flatten();

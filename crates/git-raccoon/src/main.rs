@@ -11,6 +11,8 @@ fn main() -> eframe::Result {
     }
     // Velopack's install, update and uninstall steps run here (and exit).
     velopack::VelopackApp::build().run();
+    // Git, not libgit2, decides which folders are safe to open.
+    git_raccoon_core::trust::defer_to_git();
     // Bugs leave a report beside the settings, offered next time.
     git_raccoon::crash::install();
     let mut viewport = egui::ViewportBuilder::default()
