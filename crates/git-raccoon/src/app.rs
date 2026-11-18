@@ -829,12 +829,6 @@ impl App {
         }
     }
 
-    fn run(&mut self, ctx: &egui::Context, op: Op) {
-        if let Some(r) = &mut self.repo {
-            r.run(ctx, op);
-        }
-    }
-
     /// Whether a command can run right now.
     fn can_run(&self, command: &Command) -> bool {
         let Some(repo) = &self.repo else {
@@ -1076,9 +1070,7 @@ impl App {
                     }
                     Command::Undo => repo.undo(ctx),
                     Command::Fetch => repo.fetch(ctx, None, self.settings.fetch_options()),
-                    Command::Pull => {
-                        repo.run(ctx, Op::Pull(git_raccoon_core::sync::PullMode::FastForward))
-                    }
+                    Command::Pull => repo.pull(ctx, None, self.settings.pull),
                     Command::Push => repo.push(ctx),
                     Command::ShowWorking => repo.select_working(),
                     Command::GoToHead => {
@@ -1607,6 +1599,7 @@ impl App {
                     lfs: r.extras.lfs,
                     remotes: r.refs.remotes.iter().map(|r| r.name.as_str()).collect(),
                     fetch: self.settings.fetch_options(),
+                    pull: self.settings.pull,
                 });
                 toolbar::show(
                     ui,
@@ -1642,12 +1635,12 @@ impl App {
                 self.settings.fetch_prune = options.prune;
                 self.settings.fetch_force = options.force;
             }
-            Some(toolbar::Action::Pull) => {
-                self.run(
-                    &ctx,
-                    Op::Pull(git_raccoon_core::sync::PullMode::FastForward),
-                );
+            Some(toolbar::Action::Pull(from)) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.pull(&ctx, from, self.settings.pull);
+                }
             }
+            Some(toolbar::Action::SetPullOptions(options)) => self.settings.pull = options,
             Some(toolbar::Action::Push) => {
                 if let Some(r) = &mut self.repo {
                     r.push(&ctx);
@@ -2348,6 +2341,7 @@ fn repo_action(repo: &mut RepoView, ctx: &egui::Context, action: sidebar::Action
         sidebar::Action::CheckoutRemote(name) => repo.run(ctx, Op::CheckoutRemote(name)),
         sidebar::Action::NewBranch { start, label } => repo.new_branch(start, label),
         sidebar::Action::Rename(name) => repo.rename_branch(name),
+        sidebar::Action::SetUpstream(name) => repo.set_upstream(name),
         sidebar::Action::DeleteBranch(name) => repo.confirm_delete_branch(name),
         sidebar::Action::DeleteBranches(names) => repo.confirm_delete_branches(names),
         sidebar::Action::DeleteRemoteBranches(names) => {

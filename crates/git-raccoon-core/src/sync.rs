@@ -41,7 +41,9 @@ impl Progress {
 pub enum PullMode {
     /// Only if there are no local commits; otherwise [`Error::Diverged`].
     FastForward,
+    /// A fast-forward if it can be, otherwise a merge commit.
     Merge,
+    /// Local commits replayed on top of the upstream's.
     Rebase,
 }
 
@@ -223,38 +225,64 @@ fn current(path: &str) -> Result<Current> {
     })
 }
 
-/// Pulls the checked-out branch's upstream into it.
+/// Pulls into the checked-out branch: from its upstream, or (`from`) from
+/// the branch of the same name on that remote. With `stash`, uncommitted
+/// changes are put aside and back again; without, Git refuses if they're in
+/// the way ([`Error::Dirty`]).
 pub fn pull(
     path: &str,
+    from: Option<&str>,
     mode: PullMode,
+    stash: bool,
     on: &mut dyn FnMut(Progress),
     cancel: &AtomicBool,
 ) -> Result<()> {
     let cur = current(path)?;
-    if cur.merge.is_none() {
-        return Err(Error::Unsupported(format!(
-            "{} has no upstream branch to pull from. Push it first.",
-            cur.branch
-        )));
+    let mut args = vec!["pull"];
+    args.extend(match mode {
+        PullMode::FastForward => ["--ff-only"].as_slice(),
+        PullMode::Merge => &["--no-rebase", "--ff"],
+        PullMode::Rebase => &["--rebase"],
+    });
+    // Even with stashing, changes to the files the pull changes make Git
+    // refuse, harmlessly.
+    args.push(if stash {
+        "--autostash"
+    } else {
+        "--no-autostash"
+    });
+    args.push("--progress");
+    // The upstream's branch name, else the local one.
+    let branch = cur
+        .merge
+        .as_deref()
+        .map_or(cur.branch.as_str(), |m| {
+            m.strip_prefix("refs/heads/").unwrap_or(m)
+        })
+        .to_string();
+    match from {
+        Some(remote) => args.extend([remote, &branch]),
+        None if cur.merge.is_none() => {
+            return Err(Error::Unsupported(format!(
+                "{} has no upstream branch to pull from. Push it first.",
+                cur.branch
+            )));
+        }
+        None => {}
     }
-    let flag = match mode {
-        PullMode::FastForward => "--ff-only",
-        PullMode::Merge => "--no-rebase",
-        PullMode::Rebase => "--rebase",
-    };
-    // Uncommitted changes are put aside and back again, as long as they
-    // don't touch the files the pull changes (then Git refuses, harmlessly).
-    match run(
-        path,
-        &["pull", flag, "--autostash", "--progress"],
-        on,
-        cancel,
-    ) {
+    match run(path, &args, on, cancel) {
         Err(Error::Command(text))
             if mode == PullMode::FastForward
                 && (text.contains("Not possible to fast-forward") || text.contains("diverg")) =>
         {
             Err(Error::Diverged(text))
+        }
+        Err(Error::Command(text))
+            if !stash
+                && (text.contains("would be overwritten")
+                    || text.contains("cannot pull with rebase")) =>
+        {
+            Err(Error::Dirty(text))
         }
         other => other.map(drop),
     }
@@ -556,7 +584,15 @@ mod tests {
         let local = r.local.iter().find(|b| b.name == s.branch).unwrap();
         assert_eq!(local.upstream.as_ref().unwrap().behind, 1);
 
-        pull(s.b.path(), PullMode::FastForward, &mut |_| {}, &none).unwrap();
+        pull(
+            s.b.path(),
+            None,
+            PullMode::FastForward,
+            true,
+            &mut |_| {},
+            &none,
+        )
+        .unwrap();
         assert_eq!(head(&s.b), head(&s.a));
         assert_eq!(
             std::fs::read_to_string(s.b.dir.join("f.txt")).unwrap(),
@@ -598,18 +634,63 @@ mod tests {
 
         let err = push(s.b.path(), false, &mut |_| {}, &none).unwrap_err();
         assert!(matches!(err, Error::Rejected(_)), "{err}");
-        let err = pull(s.b.path(), PullMode::FastForward, &mut |_| {}, &none).unwrap_err();
+        let err = pull(
+            s.b.path(),
+            None,
+            PullMode::FastForward,
+            true,
+            &mut |_| {},
+            &none,
+        )
+        .unwrap_err();
         assert!(matches!(err, Error::Diverged(_)), "{err}");
 
         // Rebase (with an uncommitted change, kept), then the push goes through.
         s.b.write("f.txt", "uncommitted\n");
-        pull(s.b.path(), PullMode::Rebase, &mut |_| {}, &none).unwrap();
+        pull(s.b.path(), None, PullMode::Rebase, true, &mut |_| {}, &none).unwrap();
         assert!(s.b.dir.join("a.txt").exists() && s.b.dir.join("b.txt").exists());
         assert_eq!(
             std::fs::read_to_string(s.b.dir.join("f.txt")).unwrap(),
             "uncommitted\n"
         );
         push(s.b.path(), false, &mut |_| {}, &none).unwrap();
+    }
+
+    #[test]
+    fn merges_diverged_pulls_and_leaves_changes_when_asked() {
+        let s = setup();
+        let none = AtomicBool::new(false);
+        commit_file(&s.a, "f.txt", "from a\n", "from a");
+        push(s.a.path(), false, &mut |_| {}, &none).unwrap();
+        commit_file(&s.b, "b.txt", "from b\n", "from b");
+
+        // Changes in the pull's way, not put aside: refused, and kept.
+        s.b.write("f.txt", "uncommitted\n");
+        let err = pull(s.b.path(), None, PullMode::Merge, false, &mut |_| {}, &none).unwrap_err();
+        assert!(matches!(err, Error::Dirty(_)), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(s.b.dir.join("f.txt")).unwrap(),
+            "uncommitted\n"
+        );
+
+        // Without them, from the remote named: a merge commit joins both.
+        cli::run(s.b.path(), &["checkout", "--", "f.txt"], None).unwrap();
+        pull(
+            s.b.path(),
+            Some("origin"),
+            PullMode::Merge,
+            false,
+            &mut |_| {},
+            &none,
+        )
+        .unwrap();
+        let merged = s.b.repo.head().unwrap().peel_to_commit().unwrap();
+        assert_eq!(merged.parent_count(), 2);
+        assert!(s.b.dir.join("b.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(s.b.dir.join("f.txt")).unwrap(),
+            "from a\n"
+        );
     }
 
     #[test]
@@ -643,7 +724,15 @@ mod tests {
         let none = AtomicBool::new(false);
         let err = push(t.path(), false, &mut |_| {}, &none).unwrap_err();
         assert!(err.to_string().contains("no remote"), "{err}");
-        let err = pull(t.path(), PullMode::FastForward, &mut |_| {}, &none).unwrap_err();
+        let err = pull(
+            t.path(),
+            None,
+            PullMode::FastForward,
+            true,
+            &mut |_| {},
+            &none,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("no upstream"), "{err}");
     }
 

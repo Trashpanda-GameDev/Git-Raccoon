@@ -743,6 +743,8 @@ pub enum Action {
         label: String,
     },
     Rename(String),
+    /// Choose the remote branch a branch pulls from and pushes to.
+    SetUpstream(String),
     DeleteBranch(String),
     DeleteTag(String),
     /// Add a remote (`None`) or edit one.
@@ -904,6 +906,11 @@ pub fn local_branch_items(
             },
         ),
         ("Rename…".into(), true, Action::Rename(name.into())),
+        (
+            "Set upstream…".into(),
+            true,
+            Action::SetUpstream(name.into()),
+        ),
         (
             "Delete…".into(),
             !is_head,

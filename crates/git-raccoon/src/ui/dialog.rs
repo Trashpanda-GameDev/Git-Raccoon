@@ -171,6 +171,34 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
                 }
                 ("Rename".into(), false, problem.is_none() && name != old)
             }
+            Dialog::SetUpstream { branch, upstream } => {
+                heading(
+                    ui,
+                    &format!("Set upstream for {branch}"),
+                    Some("The remote branch it pulls from and pushes to, and is compared with."),
+                );
+                let combo = egui::ComboBox::from_id_salt("set-upstream")
+                    .selected_text(upstream.as_deref().unwrap_or("None"))
+                    .width(ui.available_width())
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(upstream, None, "None");
+                        for b in refs.remotes.iter().flat_map(|r| &r.branches) {
+                            ui.selectable_value(
+                                upstream,
+                                Some(b.full_name.clone()),
+                                &b.full_name,
+                            );
+                        }
+                    });
+                ui.ctx()
+                    .accesskit_node_builder(combo.response.id, |n| n.set_label("Upstream branch"));
+                let label = if upstream.is_some() {
+                    "Set upstream"
+                } else {
+                    "Remove upstream"
+                };
+                (label.into(), false, true)
+            }
             Dialog::NewTag {
                 target_label,
                 name,
@@ -313,6 +341,7 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
                 old,
                 new: name.trim().to_string(),
             }),
+            Dialog::SetUpstream { branch, upstream } => Some(Op::SetUpstream { branch, upstream }),
             Dialog::NewTag {
                 target,
                 name,

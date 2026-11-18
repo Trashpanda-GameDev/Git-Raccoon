@@ -194,6 +194,12 @@ pub enum Op {
         old: String,
         new: String,
     },
+    /// Set the remote branch `branch` pulls from and pushes to
+    /// ("origin/main"), or remove it.
+    SetUpstream {
+        branch: String,
+        upstream: Option<String>,
+    },
     DeleteBranch {
         name: String,
         force: bool,
@@ -242,7 +248,13 @@ pub enum Op {
     Fetch(sync::FetchOptions),
     /// Fetch one remote.
     FetchRemote(String, sync::FetchOptions),
-    Pull(PullMode),
+    /// Pull from the upstream, or (`from`) that remote's branch of the
+    /// same name; `stash` puts uncommitted changes aside and back.
+    Pull {
+        from: Option<String>,
+        mode: PullMode,
+        stash: bool,
+    },
     /// Delete a branch on its remote ("origin/feature"), for everyone.
     DeleteRemoteBranch(String),
     /// Several of them.
@@ -352,6 +364,16 @@ impl Control {
 }
 
 impl Op {
+    /// A plain pull from the upstream: fast-forward only, with uncommitted
+    /// changes put aside and back.
+    pub fn pull_upstream() -> Op {
+        Op::Pull {
+            from: None,
+            mode: PullMode::FastForward,
+            stash: true,
+        }
+    }
+
     fn run(self, path: &str, ctl: &Control) -> Result<(), Error> {
         let report = &mut |p| ctl.report(p);
         match self {
@@ -395,6 +417,9 @@ impl Op {
             Op::CheckoutRemote(name) => branch::checkout_remote(path, &name),
             Op::CheckoutDetached(id) => branch::checkout_detached(path, &id),
             Op::RenameBranch { old, new } => branch::rename(path, &old, &new),
+            Op::SetUpstream { branch, upstream } => {
+                branch::set_upstream(path, &branch, upstream.as_deref())
+            }
             Op::DeleteBranch { name, force } => branch::delete(path, &name, force),
             Op::DeleteBranches { names, force } => branch::delete_many(path, &names, force),
             Op::CreateTag {
@@ -431,7 +456,9 @@ impl Op {
             Op::FetchRemote(name, options) => {
                 sync::fetch_remote(path, &name, &options, report, &ctl.cancel)
             }
-            Op::Pull(mode) => sync::pull(path, mode, report, &ctl.cancel),
+            Op::Pull { from, mode, stash } => {
+                sync::pull(path, from.as_deref(), mode, stash, report, &ctl.cancel)
+            }
             Op::Push { force, to: None } => sync::push(path, force, report, &ctl.cancel),
             Op::Push {
                 force,
@@ -509,6 +536,7 @@ impl Op {
             Op::Checkout(_) | Op::CheckoutRemote(_) => "check out the branch",
             Op::CheckoutDetached(_) => "check out the commit",
             Op::RenameBranch { .. } => "rename the branch",
+            Op::SetUpstream { .. } => "set the upstream",
             Op::DeleteBranch { .. } => "delete the branch",
             Op::DeleteBranches { .. } => "delete the branches",
             Op::CreateTag { .. } => "create the tag",
@@ -522,7 +550,7 @@ impl Op {
             // Named after its first step ("add the remote", then fetch).
             Op::Then(ops) => ops.first().map_or("undo", Op::verb),
             Op::Fetch(_) | Op::FetchRemote(..) => "fetch",
-            Op::Pull(_) => "pull",
+            Op::Pull { .. } => "pull",
             Op::Push { .. } => "push",
             Op::DeleteRemoteBranch(_) => "delete the remote branch",
             Op::DeleteRemoteBranches(_) => "delete the remote branches",
@@ -569,6 +597,7 @@ impl Op {
     fn can_stash_first(&self) -> bool {
         match self {
             Op::Merge { .. } | Op::CherryPick(_) | Op::Revert(_) => true,
+            Op::Pull { stash, .. } => !stash,
             Op::Then(ops) => ops.first().is_some_and(Op::can_stash_first),
             op => op.is_checkout(),
         }
@@ -1151,6 +1180,11 @@ pub enum Dialog {
         old: String,
         name: String,
     },
+    /// Choose `branch`'s upstream ("origin/main"), or none.
+    SetUpstream {
+        branch: String,
+        upstream: Option<String>,
+    },
     /// Add a remote (`original` is `None`) or edit one.
     Remote {
         original: Option<String>,
@@ -1438,9 +1472,25 @@ impl RepoView {
 
     /// Asks before discarding every uncommitted change, staged or not.
     pub fn confirm_discard_all(&mut self) {
-        let Some(status) = self.status.as_ref() else {
+        let Some((what, discard)) = self.discard_all() else {
             return;
         };
+        self.dialog = Some(Dialog::Confirm {
+            title: "Discard all changes?".into(),
+            body: format!(
+                "Every uncommitted change to {what} is thrown away: staged and unstaged changes, and new files. Each file's current version is moved to the {} first, so you can get it back from there.",
+                trash_name()
+            ),
+            button: "Discard all".into(),
+            danger: true,
+            op: Op::Then(discard),
+        });
+    }
+
+    /// The steps that discard every uncommitted change, and what they
+    /// touch ("README.md", "3 files"); `None` if there are none.
+    fn discard_all(&self) -> Option<(String, Vec<Op>)> {
+        let status = self.status.as_ref()?;
         // Unstaging first turns staged changes (renames: both names) into
         // ones that discarding throws away.
         let mut files: Vec<String> = status
@@ -1451,26 +1501,18 @@ impl RepoView {
             .collect();
         files.sort();
         files.dedup();
-        if files.is_empty() {
-            return;
-        }
         let what = match files.as_slice() {
+            [] => return None,
             [one] => one.clone(),
             many => format!("{} files", many.len()),
         };
-        self.dialog = Some(Dialog::Confirm {
-            title: "Discard all changes?".into(),
-            body: format!(
-                "Every uncommitted change to {what} is thrown away: staged and unstaged changes, and new files. Each file's current version is moved to the {} first, so you can get it back from there.",
-                trash_name()
-            ),
-            button: "Discard all".into(),
-            danger: true,
-            op: Op::Then(vec![
+        Some((
+            what,
+            vec![
                 Op::UnstageAll,
                 Op::Discard(files, self.trash_override.clone()),
-            ]),
-        });
+            ],
+        ))
     }
 
     /// Asks before dropping a stash.
@@ -1527,7 +1569,7 @@ impl RepoView {
             running.op,
             Op::Fetch(_)
                 | Op::FetchRemote(..)
-                | Op::Pull(_)
+                | Op::Pull { .. }
                 | Op::Push { .. }
                 | Op::UpdateSubmodule(_)
                 | Op::DeleteRemoteBranch(_)
@@ -1699,6 +1741,27 @@ impl RepoView {
             name: old.clone(),
             old,
         });
+    }
+
+    /// Asks which remote branch `branch` should pull from and push to:
+    /// its upstream to start with, else the same name on a remote.
+    pub fn set_upstream(&mut self, branch: String) {
+        let current = self
+            .refs
+            .local
+            .iter()
+            .find(|b| b.name == branch)
+            .and_then(|b| b.upstream.as_ref())
+            .map(|u| u.name.clone());
+        let upstream = current.or_else(|| {
+            self.refs
+                .remotes
+                .iter()
+                .flat_map(|r| &r.branches)
+                .find(|b| b.name == branch)
+                .map(|b| b.full_name.clone())
+        });
+        self.dialog = Some(Dialog::SetUpstream { branch, upstream });
     }
 
     /// Asks before deleting a branch. Git itself refuses if its work isn't
@@ -2018,6 +2081,41 @@ impl RepoView {
         });
     }
 
+    /// Pulls from `from` (else the upstream) as `options` say; asks first
+    /// when that discards uncommitted changes.
+    pub fn pull(
+        &mut self,
+        ctx: &egui::Context,
+        from: Option<String>,
+        options: crate::settings::PullOptions,
+    ) {
+        use crate::settings::PullChanges;
+        let op = Op::Pull {
+            from,
+            mode: options.strategy.mode(),
+            stash: options.changes == PullChanges::Stash,
+        };
+        let discard = match options.changes {
+            PullChanges::Discard => self.discard_all(),
+            PullChanges::Stash | PullChanges::Leave => None,
+        };
+        let Some((what, mut steps)) = discard else {
+            self.run(ctx, op);
+            return;
+        };
+        steps.push(op);
+        self.dialog = Some(Dialog::Confirm {
+            title: "Discard your changes and pull?".into(),
+            body: format!(
+                "Pull is set to discard uncommitted changes: every change to {what} is thrown away before pulling: staged and unstaged changes, and new files. Each file's current version is moved to the {} first, so you can get it back from there. Choose another way in Pull's options to keep them.",
+                trash_name()
+            ),
+            button: "Discard and pull".into(),
+            danger: true,
+            op: Op::Then(steps),
+        });
+    }
+
     /// Fetches from `remote` (else every remote) as `options` say; asks
     /// first when it forces, since that can lose commits.
     pub fn fetch(
@@ -2188,11 +2286,28 @@ impl RepoView {
     /// When Git refused an operation for a reason the user can act on,
     /// offers the way on. Returns whether it did.
     fn offer_way_on(&mut self, op: &Op, error: &Error) -> bool {
+        // A pull after discarding changes: only the pull refuses.
+        if let Op::Then(ops) = op
+            && let Some(pull @ Op::Pull { .. }) = ops.last()
+        {
+            return self.offer_way_on(pull, error);
+        }
         let upstream = match op {
             Op::Push {
                 to: Some((remote, branch)),
                 ..
             } => format!("{remote}/{branch}"),
+            // The same branch as the upstream's (else the local one) there.
+            Op::Pull {
+                from: Some(remote), ..
+            } => {
+                let branch = self
+                    .head_upstream()
+                    .and_then(|u| u.name.split_once('/').map(|(_, b)| b.to_string()))
+                    .or_else(|| self.head_branch().map(str::to_string))
+                    .unwrap_or_default();
+                format!("{remote}/{branch}")
+            }
             _ => self
                 .head_upstream()
                 .map_or_else(|| "the remote branch".to_string(), |u| u.name.clone()),
@@ -2227,7 +2342,7 @@ impl RepoView {
                         "Someone pushed to {upstream} since you last pulled. Pull to combine their commits with yours, then push again.\n\nForce-pushing replaces the remote branch with yours, deleting their commits from it. It's only done if the remote is still as you last fetched it."
                     ),
                     choices: vec![
-                        ("Pull first".into(), false, Op::Pull(PullMode::FastForward)),
+                        ("Pull first".into(), false, Op::pull_upstream()),
                         (
                             "Force push".into(),
                             true,
@@ -2268,13 +2383,25 @@ impl RepoView {
                 });
                 true
             }
-            (Error::Diverged(_), Op::Pull(PullMode::FastForward)) => {
+            (
+                Error::Diverged(_),
+                Op::Pull {
+                    from,
+                    mode: PullMode::FastForward,
+                    stash,
+                },
+            ) => {
+                let pull = |mode| Op::Pull {
+                    from: from.clone(),
+                    mode,
+                    stash: *stash,
+                };
                 self.dialog = Some(Dialog::Choice {
                     title: format!("Your branch and {upstream} have both moved on"),
                     body: "Each has commits the other doesn't. Merge adds a merge commit joining them; rebase replays your commits on top of theirs, for a straight history.".into(),
                     choices: vec![
-                        ("Merge".into(), false, Op::Pull(PullMode::Merge)),
-                        ("Rebase".into(), false, Op::Pull(PullMode::Rebase)),
+                        ("Merge".into(), false, pull(PullMode::Merge)),
+                        ("Rebase".into(), false, pull(PullMode::Rebase)),
                     ],
                 });
                 true

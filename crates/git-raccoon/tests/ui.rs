@@ -16,7 +16,7 @@ use egui::Key;
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use git_raccoon::App;
-use git_raccoon::settings::Settings;
+use git_raccoon::settings::{PullChanges, PullStrategy, Settings};
 use git2::{Oid, Repository, Signature, Time, build::CheckoutBuilder};
 
 const DAY: i64 = 86_400;
@@ -3104,6 +3104,17 @@ fn fetches_from_one_remote_with_options() {
     open(&mut h, sample.path());
     assert!(h.state().settings().fetch_prune && !h.state().settings().fetch_force);
 
+    // With only origin, there's no choosing where from.
+    h.get_by_label("Fetch options").click();
+    h.run_ok();
+    h.get_by_label_contains("Prune");
+    assert!(h.query_by_label("All remotes").is_none());
+    h.get_by_label("Fetch options").click();
+    h.run_ok();
+    git(&sample, &["remote", "add", "fork", &url]);
+    h.key_press(Key::F5);
+    settle(&mut h);
+
     // Beside Fetch: where from, and how (remembered).
     h.get_by_label("Fetch options").click();
     h.run_ok();
@@ -3149,6 +3160,124 @@ fn fetches_from_one_remote_with_options() {
     assert!(has(&h, "fresh"), "fetched");
     assert!(has(&h, "gone"), "not pruned");
     let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn pulls_from_one_remote_with_options() {
+    let sample = Sample::build();
+    let base = std::env::temp_dir().join(format!("git-raccoon-pull-{}", rand_suffix()));
+    std::fs::create_dir_all(&base).unwrap();
+    let out = std::process::Command::new("git")
+        .args(["init", "-q", "--bare", "remote.git"])
+        .current_dir(&base)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let url = base.join("remote.git").to_str().unwrap().replace('\\', "/");
+    git(&sample, &["remote", "set-url", "origin", &url]);
+    // The remote is a commit ahead, and main a commit of its own.
+    git(&sample, &["commit", "-q", "--allow-empty", "-m", "Theirs"]);
+    git(&sample, &["push", "-q", "-u", "origin", "main"]);
+    git(&sample, &["reset", "-q", "--hard", "HEAD~1"]);
+    git(&sample, &["commit", "-q", "--allow-empty", "-m", "Ours"]);
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    let bin = sample.dir.with_extension("bin");
+    h.state_mut().repo_mut().unwrap().trash_override = Some(bin.clone());
+    let readme = read(&sample, "README.md").unwrap();
+    sample.write("README.md", "an unsaved idea\n");
+    wait_for(&mut h, "the change", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| !s.is_clean())
+    });
+
+    // With only origin, there's no choosing where from.
+    h.get_by_label("Pull options").click();
+    h.run_ok();
+    h.get_by_label("Rebase");
+    assert!(h.query_by_label("Pull from").is_none());
+    h.get_by_label("Pull options").click();
+    h.run_ok();
+    git(&sample, &["remote", "add", "fork", &url]);
+    h.key_press(Key::F5);
+    settle(&mut h);
+
+    // Beside Pull: where from, and how (remembered).
+    h.get_by_label("Pull options").click();
+    h.run_ok();
+    h.get_by_label("Pull from");
+    h.get_by_label("Upstream (origin/main)");
+    h.get_by_label("Fast-forward if possible, else merge")
+        .click();
+    h.run_ok();
+    h.get_by_label("Discard them (asks first)").click();
+    h.run_ok();
+    let pull = h.state().settings().pull;
+    assert_eq!(pull.strategy, PullStrategy::FastForwardOrMerge);
+    assert_eq!(pull.changes, PullChanges::Discard);
+    screenshot(&mut h, "21-pull-options");
+
+    // From origin: discarding asks first, then a merge joins both sides.
+    // (The sidebar lists origin too; the menu's is drawn last.)
+    h.get_all_by_label("origin").last().unwrap().click();
+    h.run_ok();
+    h.get_by_label("Discard your changes and pull?");
+    h.get_by_label("Discard and pull").click();
+    wait_for(&mut h, "the pull", |app| !app.is_busy());
+    assert_eq!(h.state().repo().unwrap().refresh_error, None);
+    let summary = head_summary(h.state());
+    assert!(summary.starts_with("Merge branch 'main' of "), "{summary}");
+    // (Restored as Git checks files out here: maybe with CRLF endings.)
+    assert_eq!(
+        read(&sample, "README.md").map(|t| t.replace("\r\n", "\n")),
+        Some(readme.replace("\r\n", "\n"))
+    );
+    assert!(bin.join("README.md").exists(), "kept in the bin");
+    let _ = std::fs::remove_dir_all(&base);
+    let _ = std::fs::remove_dir_all(&bin);
+}
+
+#[test]
+fn sets_and_removes_a_branch_upstream() {
+    let sample = Sample::build();
+    let remote = "refs/remotes/origin/fix/ui/toolbar-glitch";
+    git(&sample, &["update-ref", remote, "fix/ui/toolbar-glitch"]);
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    let upstream = |app: &App, branch: &str| {
+        app.repo()
+            .unwrap()
+            .refs
+            .local
+            .iter()
+            .find(|b| b.name == branch)
+            .and_then(|b| b.upstream.as_ref())
+            .map(|u| u.name.clone())
+    };
+    assert_eq!(upstream(h.state(), "fix/ui/toolbar-glitch"), None);
+
+    // The same name on the remote is offered first.
+    menu_item(&mut h, "toolbar-glitch", "Set upstream…");
+    h.get_by_label("Set upstream for fix/ui/toolbar-glitch");
+    h.get_by_label("Set upstream").click();
+    wait_for(&mut h, "the upstream", |app| {
+        upstream(app, "fix/ui/toolbar-glitch").as_deref() == Some("origin/fix/ui/toolbar-glitch")
+    });
+
+    // None removes it.
+    menu_item(&mut h, "toolbar-glitch", "Set upstream…");
+    h.get_by_label("Upstream branch").click();
+    h.run_ok();
+    h.get_by_label("None").click();
+    h.run_ok();
+    h.get_by_label("Remove upstream").click();
+    wait_for(&mut h, "no upstream", |app| {
+        upstream(app, "fix/ui/toolbar-glitch").is_none()
+    });
+    assert_eq!(h.state().error(), None);
 }
 
 #[test]

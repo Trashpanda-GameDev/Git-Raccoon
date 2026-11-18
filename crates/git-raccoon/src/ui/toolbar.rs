@@ -7,7 +7,7 @@ use eframe::egui::{self, RichText};
 use egui_phosphor::regular as icon;
 use git_raccoon_core::sync::FetchOptions;
 
-use crate::settings::RecentRepo;
+use crate::settings::{PullChanges, PullOptions, PullStrategy, RecentRepo};
 use crate::theme;
 use crate::ui::{welcome, widgets};
 
@@ -22,7 +22,10 @@ pub enum Action {
     Fetch(Option<String>),
     /// How Fetch goes from now on.
     SetFetchOptions(FetchOptions),
-    Pull,
+    /// Pull from the upstream, or (`Some`) from this remote.
+    Pull(Option<String>),
+    /// How Pull goes from now on.
+    SetPullOptions(PullOptions),
     Push,
     CancelSync,
     Palette,
@@ -62,6 +65,8 @@ pub struct OpenRepo<'a> {
     pub remotes: Vec<&'a str>,
     /// How Fetch goes.
     pub fetch: FetchOptions,
+    /// How Pull goes.
+    pub pull: PullOptions,
 }
 
 pub fn show(
@@ -342,7 +347,7 @@ fn sync_buttons(ui: &mut egui::Ui, repo: &OpenRepo<'_>) -> Option<Action> {
                 Some((up, _, b)) => format!("Pull {b} new commits from {up} into this branch"),
                 None => "This branch has no upstream to pull from yet. Push it first.".into(),
             },
-            Action::Pull,
+            Action::Pull(None),
         ),
         (
             "Push",
@@ -357,8 +362,9 @@ fn sync_buttons(ui: &mut egui::Ui, repo: &OpenRepo<'_>) -> Option<Action> {
     ];
     for (name, glyph, extra, tip, act) in buttons {
         let enabled = !repo.busy && (name != "Pull" || repo.upstream.is_some());
-        // Fetch is a split button: its options' arrow joined on at the right.
-        let split = name == "Fetch";
+        // Fetch and Pull are split buttons: their options' arrow joined on
+        // at the right.
+        let split = name == "Fetch" || name == "Pull";
         ui.scope(|ui| {
             let round = ui.visuals().widgets.inactive.corner_radius;
             let mut button =
@@ -382,8 +388,14 @@ fn sync_buttons(ui: &mut egui::Ui, repo: &OpenRepo<'_>) -> Option<Action> {
             {
                 action = Some(act);
             }
-            if split && let Some(a) = fetch_menu(ui, repo, enabled, height) {
-                action = Some(a);
+            let menu = match name {
+                "Fetch" => fetch_menu(ui, repo, enabled, height),
+                // Pulling from a remote needs no upstream.
+                "Pull" => pull_menu(ui, repo, !repo.busy, height),
+                _ => None,
+            };
+            if menu.is_some() {
+                action = menu;
             }
         });
     }
@@ -399,11 +411,122 @@ fn fetch_menu(
     height: f32,
 ) -> Option<Action> {
     let mut action = None;
+    // With one remote, Fetch itself is the only choice of where from.
+    let choose = repo.remotes.len() > 1;
+    let arrow = options_arrow(ui, enabled, height, "Fetch options", |ui| {
+        if choose {
+            heading(ui, "Fetch from");
+            if ui.button("All remotes").clicked() {
+                action = Some(Action::Fetch(None));
+                ui.close();
+            }
+            for remote in &repo.remotes {
+                if ui.button(*remote).clicked() {
+                    action = Some(Action::Fetch(Some((*remote).to_string())));
+                    ui.close();
+                }
+            }
+            ui.separator();
+        }
+        let mut options = repo.fetch;
+        toggles(ui, |ui| {
+            ui.checkbox(
+                &mut options.prune,
+                "Prune: remove remote branches deleted there",
+            );
+            ui.checkbox(
+                &mut options.force,
+                "Force: let fetched refs overwrite local ones",
+            );
+        });
+        if options != repo.fetch {
+            action = Some(Action::SetFetchOptions(options));
+        }
+    });
+    arrow.on_hover_text(if choose {
+        "Fetch from one remote, or change how Fetch goes"
+    } else {
+        "Change how Fetch goes"
+    });
+    action
+}
+
+/// The menu beside Pull: where from (the upstream, or a remote's branch of
+/// the same name), and how (joining both sides' commits, and what to do
+/// with uncommitted changes), remembered for Pull itself.
+fn pull_menu(ui: &mut egui::Ui, repo: &OpenRepo<'_>, enabled: bool, height: f32) -> Option<Action> {
+    let mut action = None;
+    // With one remote and an upstream there, Pull itself is the only choice
+    // of where from; without an upstream, the remote is how to pull at all.
+    let choose = repo.remotes.len() > 1 || repo.upstream.is_none();
+    let arrow = options_arrow(ui, enabled, height, "Pull options", |ui| {
+        if choose {
+            heading(ui, "Pull from");
+            if let Some((up, ..)) = repo.upstream
+                && ui.button(format!("Upstream ({up})")).clicked()
+            {
+                action = Some(Action::Pull(None));
+                ui.close();
+            }
+            for remote in &repo.remotes {
+                if ui.button(*remote).clicked() {
+                    action = Some(Action::Pull(Some((*remote).to_string())));
+                    ui.close();
+                }
+            }
+            ui.separator();
+        }
+        let mut options = repo.pull;
+        toggles(ui, |ui| {
+            heading(ui, "When both sides have new commits");
+            for strategy in PullStrategy::ALL {
+                ui.radio_value(&mut options.strategy, strategy, strategy.label());
+            }
+            ui.separator();
+            heading(ui, "Uncommitted changes");
+            for changes in PullChanges::ALL {
+                ui.radio_value(&mut options.changes, changes, changes.label());
+            }
+        });
+        if options != repo.pull {
+            action = Some(Action::SetPullOptions(options));
+        }
+    });
+    arrow.on_hover_text(if choose {
+        "Pull from another remote, or change how Pull goes"
+    } else {
+        "Change how Pull goes"
+    });
+    action
+}
+
+/// Checkboxes and radio buttons in a menu, with the edge egui's menu style
+/// takes off: without it, unticked ones are the menu's colour, and unseen.
+fn toggles(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    ui.scope(|ui| {
+        ui.visuals_mut().widgets.inactive.bg_stroke = egui::Stroke::new(1.0, theme::muted());
+        add(ui);
+    });
+}
+
+/// A small heading in an options menu.
+fn heading(ui: &mut egui::Ui, text: &str) {
+    ui.label(RichText::new(text).size(12.0).color(theme::muted()));
+}
+
+/// The right half of a split button: an arrow, as tall as the left half
+/// and rounded at the right, opening a menu of options. Ticking options
+/// leaves the menu open; `contents` closes it on a choice.
+fn options_arrow(
+    ui: &mut egui::Ui,
+    enabled: bool,
+    height: f32,
+    label: &str,
+    contents: impl FnOnce(&mut egui::Ui),
+) -> egui::Response {
     let menu = ui.add_enabled_ui(enabled, |ui| {
-        // Ticking the options leaves it open; choosing where from closes it.
         let config = egui::containers::menu::MenuConfig::new()
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
-        // The right half of Fetch's split button: as tall, rounded at the right.
         let round = ui.visuals().widgets.inactive.corner_radius;
         let arrow = egui::Button::new(RichText::new(icon::CARET_DOWN).size(12.0))
             .corner_radius(egui::CornerRadius {
@@ -414,32 +537,7 @@ fn fetch_menu(
             .min_size(egui::vec2(0.0, height));
         egui::containers::menu::MenuButton::from_button(arrow)
             .config(config)
-            .ui(ui, |ui| {
-                ui.label(RichText::new("Fetch from").size(12.0).color(theme::muted()));
-                if ui.button("All remotes").clicked() {
-                    action = Some(Action::Fetch(None));
-                    ui.close();
-                }
-                for remote in &repo.remotes {
-                    if ui.button(*remote).clicked() {
-                        action = Some(Action::Fetch(Some((*remote).to_string())));
-                        ui.close();
-                    }
-                }
-                ui.separator();
-                let mut options = repo.fetch;
-                ui.checkbox(
-                    &mut options.prune,
-                    "Prune: remove remote branches deleted there",
-                );
-                ui.checkbox(
-                    &mut options.force,
-                    "Force: let fetched refs overwrite local ones",
-                );
-                if options != repo.fetch {
-                    action = Some(Action::SetFetchOptions(options));
-                }
-            })
+            .ui(ui, contents)
             .0
     });
     let button = menu.inner;
@@ -449,8 +547,8 @@ fn fetch_menu(
         button.rect.y_range().shrink(5.0),
         egui::Stroke::new(1.0, theme::border()),
     );
+    let label = label.to_string();
     ui.ctx()
-        .accesskit_node_builder(button.id, |n| n.set_label("Fetch options"));
-    button.on_hover_text("Fetch from one remote, or change how Fetch goes");
-    action
+        .accesskit_node_builder(button.id, |n| n.set_label(label));
+    button
 }

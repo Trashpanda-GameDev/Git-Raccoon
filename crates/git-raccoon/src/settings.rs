@@ -95,6 +95,8 @@ pub struct Settings {
     /// fetched refs overwrite local ones.
     pub fetch_prune: bool,
     pub fetch_force: bool,
+    /// How Pull goes.
+    pub pull: PullOptions,
     pub hide_sidebar: bool,
     /// Where the last clone went; new clones start there.
     pub clone_dir: Option<String>,
@@ -191,6 +193,78 @@ pub enum ThemeMode {
     System,
 }
 
+/// How Pull goes: how it joins the upstream's new commits with yours, and
+/// what it does with uncommitted changes.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PullOptions {
+    pub strategy: PullStrategy,
+    pub changes: PullChanges,
+}
+
+/// How Pull joins the upstream's new commits with yours.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PullStrategy {
+    /// Only a fast-forward; when both sides have new commits, it asks
+    /// whether to merge or rebase.
+    #[default]
+    FastForwardOnly,
+    /// A fast-forward if it can be, otherwise a merge commit.
+    FastForwardOrMerge,
+    /// Your commits replayed on top of the upstream's.
+    Rebase,
+}
+
+impl PullStrategy {
+    pub const ALL: [PullStrategy; 3] = [
+        PullStrategy::FastForwardOnly,
+        PullStrategy::FastForwardOrMerge,
+        PullStrategy::Rebase,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PullStrategy::FastForwardOnly => "Fast-forward only",
+            PullStrategy::FastForwardOrMerge => "Fast-forward if possible, else merge",
+            PullStrategy::Rebase => "Rebase",
+        }
+    }
+
+    pub fn mode(self) -> git_raccoon_core::sync::PullMode {
+        use git_raccoon_core::sync::PullMode;
+        match self {
+            PullStrategy::FastForwardOnly => PullMode::FastForward,
+            PullStrategy::FastForwardOrMerge => PullMode::Merge,
+            PullStrategy::Rebase => PullMode::Rebase,
+        }
+    }
+}
+
+/// What Pull does with uncommitted changes.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PullChanges {
+    /// Put aside before, and back after.
+    #[default]
+    Stash,
+    /// Left as they are; Git refuses if they're in the way.
+    Leave,
+    /// Thrown away first (to the trash), after asking.
+    Discard,
+}
+
+impl PullChanges {
+    pub const ALL: [PullChanges; 3] =
+        [PullChanges::Stash, PullChanges::Leave, PullChanges::Discard];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PullChanges::Stash => "Put aside and back",
+            PullChanges::Leave => "Leave them",
+            PullChanges::Discard => "Discard them (asks first)",
+        }
+    }
+}
+
 /// The interface sizes offered.
 pub const ZOOMS: [f32; 5] = [0.9, 1.0, 1.1, 1.25, 1.5];
 
@@ -207,6 +281,7 @@ impl Default for Settings {
             split_diff: false,
             fetch_prune: true,
             fetch_force: false,
+            pull: PullOptions::default(),
             hide_sidebar: false,
             clone_dir: None,
             theme: ThemeChoice::default(),

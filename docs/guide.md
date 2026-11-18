@@ -64,7 +64,7 @@ Your hooks run as usual. If one refuses the commit, its message is shown and you
 
 ## Branches and tags
 
-Right-click a branch in the sidebar to **check it out**, **create a branch** from it, **rename** it or **delete** it (double-click also checks out). The **+** next to *Local* creates a branch. Right-click a commit in the graph to create a branch or tag there, or check out that commit.
+Right-click a branch in the sidebar to **check it out**, **create a branch** from it, **rename** it, **set its upstream** (the remote branch it pulls from and pushes to, or none) or **delete** it (double-click also checks out). The **+** next to *Local* creates a branch. Right-click a commit in the graph to create a branch or tag there, or check out that commit.
 
 Git Raccoon protects your work: if uncommitted changes are in the way of a checkout, it offers to stash them first; deleting a branch with commits that aren't anywhere else asks twice and tells you how to get them back.
 
@@ -72,8 +72,8 @@ Tags can be lightweight, or annotated (with a message).
 
 ## Syncing with a remote
 
-- **Fetch** gets new commits from every remote without changing your branches; the sidebar and toolbar then show how far behind you are. The arrow beside it fetches from just one remote, and sets how Fetch goes (remembered): **Prune** removes remote branches that were deleted there (on to start with), and **Force** lets fetched refs overwrite local ones even where that would lose commits; a forced fetch asks first.
-- **Pull** brings the upstream's new commits into your branch. It only fast-forwards by default; if both sides have new commits, it asks whether to **merge** or **rebase**. Uncommitted changes are put aside and restored.
+- **Fetch** gets new commits from every remote without changing your branches; the sidebar and toolbar then show how far behind you are. The arrow beside it fetches from just one remote (when there are several), and sets how Fetch goes (remembered): **Prune** removes remote branches that were deleted there (on to start with), and **Force** lets fetched refs overwrite local ones even where that would lose commits; a forced fetch asks first.
+- **Pull** brings the upstream's new commits into your branch. It only fast-forwards by default; if both sides have new commits, it asks whether to **merge** or **rebase**. Uncommitted changes are put aside and restored. The arrow beside it pulls from another remote (its branch of the same name, when there are several), and sets how Pull goes (remembered): when both sides have new commits, **fast-forward only** (asking, as above), **fast-forward if possible, else merge**, or **rebase**; and uncommitted changes are **put aside and back**, **left** (Git refuses if they're in the way, and offers to stash them), or **discarded** (it asks first each time, and their current versions go to the Recycle Bin).
 - **Push** sends your commits. Pushing a branch that isn't on a remote yet asks where it should go, in a bar under the toolbar: the same name on `origin` to start with, or pick another remote (when there are several) or name. From then on it pushes to and pulls from there. If the remote has commits you don't, it offers to pull first, or to **force push** — which is always done *with lease*, so it never deletes commits you haven't seen.
 
 Progress shows in the toolbar, with a Cancel button.

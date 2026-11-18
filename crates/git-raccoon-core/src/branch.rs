@@ -97,6 +97,14 @@ pub fn rename(path: &str, old: &str, new: &str) -> Result<()> {
     cli::run(path, &["branch", "--move", old, new], None).map(drop)
 }
 
+/// Sets the remote branch `branch` pulls from and pushes to ("origin/main"),
+/// or (`None`) removes it.
+pub fn set_upstream(path: &str, branch: &str, upstream: Option<&str>) -> Result<()> {
+    let set = upstream.map(|up| format!("--set-upstream-to={up}"));
+    let flag = set.as_deref().unwrap_or("--unset-upstream");
+    cli::run(path, &["branch", flag, branch], None).map(drop)
+}
+
 /// The commit a local branch points at.
 pub fn tip(path: &str, name: &str) -> Result<String> {
     let repo = Repository::discover(path)?;
