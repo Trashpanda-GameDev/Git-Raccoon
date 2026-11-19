@@ -34,6 +34,30 @@ pub fn now() -> i64 {
         .unwrap_or(0)
 }
 
+/// How the graph's lines bend between lanes.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LineStyle {
+    /// A smooth S-curve.
+    #[default]
+    Curved,
+    /// A straight diagonal.
+    Straight,
+    /// Down, across, then down.
+    Angled,
+}
+
+impl LineStyle {
+    pub const ALL: [LineStyle; 3] = [LineStyle::Curved, LineStyle::Straight, LineStyle::Angled];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            LineStyle::Curved => "Curved",
+            LineStyle::Straight => "Straight",
+            LineStyle::Angled => "Angled",
+        }
+    }
+}
+
 /// A column of the graph's list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Column {
@@ -113,6 +137,8 @@ pub struct Settings {
     pub accounts: Vec<crate::forge::Account>,
     /// Changed files shown as a tree of folders, rather than by path.
     pub file_tree: bool,
+    /// How the graph's lines bend where branches fork and merge.
+    pub branch_lines: LineStyle,
     /// Themes made here (or imported).
     pub themes: Vec<crate::themes::CustomTheme>,
     /// The one in use, by name; `None` for the built-in look in `theme`.
@@ -298,6 +324,7 @@ impl Default for Settings {
             terminal: String::new(),
             columns: Column::ALL.to_vec(),
             themes: Vec::new(),
+            branch_lines: LineStyle::default(),
             custom_theme: None,
             column_widths: Vec::new(),
             defaults: DEFAULTS,

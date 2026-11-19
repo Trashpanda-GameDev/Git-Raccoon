@@ -2142,6 +2142,7 @@ impl App {
                     now,
                     &mut self.settings.columns,
                     &mut self.settings.column_widths,
+                    self.settings.branch_lines,
                 ) {
                     Some(history::Click::Row(row)) => {
                         repo.select_index(row);

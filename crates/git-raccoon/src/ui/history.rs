@@ -1,6 +1,6 @@
 //! The commit list with its graph. Only the rows on screen are drawn.
 
-use crate::settings::Column;
+use crate::settings::{Column, LineStyle};
 use eframe::egui::{self, Color32, Pos2, Rect, RichText, Sense, Stroke, epaint::CubicBezierShape};
 use egui_phosphor::regular as icon;
 use git_raccoon_core::repo::{GraphCommit, RefKind, RefLabel};
@@ -564,6 +564,45 @@ pub enum Click {
     StashDrop(String),
 }
 
+/// A line from `a` down to `b` in the graph, bending between lanes as
+/// `style` says (dotted for a stash's).
+pub fn branch_line(
+    painter: &egui::Painter,
+    a: Pos2,
+    b: Pos2,
+    style: LineStyle,
+    stroke: Stroke,
+    dotted: bool,
+) {
+    let points: Vec<Pos2> = if (a.x - b.x).abs() < 0.5 {
+        vec![a, b]
+    } else {
+        let mid = (a.y + b.y) / 2.0;
+        match style {
+            LineStyle::Curved => {
+                let curve = CubicBezierShape::from_points_stroke(
+                    [a, Pos2::new(a.x, mid), Pos2::new(b.x, mid), b],
+                    false,
+                    Color32::TRANSPARENT,
+                    stroke,
+                );
+                if !dotted {
+                    painter.add(curve);
+                    return;
+                }
+                curve.flatten(Some(0.5))
+            }
+            LineStyle::Straight => vec![a, b],
+            LineStyle::Angled => vec![a, Pos2::new(a.x, mid), Pos2::new(b.x, mid), b],
+        }
+    };
+    if dotted {
+        painter.extend(egui::Shape::dotted_line(&points, stroke.color, 6.0, 1.2));
+    } else {
+        painter.add(egui::Shape::line(points, stroke));
+    }
+}
+
 /// Whether a row is a stash.
 fn is_stash(c: &GraphCommit) -> bool {
     c.refs.iter().any(|r| r.kind == RefKind::Stash)
@@ -614,6 +653,7 @@ pub fn show(
     now: i64,
     order: &mut Vec<Column>,
     widths: &mut Vec<(Column, f32)>,
+    lines: LineStyle,
 ) -> Option<Click> {
     let total = repo.history.total();
     let width = ui.available_width();
@@ -831,27 +871,7 @@ pub fn show(
                 let stroke = Stroke::new(2.0, theme::lane_color(usize::from(e.lane)));
                 // A stash's line to its commit is dotted.
                 let dotted = stash && usize::from(e.from) == c.column;
-                if (a.x - b.x).abs() < 0.5 {
-                    if dotted {
-                        graph.extend(egui::Shape::dotted_line(&[a, b], stroke.color, 6.0, 1.2));
-                    } else {
-                        graph.line_segment([a, b], stroke);
-                    }
-                } else {
-                    let mid = (a.y + b.y) / 2.0;
-                    let curve = CubicBezierShape::from_points_stroke(
-                        [a, Pos2::new(a.x, mid), Pos2::new(b.x, mid), b],
-                        false,
-                        Color32::TRANSPARENT,
-                        stroke,
-                    );
-                    if dotted {
-                        let points = curve.flatten(Some(0.5));
-                        graph.extend(egui::Shape::dotted_line(&points, stroke.color, 6.0, 1.2));
-                    } else {
-                        graph.add(curve);
-                    }
-                }
+                branch_line(&graph, a, b, lines, stroke, dotted);
             }
         }
         if wip

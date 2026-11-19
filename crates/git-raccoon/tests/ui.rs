@@ -4975,6 +4975,38 @@ fn makes_edits_and_deletes_a_custom_theme() {
 }
 
 #[test]
+fn draws_branch_lines_the_chosen_way() {
+    use egui::accesskit::Role;
+    use git_raccoon::settings::LineStyle;
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    assert_eq!(h.state().settings().branch_lines, LineStyle::Curved);
+    press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    for (style, name) in [
+        (LineStyle::Angled, "Angled"),
+        (LineStyle::Straight, "Straight"),
+    ] {
+        h.get_by_role_and_label(Role::RadioButton, name)
+            .scroll_to_me();
+        h.run_ok();
+        h.get_by_role_and_label(Role::RadioButton, name).click();
+        h.run_ok();
+        assert_eq!(h.state().settings().branch_lines, style);
+        if style == LineStyle::Angled {
+            screenshot(&mut h, "67-branch-lines-setting");
+        }
+        h.get_by_label("Close settings").click();
+        settle(&mut h);
+        screenshot(&mut h, &format!("68-branch-lines-{}", name.to_lowercase()));
+        press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    }
+    // Found by what people call them, too.
+    type_into(&mut h, "Search settings", "curves");
+    h.get_by_label("Branch lines");
+}
+
+#[test]
 fn shows_the_licenses() {
     let mut h = harness(Settings::default());
     h.run_ok();

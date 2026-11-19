@@ -6,7 +6,9 @@
 use eframe::egui::{self, RichText};
 use egui_phosphor::regular as icon;
 
-use crate::settings::{PullChanges, PullStrategy, Settings, ThemeChoice, ThemeMode, ZOOMS};
+use crate::settings::{
+    LineStyle, PullChanges, PullStrategy, Settings, ThemeChoice, ThemeMode, ZOOMS,
+};
 use crate::theme;
 use crate::themes::{CustomTheme, Field, Hex};
 use crate::ui::widgets;
@@ -100,6 +102,7 @@ impl Section {
                 settings.set_zoom(1.0);
                 settings.hide_sidebar = d.hide_sidebar;
                 settings.columns = d.columns;
+                settings.branch_lines = d.branch_lines;
                 settings.column_widths = d.column_widths;
             }
             Section::Git => {
@@ -144,6 +147,12 @@ const ROWS: &[Row] = &[
         name: "Look",
         hint: "Colours of the app, the graph and diffs.",
         words: "theme colours colors raccoon classic pastel forest paper high contrast",
+    },
+    Row {
+        section: Section::Appearance,
+        name: "Branch lines",
+        hint: "How the graph's lines bend where branches fork and merge.",
+        words: "graph curves curved lines branches straight angled bend",
     },
     Row {
         section: Section::Appearance,
@@ -861,6 +870,76 @@ fn preview(ui: &mut egui::Ui, c: &crate::themes::Colours) {
     }
 }
 
+/// A choice of how branch lines bend: a fork and a merge drawn that way,
+/// with its name.
+fn line_tile(ui: &mut egui::Ui, style: LineStyle, chosen: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(96.0, 76.0), egui::Sense::click());
+    let name = style.name();
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, chosen, name)
+    });
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 6, theme::bg());
+    // Two lanes: one forks off and merges back.
+    let (left, right) = (rect.left() + 34.0, rect.left() + 62.0);
+    let (top, fork, join, bottom) = (
+        rect.top() + 8.0,
+        rect.top() + 18.0,
+        rect.top() + 40.0,
+        rect.top() + 52.0,
+    );
+    let main = egui::Stroke::new(2.0, theme::lane_color(0));
+    let side = egui::Stroke::new(2.0, theme::lane_color(1));
+    painter.line_segment([egui::pos2(left, top), egui::pos2(left, bottom)], main);
+    crate::ui::history::branch_line(
+        &painter,
+        egui::pos2(left, fork),
+        egui::pos2(right, fork + 11.0),
+        style,
+        side,
+        false,
+    );
+    crate::ui::history::branch_line(
+        &painter,
+        egui::pos2(right, join - 11.0),
+        egui::pos2(left, join),
+        style,
+        side,
+        false,
+    );
+    painter.line_segment(
+        [
+            egui::pos2(right, fork + 11.0),
+            egui::pos2(right, join - 11.0),
+        ],
+        side,
+    );
+    for (x, y, colour) in [
+        (left, fork, main.color),
+        (right, fork + 11.0, side.color),
+        (left, join, main.color),
+    ] {
+        painter.circle_filled(egui::pos2(x, y), 3.5, theme::bg());
+        painter.circle_stroke(egui::pos2(x, y), 3.5, egui::Stroke::new(2.0, colour));
+    }
+    painter.text(
+        egui::pos2(rect.center().x, rect.bottom() - 11.0),
+        egui::Align2::CENTER_CENTER,
+        name,
+        theme::body(12.0),
+        theme::text(),
+    );
+    let stroke = if chosen {
+        egui::Stroke::new(2.0, theme::accent())
+    } else if response.hovered() {
+        egui::Stroke::new(1.0, theme::muted())
+    } else {
+        egui::Stroke::new(1.0, theme::border())
+    };
+    painter.rect_stroke(rect, 6, stroke, egui::StrokeKind::Inside);
+    response
+}
+
 /// A section in the list on the left: its icon and name, from the left
 /// edge, highlighted when it's the one shown.
 fn nav_item(ui: &mut egui::Ui, section: Section, on: bool) -> egui::Response {
@@ -1048,6 +1127,15 @@ fn control(
                     }
                 });
             your_themes(ui, settings, view, action);
+        }
+        "Branch lines" => {
+            ui.horizontal(|ui| {
+                for style in LineStyle::ALL {
+                    if line_tile(ui, style, settings.branch_lines == style).clicked() {
+                        settings.branch_lines = style;
+                    }
+                }
+            });
         }
         "Interface size" => {
             let current = settings.zoom.unwrap_or(1.0);
