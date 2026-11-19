@@ -916,6 +916,66 @@ fn unstaged_and_staged_share_the_pane_like_the_sidebar() {
 }
 
 #[test]
+fn a_long_commit_description_scrolls_and_the_box_resizes() {
+    let sample = Sample::build();
+    sample.write("notes.txt", "one\n");
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    wait_for(&mut h, "the WIP row", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| !s.unstaged.is_empty())
+    });
+    h.get_by_label("Working changes").click();
+    settle(&mut h);
+    let summary = |h: &Harness<'_, App>| h.get_by_label("Commit summary").rect();
+    // Steady from the start (it once crept down a little every frame).
+    let first = summary(&h);
+    for _ in 0..5 {
+        h.step();
+    }
+    assert_eq!(summary(&h), first, "the box keeps its size");
+    let before = summary(&h);
+    let staged = h.get_by_label("Hide staged files").rect();
+    // Sixty lines: the box stays as it is, and the description scrolls.
+    let long: String = (1..=60).map(|i| format!("line {i}\n")).collect();
+    type_into(&mut h, "Commit description", &long);
+    settle(&mut h);
+    assert_eq!(summary(&h), before, "the box didn't grow");
+    assert_eq!(
+        h.get_by_label("Hide staged files").rect(),
+        staged,
+        "the lists are where they were"
+    );
+    let field = h.get_by_label("Commit description").rect();
+    let button = h.get_by_label_contains("Commit 0 files").rect();
+    assert!(
+        button.top() > field.top(),
+        "the button is still below the description"
+    );
+    screenshot(&mut h, "84-long-description");
+    // Its top edge drags: find it by the pointer it shows.
+    let x = before.center().x;
+    let edge = (0..80)
+        .map(|d| before.top() - d as f32)
+        .find(|&y| {
+            h.hover_at(egui::pos2(x, y));
+            h.run_ok();
+            h.output().platform_output.cursor_icon == egui::CursorIcon::ResizeVertical
+        })
+        .expect("a resize edge above the commit box");
+    drag(&mut h, egui::pos2(x, edge), egui::pos2(x, edge - 100.0));
+    settle(&mut h);
+    assert!(
+        summary(&h).top() < before.top() - 80.0,
+        "taller: {:?}",
+        summary(&h)
+    );
+}
+
+#[test]
 fn stages_files_hunks_and_lines() {
     let sample = Sample::build();
     sample.write("notes.txt", numbered(|_| None));

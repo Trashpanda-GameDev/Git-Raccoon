@@ -291,7 +291,13 @@ pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
 
     // The commit box sits at the bottom; the file lists fill the rest.
     let staged = status.staged.len();
+    // Its height can be dragged (its top edge), within reason: room is left
+    // for the file lists above it.
+    let most = (ui.available_height() * 0.7).max(240.0);
     egui::Panel::bottom("commit-box")
+        .resizable(true)
+        .default_size(250.0)
+        .size_range(200.0..=most)
         .frame(
             egui::Frame::new()
                 .fill(theme::bg_raised())
@@ -715,15 +721,34 @@ fn commit_box(
     );
     ui.ctx()
         .accesskit_node_builder(summary.id, |n| n.set_label("Commit summary"));
-    let body = ui.add_enabled(
-        !committing,
-        egui::TextEdit::multiline(&mut draft.body)
-            .hint_text("Description")
-            .desired_rows(4)
-            .desired_width(width),
-    );
-    ui.ctx()
-        .accesskit_node_builder(body.id, |n| n.set_label("Commit description"));
+    // The description takes the room the box has (what's below it measured
+    // last frame), and scrolls when it's longer than that.
+    let below_id = egui::Id::new("commit-box-below");
+    let below = ui.data(|d| d.get_temp::<f32>(below_id).unwrap_or(70.0));
+    let room = (ui.available_height() - below).max(48.0);
+    let row = ui.text_style_height(&egui::TextStyle::Body);
+    #[expect(clippy::cast_possible_truncation, reason = "a few rows")]
+    #[expect(clippy::cast_sign_loss, reason = "at least one")]
+    let rows = ((room - 8.0) / row).floor().max(1.0) as usize;
+    let body = egui::ScrollArea::vertical()
+        .id_salt("commit-description")
+        .max_height(room)
+        .min_scrolled_height(room)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            let body = ui.add_enabled(
+                !committing,
+                egui::TextEdit::multiline(&mut draft.body)
+                    .hint_text("Description")
+                    .desired_rows(rows)
+                    .desired_width(width - 12.0),
+            );
+            ui.ctx()
+                .accesskit_node_builder(body.id, |n| n.set_label("Commit description"));
+            body
+        })
+        .inner;
+    let below_top = ui.cursor().top();
 
     let mut amend = draft.amend;
     if ui
@@ -797,6 +822,11 @@ fn commit_box(
             (clicked, stash)
         })
         .inner;
+    let below_now = ui.cursor().top() - below_top;
+    if (below_now - below).abs() > 0.5 {
+        ui.data_mut(|d| d.insert_temp(below_id, below_now));
+        ui.ctx().request_repaint();
+    }
     if stash.clicked() {
         action = Some(Action::Stash);
     }

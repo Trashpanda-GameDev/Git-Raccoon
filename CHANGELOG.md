@@ -5,6 +5,7 @@ release page). Newest first; a version's heading is just its number.
 
 ## 0.5.16
 
+- **A long commit description scrolls** inside its box instead of growing over the file lists, and **the commit box can be resized**: drag its top edge (remembered).
 - **Unstaged and staged files share the pane** like the sidebar's sections: half each to start with, whatever is in them, so *Staged files* no longer jumps up under a short unstaged list. Drag the line between them to share the space differently (double-click it for half each); a folded list gives its room to the other. The split is remembered.
 - **Shift+click picks a range of branches** in the sidebar: every branch shown from the last one clicked to this one (Ctrl+Shift adds the range to those already picked), as well as Ctrl+click for one at a time.
 - **Delete a branch or tag here, on its remotes, or both, in one go**: *Delete…* (on a branch or tag, in the sidebar or on the graph) asks with a checkbox for each place: *Local*, and each remote (for a branch, the remotes that have it). The one you right-clicked starts ticked. Deleting a branch here and on a remote first checks its commits are on some other branch, and asks again if not. Undo puts it back wherever it went, on the remotes too. A branch label on the graph that stands for its remote copy as well (`main ☁`) can now delete that copy too.
