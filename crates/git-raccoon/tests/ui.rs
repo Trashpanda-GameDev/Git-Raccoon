@@ -1739,7 +1739,9 @@ fn right_clicking_a_label_on_the_graph_shows_its_menu() {
     // A tag's too.
     let at = label(&h, "Merge branch 'feature/graph'");
     right_click_at(&mut h, at);
-    h.get_by_label("Delete tag…");
+    h.get_by_label("Delete…");
+    h.get_by_label("Delete on origin…");
+    h.get_by_label("Delete here and on origin…");
     h.get_by_label_contains("Create tag here…").click();
     settle(&mut h);
     assert!(matches!(
@@ -2844,7 +2846,7 @@ fn creates_checks_out_renames_and_deletes_branches_and_tags() {
             .iter()
             .any(|t| t.name == "v0.0.1" && t.annotated)
     });
-    menu_item(&mut h, "v0.1.0", "Delete tag");
+    menu_item(&mut h, "v0.1.0", "Delete…");
     h.get_by_role_and_label(Role::Button, "Delete tag").click();
     wait_for(&mut h, "the tag delete", |app| {
         app.repo()

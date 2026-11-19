@@ -2694,9 +2694,7 @@ impl RepoView {
             ) => {
                 self.dialog = Some(Dialog::Confirm {
                     title: format!("{name} has work that's nowhere else"),
-                    body: format!(
-                        "Its commits aren't on any other branch or tag. Nothing was deleted. Deleting it here and on the remote anyway hides them from the graph (Undo brings them back)."
-                    ),
+                    body: "Its commits aren't on any other branch or tag. Nothing was deleted. Deleting it here and on the remote anyway hides them from the graph (Undo brings them back).".into(),
                     button: "Delete both anyway".into(),
                     danger: true,
                     op: Op::DeleteBranchEverywhere {
