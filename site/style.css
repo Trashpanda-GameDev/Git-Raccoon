@@ -414,7 +414,17 @@ section + section { border-top: 1px solid var(--border); }
 .prose h2 a.anchor { color: var(--border); margin-left: 8px; font-weight: 400; visibility: hidden; }
 .prose h2:hover a.anchor { visibility: visible; }
 .prose h1 a.anchor { display: none; }
+.prose h3 { font-size: 18px; margin: 30px 0 8px; scroll-margin-top: 80px; }
+.prose h3 a.anchor { display: none; }
 .prose p, .prose li { color: var(--text); }
+.prose blockquote {
+  margin: 18px 0;
+  padding: 10px 16px;
+  border-left: 3px solid var(--accent);
+  background: var(--bg-raised);
+  border-radius: 0 6px 6px 0;
+}
+.prose blockquote p { margin: 0; }
 .prose li { margin: 6px 0; }
 .prose ul { padding-left: 22px; }
 .prose code {

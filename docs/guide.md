@@ -1,13 +1,15 @@
 # Git Raccoon user guide
 
-Git Raccoon is a desktop app for working with Git repositories: you see your project's history as a graph, and do everyday Git work (committing, branching, merging, syncing) with buttons, menus and drag and drop. It runs your own `git` for anything that changes a repository, so your hooks, signing, SSH keys and credential helpers work exactly as on the command line.
+Git Raccoon shows your project's history as a graph, and lets you do everyday Git work with buttons, menus and drag and drop. It runs your own `git` underneath, so your hooks, signing, SSH keys and credential helpers work just as they do on the command line.
 
+- [Quick start](#quick-start)
 - [Installing](#installing)
 - [Opening a repository](#opening-a-repository)
 - [The window](#the-window)
 - [Committing](#committing)
 - [Branches and tags](#branches-and-tags)
 - [Syncing with a remote](#syncing-with-a-remote)
+- [Pull requests, merge requests and issues](#pull-requests-merge-requests-and-issues)
 - [Merging, rebasing and conflicts](#merging-rebasing-and-conflicts)
 - [Rewriting history](#rewriting-history)
 - [Looking back: file history and blame](#looking-back-file-history-and-blame)
@@ -15,144 +17,327 @@ Git Raccoon is a desktop app for working with Git repositories: you see your pro
 - [Tabs, submodules and worktrees](#tabs-submodules-and-worktrees)
 - [Keyboard and the command palette](#keyboard-and-the-command-palette)
 - [Themes and settings](#themes-and-settings)
-- [Updates and crash reports](#updates-and-crash-reports)
+- [Updates, feedback and crash reports](#updates-feedback-and-crash-reports)
 - [Troubleshooting](#troubleshooting)
+
+## Quick start
+
+1. **Open a repository** from the welcome screen, or clone one.
+2. **Click the `// WIP` row** at the top of the graph to see your changes.
+3. **Stage** files, write a summary, and press **Commit** (Ctrl+Enter).
+4. **Push** from the toolbar.
+
+Made a mistake? **Ctrl+Z** undoes most things. Can't find something? **Ctrl+K** opens the command palette, where every action is a few letters away.
 
 ## Installing
 
-Download the installer for your system from the [releases page](https://github.com/Trashpanda-GameDev/Git-Raccoon/releases):
+Download the installer for your system from the [releases page](https://github.com/Trashpanda-GameDev/Git-Raccoon/releases). Git Raccoon needs [Git](https://git-scm.com) installed.
 
-- **Windows:** `GitRaccoon-win-Setup.exe`. It asks where to install Git Raccoon (any folder you can write to, since it keeps itself up to date there), installs for you only (no administrator needed), adds Desktop and Start-menu shortcuts, and uninstalls from *Settings > Apps*. Windows may warn that the installer is from an unknown publisher: choose *More info*, then *Run anyway*.
-- **macOS (Apple Silicon):** the `.pkg` installer. The first time, right-click Git Raccoon in Applications and choose *Open* (or allow it in *System Settings > Privacy & Security*).
-- **Linux:** the `.AppImage`. Make it executable (`chmod +x`) and run it.
+| System | Download | First run |
+| --- | --- | --- |
+| Windows | `GitRaccoon-win-Setup.exe` | If Windows warns about an unknown publisher: *More info* › *Run anyway*. |
+| macOS (Apple Silicon) | the `.pkg` installer | Right-click Git Raccoon in Applications › *Open* (or allow it in *System Settings › Privacy & Security*). |
+| Linux | the `.AppImage` | Make it executable (`chmod +x`) and run it. |
 
-Git Raccoon needs [Git](https://git-scm.com) installed. Once installed, it keeps itself up to date (see [Updates](#updates-and-crash-reports)).
+On Windows, it installs just for you (no administrator needed), into any folder you choose, and uninstalls from *Settings › Apps*. Once installed, it [keeps itself up to date](#updates-feedback-and-crash-reports).
 
 ## Opening a repository
 
 The welcome screen offers:
 
-- **Open a repository…**: pick a folder with a Git repository (any folder inside one works too).
-- **Clone a repository…**: give its **URL** (HTTPS or SSH). Or choose one of your GitHub or GitLab accounts at the top, and pick one of your repositories there from a list you can type in to narrow it down; that fills in the URL (see [Pull requests, merge requests and issues](#pull-requests-merge-requests-and-issues) for signing in). Choose where it goes and, if you like, a **Shallow clone** (the latest commit only, not the history before it) or a **Sparse checkout** (only the folders you name, and the files at the top). Git Raccoon clones it with progress and a Cancel button, then opens it.
-- **New repository…**: it's made only on this computer, unless you choose one of your GitHub or GitLab accounts at the top: then it's made there too, and you can give a description, choose **Public** or **Private**, and whether to clone it here after creating it. Give its name, the folder it goes in (its own folder, named after it, is made there), its first branch's name, and optionally a **.gitignore template** and a **License** (from the forge's list; GitHub's for one only on this computer) and **Git LFS**. Those go in a first commit, which is pushed to the forge when it's made there.
+- **Open a repository…**: pick its folder (or any folder inside it).
+- **Clone a repository…**: paste a URL, or pick one of your repositories from a signed-in GitHub or GitLab account.
+- **New repository…**: made on this computer, or on GitHub or GitLab too.
 - **Recent** repositories, one click away.
 
 Your open repositories come back the next time you start Git Raccoon.
 
+### Cloning options
+
+- **Shallow clone**: only the latest commit, not the history before it.
+- **Sparse checkout**: only the folders you name (and the files at the top).
+
+A progress bar shows while it clones, with a Cancel button.
+
+### New repository options
+
+Give it a name, a folder and its first branch's name. You can also add:
+
+- a **.gitignore template** and a **License**;
+- **Git LFS**, for large files;
+- on GitHub or GitLab: a description, **Public** or **Private**, and whether to clone it here.
+
+The extras go in a first commit, which is pushed when the repository is made on a forge.
+
 ## The window
 
-- **The graph** (middle) shows every commit, newest at the top, with lines for branches and merges, and labels for branches, remote branches and tags. A cloud after a branch's name means the remote's copy of it is at the same commit. When a commit has several labels ("main +2"), point at them to see them all. A label too long for its column grows to its whole name when you point at it. Double-click a label to check that branch out, or right-click it for everything its menu in the sidebar has (merge, rebase, rename, delete…) along with what can be done with its commit. Double-clicking a remote branch (such as `origin/feature`) checks out your branch of the same name and brings it up to that commit; if both have new commits, it asks whether to merge or rebase. Click a commit to see its details; use the arrow keys and Page Up/Down to move. Shift+↓/↑ follows the selected commit's branch (down to its parent, up to the commit that continues it), Ctrl+↓/↑ goes to the next or previous commit with a label, Home and End to the newest and oldest, and Ctrl+H to the checked-out commit. When there are more branches side by side than the graph's column shows, it scrolls sideways: use the horizontal wheel (or Shift and the wheel) over it, or drag the bar under the Graph heading.
-- **The sidebar** (left) lists local branches (with how far ahead or behind their upstream they are), remotes and their branches, tags, stashes, worktrees and submodules. Click one to jump to its commit. The filter box at the top narrows the lists. The open sections share the sidebar's height between them, and a long list scrolls inside its own section. Drag the line between two sections to move just that boundary (double-click it to share the space by what's in each again). Click a heading to collapse its section: its heading stays in its place, on top of the next section, and the open ones take its space. Right-click any heading to hide sections you don't use (pull or merge requests, issues, tags…) or show them all again; the same switches are in Settings › Appearance › Sidebar.
-- **Sizes and columns:** drag the edge of the sidebar or the details pane to make it as wide or narrow as you like. Drag a column heading in the graph (Graph, Commit message, Author…) left or right to move that column: the others make room as you go. Drag the edge after a heading to make that column wider or narrower (the commit message takes the room that's left, and no column gets narrower than its heading), or double-click the edge to fit the column to what's on screen. Right-click a heading to put the order or the widths back as they were.
-- **The details pane** (right) shows the selected commit: its message, author, date, parents and changed files. Click a file to see its diff.
-- **Diffs** show unified or side by side, just the changes (with a few lines around them) or the **whole file** with the changes marked in place (it opens at the first change), with syntax highlighting, the changed words marked, and images previewed. Long lines scroll sideways: the scrollbar along the bottom, or the horizontal wheel (or Shift and the wheel) over the diff. Side by side, each half has its own scrollbar, the two halves move together, and the line numbers stay put.
-- **Search:** press Ctrl+F, or **Search** in the toolbar, for the search box over the top right of the graph, to find commits by message, author or SHA, or (with the file button) by the files they touch. Enter and Shift+Enter, or the arrows, go through the matches, and the box shows which one you're on ("3 of 40"); Esc closes it.
+| Part | What it shows |
+| --- | --- |
+| **Sidebar** (left) | Branches, remotes, tags, stashes, worktrees, submodules, and pull requests and issues. |
+| **Graph** (middle) | Every commit, newest first, with branch lines and labels. |
+| **Details pane** (right) | The selected commit, or your working changes. |
+| **Toolbar** (top) | Repositories, the current branch, Branch, Fetch, Pull, Push, Undo, search, the command palette and settings. |
 
-The toolbar has the repository menu (your recent repositories, to switch to one), the current branch, Branch (a new branch from the checked-out commit), Fetch, Pull and Push, Undo, the command palette and settings.
+### The graph
+
+- **Click** a commit to see it. **Double-click** a branch label to check it out.
+- **Right-click** a label or commit for everything you can do with it.
+- A **cloud** after a branch name means the remote's copy is at the same commit.
+- **"main +2"** means more labels: point at it to see them all.
+- When there are many branches side by side, the graph scrolls sideways (Shift+wheel, or the bar under *Graph*).
+
+Moving around:
+
+| Keys | Go to |
+| --- | --- |
+| ↑ / ↓, Page Up / Down | The next commits |
+| Shift+↓ / Shift+↑ | Along the selected commit's branch |
+| Ctrl+↓ / Ctrl+↑ | The next commit with a label |
+| Home / End | The newest / oldest commit |
+| Ctrl+H | The checked-out commit |
+
+### The sidebar
+
+- **Click** an item to jump to its commit. The **filter** box at the top narrows the lists.
+- **Click a heading** to collapse its section; **drag the line** between sections to resize them.
+- **Right-click a heading** to hide sections you don't use (also in Settings › Appearance › Sidebar).
+
+### Columns and panes
+
+- **Drag** the edge of the sidebar or details pane to resize it.
+- **Drag a column heading** (Graph, Commit message, Author…) to move it; drag its edge to resize, or double-click the edge to fit.
+- **Right-click a heading** to put the columns back as they were.
+
+### Diffs
+
+Click a file to see its diff. Switch between:
+
+- **Unified** or **Split** (side by side);
+- **Changes** (with a few lines around them) or **Whole file**.
+
+Diffs have syntax highlighting, the changed words marked, and image previews. Long lines scroll sideways.
+
+### Search
+
+**Ctrl+F** finds commits by message, author or SHA, or by the files they touch (the file button). **Enter** and **Shift+Enter** go through the matches; **Esc** closes it.
 
 ## Committing
 
-When you have uncommitted changes, a **// WIP** row sits at the top of the graph, with a dashed line down to the commit you're on. You can write the commit's summary right there: it's the same text as the summary box under Commit, and a stash starts with it as its title. Click the row to see your changes:
+When you have changes, a **`// WIP`** row sits at the top of the graph. Click it to see them in the details pane.
 
-- **Unstaged** and **staged** files, each in a list of its own, sharing the pane half and half (drag the line between them to share it differently; double-click it for half each again; click a list's heading to fold it away and give its room to the other), with buttons to stage, unstage or discard. Pick several files with Ctrl+click (or Shift+click for a range) and right-click them, or right-click a folder in the folder view, to stage, unstage, stash, ignore (new files: they're added to `.gitignore`) or discard them all at once. The tree button at the top shows the files in their folders instead of by path (commits and stashes too; a folder holding just one folder shares its row, like `game/assets/localisation`), and the bin discards all changes, staged or not, after asking. Discarded files go to the Recycle Bin or Trash, so they can be recovered.
-- Open a file's diff to stage **single hunks**, or pick **individual lines** and stage just those: click a line, Shift+click or drag for a range, Ctrl+click to add or take one out, then right-click them and choose **Stage selection** (only the changed lines among them count). Right-click → **Copy** copies picked lines (as does Ctrl+C), in any diff, or picks every line. Esc lets go of them.
-- Write a **summary** (the counter turns amber past 50 characters and red past 72) and an optional description, then **Commit** (or Ctrl+Enter). A long description scrolls inside its box; drag the commit box's top edge to make it taller or shorter.
-- **Amend last commit** replaces the last commit instead; it warns if that commit is already pushed.
-- **Stash** puts your changes aside: all of them, or, when some are staged, just the staged ones (the rest stay as they are). The stash appears in the sidebar, and in the graph just above the commit it was made on; right-click it in either to apply, pop or delete it.
+1. **Stage** what you want to commit: a file's button, or pick several (Ctrl+click, Shift+click) and right-click.
+2. Write a **summary** (it turns amber past 50 characters, red past 72) and, if you like, a description.
+3. **Commit**, or press Ctrl+Enter.
+
+You can also type the summary straight into the `// WIP` row.
+
+### Staging parts of a file
+
+Open a file's diff, then:
+
+- **A hunk:** its **Stage hunk** button.
+- **Some lines:** click a line, Shift+click or drag for a range, Ctrl+click to add one, then right-click › **Stage selection**.
+
+Right-click › **Copy** (or Ctrl+C) copies the picked lines. **Esc** lets go of them.
+
+### Other things you can do
+
+- **Amend last commit**: replace the last commit (it warns if that one is already pushed).
+- **Stash**: put your changes aside. When some are staged, only those go. Right-click a stash (sidebar or graph) to apply, pop or delete it.
+- **Discard**: throw changes away. Discarded files go to the Recycle Bin or Trash, so they can be recovered.
+- **Ignore**: right-click new files to add them to `.gitignore`.
+- **Folder view**: the tree button shows files in their folders instead of by path.
+
+The unstaged and staged lists share the pane: drag the line between them, or click a heading to fold one away.
 
 Your hooks run as usual. If one refuses the commit, its message is shown and your commit message is kept.
 
 ## Branches and tags
 
-Right-click a branch in the sidebar to **check it out**, **create a branch** from it, **rename** it, **set its upstream** (the remote branch it pulls from and pushes to, or none) or **delete** it (double-click also checks out). The **+** next to *Local* creates a branch. Right-click a commit in the graph to create a branch or tag there, or check out that commit. **Delete…** on a branch or tag (in the sidebar or on the graph) asks where, with a checkbox for each place: *Local*, and each remote (for a branch, the remotes that have it); the one you right-clicked starts ticked. Deleting a branch here and on a remote first checks its commits are on some other branch, and asks again if not. Undo puts it back wherever it went, the remotes included.
+Right-click a branch, in the sidebar or on the graph:
 
-Git Raccoon protects your work: if uncommitted changes are in the way of a checkout, it offers to stash them first; deleting a branch with commits that aren't anywhere else asks twice and tells you how to get them back.
+- **Check out** (or double-click it)
+- **Create branch here**, **Rename**, **Set upstream**
+- **Merge into…**, **Rebase onto…**
+- **Open a pull request…** (when signed in to its forge)
+- **Delete…**
 
-Tags can be lightweight, or annotated (with a message).
+The **+** next to *Local* makes a new branch. Right-click a commit to make a branch or tag there, or to check that commit out. Tags can be lightweight, or annotated with a message.
+
+### Deleting
+
+**Delete…** asks where, with a checkbox for each place: *Local*, and each remote that has it.
+
+- If a branch has commits that aren't anywhere else, it asks again first.
+- **Undo** puts it back wherever it was deleted, remotes included.
+
+To delete **several branches**, Ctrl+click (Cmd+click on a Mac) or Shift+click them in the sidebar, then right-click.
+
+> **Your work is protected.** If uncommitted changes are in the way of a checkout, Git Raccoon offers to stash them first.
 
 ## Syncing with a remote
 
-- **Fetch** gets new commits from every remote without changing your branches; the sidebar and toolbar then show how far behind you are. Git Raccoon also fetches on its own in the background, every 10 minutes to start with (Settings › Git › *Fetch automatically*: 1 to 60 minutes, or 0 for never); it never asks for a password there, so a remote that needs one is left for you to fetch, and the Fetch button's tip says when it last fetched. The arrow beside it fetches from just one remote (when there are several), and sets how Fetch goes (remembered): **Prune** removes remote branches that were deleted there (on to start with), and **Force** lets fetched refs overwrite local ones even where that would lose commits; a forced fetch asks first.
-- **Pull** brings the upstream's new commits into your branch. It only fast-forwards by default; if both sides have new commits, it asks whether to **merge** or **rebase**. Uncommitted changes are put aside and restored. The arrow beside it pulls from another remote (its branch of the same name, when there are several), and sets how Pull goes (remembered): when both sides have new commits, **fast-forward only** (asking, as above), **fast-forward if possible, else merge**, or **rebase**; and uncommitted changes are **put aside and back**, **left** (Git refuses if they're in the way, and offers to stash them), or **discarded** (it asks first each time, and their current versions go to the Recycle Bin).
-- **Push** sends your commits. Pushing a branch that isn't on a remote yet asks where it should go, in a bar under the toolbar: the same name on `origin` to start with, or pick another remote (when there are several) or name. From then on it pushes to and pulls from there. If the remote has commits you don't, it offers to pull first, or to **force push** — which is always done *with lease*, so it never deletes commits you haven't seen.
+| Button | What it does |
+| --- | --- |
+| **Fetch** | Gets new commits from every remote, without changing your branches. |
+| **Pull** | Brings the upstream's new commits into your branch. |
+| **Push** | Sends your commits. |
 
-Progress shows in the toolbar, with a Cancel button.
+Progress shows in the toolbar, with a Cancel button. The **arrow** beside each button picks another remote, and sets its options (remembered).
 
-**Signing in.** Git Raccoon uses your existing Git setup: Git Credential Manager (included with Git for Windows) and other credential helpers, and keys in your SSH agent. When Git needs a password, a passphrase or confirmation of a new host, Git Raccoon asks in a dialog. If you're signed in to the repository's forge in Git Raccoon (see below), that account answers for its host instead, with its token.
+### Fetch
 
-**Several branches at once:** Ctrl+click (Cmd+click on a Mac) branches in the sidebar to pick them, or click one and Shift+click another to pick every branch shown between them (with Ctrl too, added to those already picked), then right-click one to delete them all (local ones, or remote ones on their remote). It asks once, and if any has work that isn't merged anywhere, it asks again before deleting any of them. Undo brings them all back; Esc unpicks.
+Git Raccoon also **fetches on its own** every 10 minutes. Change that in Settings › Git (1 to 60 minutes, or 0 for never). It never asks for a password then: a remote that needs one is left for you.
 
-**Remote branches** can be deleted on the remote: right-click one under *Remote* and choose *Delete on the remote*. It asks first, as it's gone for everyone; Undo puts it back.
+Options in the arrow menu:
 
-**Remotes** are managed in the sidebar: **+** next to *Remote* adds one (and fetches it); right-click one to edit or remove it.
+- **Prune** (on to start with): removes remote branches deleted there.
+- **Force**: lets fetched refs overwrite local ones, even where that loses commits. It asks first.
+
+### Pull
+
+By default, Pull only **fast-forwards**. If both sides have new commits, it asks whether to **merge** or **rebase**. Your uncommitted changes are put aside and back.
+
+Options in the arrow menu:
+
+- **When both sides have new commits:** fast-forward only (and ask), fast-forward or else merge, or rebase.
+- **Your uncommitted changes:** put aside and back, left as they are (Git may refuse), or discarded (it asks first).
+
+### Push
+
+- **A new branch:** a bar asks where it goes (the same name on `origin`, to start with). From then on it pushes and pulls there.
+- **The remote has commits you don't:** it offers to pull first, or to **force push**. Force pushes are always *with lease*, so they never delete commits you haven't seen.
+
+### Remotes and remote branches
+
+- **+** next to *Remote* adds one (and fetches it). Right-click one to edit or remove it.
+- Right-click a remote branch › **Delete…** deletes it on the remote, for everyone (Undo puts it back).
+
+### Passwords and keys
+
+Git Raccoon uses your existing Git setup: Git Credential Manager, other credential helpers, and your SSH agent. When Git needs a password, passphrase or a new host confirmed, it asks in a dialog. If you're [signed in to the forge](#signing-in), that account answers for you.
 
 ## Pull requests, merge requests and issues
 
-For a repository on **GitHub**, **GitLab.com** or a **self-managed GitLab**, the sidebar lists its open pull requests (merge requests on GitLab) and issues, under the branches. Git Raccoon finds the forge from the repository's remote (*origin* first).
+For a repository on **GitHub**, **GitLab.com** or a **self-managed GitLab**, the sidebar lists its open pull requests (merge requests on GitLab) and issues.
 
-**Signing in.** Open **Settings → Accounts → Add account…** (or click *Sign in* in the sidebar section), and pick GitHub, GitLab.com or Self-managed GitLab (give its address, like `https://gitlab.example.com`). With the browser, Git Raccoon shows a short code and opens the forge's page to approve it. Or click **Use a token instead**, then **Make a token…**: the forge's page opens with the right permissions ticked (`repo`, `read:org` and `workflow` on GitHub, `api` on GitLab); create it and paste it in. You can be signed in to several at once (GitHub, GitLab.com and any number of servers); each repository uses the account for its remote.
+### Signing in
 
-**A self-managed GitLab with the browser.** The server needs Git Raccoon registered as an application once: choose *Use the browser instead*, click **Make an app…** (it opens *Applications* in your GitLab settings), give it any name and redirect URI, untick *Confidential*, tick the `api` scope, and paste its **Application ID** into the sign-in window. Git Raccoon remembers it for that server. (This needs a GitLab version with device sign-in, 17.2 or later.) Tokens are kept in your system's keychain (Keychain on macOS, Credential Manager on Windows, the Secret Service on Linux), never in the settings file. **Sign out** in the same place forgets it.
+1. Open **Settings › Accounts › Add account…** (or *Sign in* in the sidebar).
+2. Pick GitHub, GitLab.com or Self-managed GitLab (with its address).
+3. Approve the code in your browser. Or choose **Use a token instead**, and **Make a token…** opens the page to create one.
 
-**A request's view.** Click one to open it in place of the graph (Esc goes back). Its header says whether it's open, merged or closed, who wants to merge what into what, how its checks (CI) stand, who approved it, and how many threads are still unresolved. Below it are three tabs:
+You can be signed in to several forges at once. Tokens are kept in your system's keychain, never in the settings file.
 
-- **Conversation**: the description, comments and reviews in order, shown as formatted Markdown (headings, lists, code, links), each thread with the code it's about (*Show in Changes* takes you to it), and the checks with links to their logs. At the bottom, a box for a comment on the whole request.
-- **Commits**: its commits. Click one to see it in the graph (once it's here: fetch, or check the request out).
-- **Changes**: its files, each with its count of open threads, and the diff of the one picked, with each thread under the line it's about. **Reply**, **Resolve** or **Unresolve** a thread right there.
+> **Self-managed GitLab with the browser** needs Git Raccoon registered once on the server (GitLab 17.2 or later): choose *Use the browser instead* › **Make an app…**, untick *Confidential*, tick `api`, and paste its **Application ID** back in.
 
-**Reviewing.** Comments are drafts until you finish the review, then they're all sent at once. Comment on a line with the **+** by it (or right-click › *Comment on this line*); on several lines by picking them first (click a line, Shift+click or drag for a range, Ctrl+click for one more) and right-click › *Comment on selection*. Replies and comments on the whole request are drafts too. Drafts are marked as yours, can be edited or deleted, and are kept if you close the app. **Finish review** (in the header, with the number of drafts) lists them (click one to go to it), takes an optional summary, and **Comment**, **Approve** or **Request changes** (GitHub; GitLab's API can't ask for changes). *Submit review and send 3* posts everything together.
+### A request's view
 
-**Suggested changes.** A suggestion in a comment shows the lines it would change and what they'd become, and whether it's been applied or is outdated (the lines changed since). On GitLab, **Apply** has GitLab commit it to the request's branch (pull to get it here); tick *Apply with others* on several and **Apply N in one commit** does them together, with your own commit message if you like. GitHub's API can't apply suggestions, so there **Apply here** changes the file on the request's branch, once it's checked out here, and leaves the change for you to commit and push. To suggest a change yourself, pick the lines in Changes and right-click › **Suggest a change**: a comment opens with those lines in a suggestion block; edit them into what they should be. It's a draft like any other comment.
+Click a request to open it in place of the graph. **Esc** goes back.
 
-**Merging.** **Merge** offers the ways the repository allows (merge commit, squash, or rebase), each explained, with the commit message to use and *Delete the branch after merging*. When it can't be merged yet (approvals missing, its pipeline must pass, conflicts, a draft…), it says why. Once merged, a banner says so, with a button to pull the branch it went into.
+The header shows its state, branches, checks, approvals and unresolved threads. Below it are three tabs:
 
-**Checking out.** **Check out** ▾ puts you on its branch, following the remote's (so Pull brings new commits; with uncommitted changes in the way, it offers to put them aside first), or checks it out **in a new worktree**, beside this folder (open it from *Worktrees* in the sidebar). A request from a fork is fetched into a branch of its own (`pr/12` or `mr/12`). On its branch, the header offers **Pull the latest** and **Back to main** (the branch it goes into).
+- **Conversation**: the description and comments (as formatted Markdown), reviews, checks, and threads with the code they're about.
+- **Commits**: click one to see it in the graph.
+- **Changes**: each file's diff, with comment threads under their lines. **Reply**, **Resolve** or **Unresolve** them there.
 
-**A new request.** The **+** next to *Pull requests* (or *Merge requests*) opens one from the checked-out branch, and **Open a pull request…** (or merge request) in any local branch's right-click menu, in the sidebar or on the graph, opens one from that branch. Pick the branch it goes into (the remote's default one is already picked). The window shows its commits, and warns when it's behind that branch or won't merge into it cleanly. The title and description are filled in: from the commit's message when there's one, or from the branch's name with the commits listed; the repository's template takes the description's place when it has one (a picker when it has several). Pick **reviewers**, **assignees** and **labels** from the people and labels the project has (each list can be narrowed down by typing when it's long), mark it a **draft**, and on GitLab, whether to delete the branch and squash when it's merged. If the branch isn't pushed yet, **Push 3 commits and open** does both. Then its view opens.
+### Reviewing
 
-**Open on GitHub/GitLab.** Right-click a commit, a branch (a local one opens its upstream), a remote, a tag, a pull/merge request or an issue to open its page in the browser, or to copy its link. This works for any remote on GitHub or GitLab.com, and for self-managed GitLab servers you've signed in to; no sign-in is needed for the pages themselves.
+Your comments are **drafts** until you finish the review, then they're all sent at once.
 
-**Issues** open in the details pane the same way. Esc closes what's open. The lists reload when you fetch or refresh.
+- **On a line:** the **+** beside it, or right-click › *Comment on this line*.
+- **On several lines:** pick them (click, Shift+click or drag), then right-click › *Comment on selection*.
+- **Replies** and **comments on the whole request** are drafts too.
+
+When you're done, press **Finish review**: add a summary if you like, choose **Comment**, **Approve** or **Request changes**, and send. (GitLab can't *request changes* through its API.)
+
+Drafts can be edited or deleted, and are kept if you close the app.
+
+### Suggested changes
+
+A suggestion shows the lines it would change and what they'd become.
+
+- **On GitLab:** **Apply** commits it to the request's branch. Tick *Apply with others* to apply several in one commit.
+- **On GitHub:** **Apply here** changes the file on the request's branch, once it's checked out. You commit and push it.
+
+To suggest one yourself, pick lines in Changes and right-click › **Suggest a change**.
+
+### Merging
+
+**Merge** offers the methods the repository allows (merge commit, squash or rebase), the commit message, and *Delete the branch after merging*. If it can't be merged yet, it says why.
+
+### Checking out
+
+**Check out ▾** puts you on the request's branch, or in a **new worktree** beside this folder. A request from a fork gets a branch of its own (`pr/12` or `mr/12`).
+
+On its branch, the header offers **Pull the latest** and **Back to main**.
+
+### Opening a new request
+
+Use the **+** next to *Pull requests*, or right-click any local branch › **Open a pull request…**.
+
+- Pick the branch it goes into. The window shows its commits, and warns if it won't merge cleanly.
+- The title and description are filled in from its commits, or from the repository's template.
+- Pick **reviewers**, **assignees** and **labels** from the project's own.
+- Not pushed yet? **Push and open** does both.
+
+### Opening pages on the forge
+
+Right-click a commit, branch, remote, tag, request or issue › **Open on GitHub/GitLab**, or copy its link.
+
+**Issues** open in the details pane. The lists reload when you fetch or refresh.
 
 ## Merging, rebasing and conflicts
 
-- **Merge:** right-click a branch and choose *Merge into …*, or **drag** it onto another branch, in the sidebar or by its label on the graph. You can fast-forward when possible or always create a merge commit.
-- **Rebase:** right-click a branch and choose *Rebase … onto …* (it warns if your commits are already pushed).
+- **Merge:** right-click a branch › *Merge into…*, or **drag** it onto another branch (in the sidebar or on the graph).
+- **Rebase:** right-click a branch › *Rebase onto…*. It warns if your commits are already pushed.
 
-If changes conflict, a banner says a merge (or rebase) is in progress, and the conflicted files open:
+### Conflicts
 
-- Each conflict shows both versions. Choose **Use ours**, **Use theirs** or **Use both**, or edit the file yourself with **Edit**.
-- **Use ours / theirs for the file** resolves a whole file at once. It asks first, as it replaces anything picked or edited in that file.
-- When no conflict markers remain, **Mark resolved**.
-- When every file is resolved, **Continue** in the banner. **Abort** goes back to how things were.
+If changes conflict, a banner says a merge or rebase is in progress, and the conflicted files open:
+
+1. For each conflict, choose **Use ours**, **Use theirs** or **Use both**, or **Edit** the file yourself.
+2. When a file has no conflicts left, **Mark resolved**.
+3. When every file is resolved, **Continue** in the banner.
+
+**Use ours / theirs for the file** resolves a whole file at once. **Abort** goes back to how things were.
 
 ## Rewriting history
 
 Right-click a commit in the graph:
 
-- **Cherry-pick onto …** copies its changes onto your branch.
-- **Revert this commit** adds a commit that undoes it.
-- **Reset … to here** moves your branch back: *soft* keeps the changes staged, *mixed* keeps them in your files, *hard* discards them.
-- **Interactive rebase from here** opens a planner for the commits after it: drag them to reorder, and choose for each **Pick**, **Reword**, **Squash**, **Fixup** or **Drop**. Then **Start rebase**.
+| Action | What it does |
+| --- | --- |
+| **Cherry-pick onto…** | Copies its changes onto your branch. |
+| **Revert this commit** | Adds a commit that undoes it. |
+| **Reset… to here** | Moves your branch back: *soft* keeps the changes staged, *mixed* keeps them in your files, *hard* discards them. |
+| **Interactive rebase from here** | Opens a planner: drag commits to reorder, and **Pick**, **Reword**, **Squash**, **Fixup** or **Drop** each one. |
 
 ## Looking back: file history and blame
 
-In any diff, **History** and **Blame** are switches, and can be on together (they're remembered). **History** lists every commit that changed the file (following renames) down the side of the diff; click one to see its change to the file. **Blame** adds a column beside the lines showing the commit and author that last changed each one, with a stripe that's stronger the newer the change; it's most useful with **Whole file**. Click a commit in it to go to that commit.
+In any diff, turn on:
+
+- **History**: every commit that changed the file (following renames), down the side. Click one to see its change.
+- **Blame**: who last changed each line, and when. Click a commit to go to it. It's most useful with **Whole file**.
+
+They can be on together, and are remembered.
 
 ## Undo
 
-After most actions, the toolbar shows exactly what **Undo** would do ("Undo commit 'Fix the thing'"), and Ctrl+Z does it: commits, amends, checkouts, merges, rebases, cherry-picks, reverts, resets, branch and tag changes, and stash save and delete. An undo first checks nothing has changed since, so it never throws away newer work.
+After most actions, the toolbar shows exactly what **Undo** would do ("Undo commit 'Fix the thing'"). Press it, or **Ctrl+Z**.
+
+It covers commits, amends, checkouts, merges, rebases, cherry-picks, reverts, resets, branch and tag changes, and stashes. It checks nothing has changed since, so it never throws away newer work.
 
 ## Tabs, submodules and worktrees
 
-- Each repository opens in its own **tab**. Ctrl+T opens a new tab, Ctrl+W closes one, Ctrl+Tab moves between them; drag a tab to put it somewhere else. Tabs in the background keep working.
-- **Submodules** are listed in the sidebar with their state; right-click to open one in a tab, or update it.
-- **Worktrees** (extra working folders of the same repository) are listed too: **+** adds one on a new or existing branch; right-click to open or remove one.
-- Repositories using **Git LFS** show an *LFS* badge (amber if git-lfs isn't installed), and diffs of LFS files show their sizes.
+- **Tabs:** each repository opens in its own tab. Ctrl+T opens one, Ctrl+W closes it, Ctrl+Tab switches. Drag tabs to reorder them.
+- **Submodules:** listed in the sidebar. Right-click to open one in a tab, or update it.
+- **Worktrees** (extra working folders of the same repository): **+** adds one; right-click to open or remove it.
+- **Git LFS:** repositories using it show an *LFS* badge (amber if git-lfs isn't installed).
 
 ## Keyboard and the command palette
 
-**Ctrl+K** opens the command palette: type a few letters to find any action, or a branch to check out, merge, rebase onto or go to. Each line shows its shortcut. (On macOS, use Cmd for Ctrl.)
+**Ctrl+K** opens the command palette: type a few letters to find any action, or a branch to check out, merge or go to. On macOS, use Cmd for Ctrl.
 
 | Action | Shortcut |
 | --- | --- |
@@ -162,10 +347,6 @@ After most actions, the toolbar shows exactly what **Undo** would do ("Undo comm
 | New tab / Close tab | Ctrl+T / Ctrl+W |
 | Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab |
 | Search commits | Ctrl+F |
-| Follow the branch down / up | Shift+↓ / Shift+↑ |
-| Next / previous labelled commit | Ctrl+↓ / Ctrl+↑ |
-| Newest / oldest commit | Home / End |
-| Go to the checked-out commit | Ctrl+H |
 | Undo | Ctrl+Z |
 | Fetch / Pull / Push | Ctrl+Shift+F / D / U |
 | Show working changes | Ctrl+Shift+W |
@@ -173,40 +354,52 @@ After most actions, the toolbar shows exactly what **Undo** would do ("Undo comm
 | Stage all / Unstage all | Ctrl+Shift+S / A |
 | Stash | Ctrl+Shift+H |
 | New branch / New tag | Ctrl+Shift+B / T |
-| Zoom in / out / actual size | Ctrl++ / Ctrl+- / Ctrl+0 (or Ctrl+scroll) |
+| Zoom in / out / reset | Ctrl++ / Ctrl+- / Ctrl+0 (or Ctrl+scroll) |
 | Refresh | F5 |
 | Open a terminal here | Ctrl+` |
 
-**A terminal.** For anything Git Raccoon doesn't do, the terminal button in the toolbar (or Ctrl+`, or "Open a terminal here" in the command palette) opens a terminal in the repository's folder: Windows Terminal, Git Bash or the Command Prompt on Windows, Terminal on macOS, and on Linux the one in `$TERMINAL` or the first of the usual ones that's installed. Worktrees and submodules have it in their right-click menu too. To use another terminal, set it in Settings.
+Moving around the graph has [keys of its own](#the-graph).
+
+**A terminal** (the toolbar button, or Ctrl+`) opens in the repository's folder, for anything Git Raccoon doesn't do. Choose which terminal in Settings › Tools.
 
 ## Themes and settings
 
-**Settings** (the gear, or Ctrl+,) is in sections down the side; type in **Search settings** (Ctrl+F while it's open) to find any setting by name or by what it's about. Changes apply as you make them, and **Reset to defaults** puts a section back as it started.
+**Settings** (the gear, or Ctrl+,) applies changes as you make them. **Search settings** (Ctrl+F) finds any setting, and **Reset to defaults** puts a section back.
 
-- **Appearance:** light, dark or **Match system** (following your computer); the look (Raccoon, the default, Classic, Pastel, Forest, Paper or High contrast); the **interface size**, from 90% to 150% (anywhere in the app, Ctrl+scroll or Ctrl+plus and Ctrl+minus zoom from 50% to 200%, and Ctrl+0 goes back to normal); how the graph's lines look **where a branch starts** and **where a branch is merged**, each on its own (**Curved**, or **Rounded**: along the commit's row, turning into the other lane with a rounded corner), and how round the bends are (**Corner roundness**: at 0, Rounded corners are square and Curved lines go straight across); whether the sidebar shows, and which of its sections; and putting the graph's columns back in their usual order and widths.
-- **Your themes:** under the looks, **New theme** makes one from the look in use and opens the editor: a name, which version you're editing (dark or light), and each colour (surfaces, text and accent, changes, and the graph's lines) by its picker or by typing `#rrggbb`. While a theme is in use, the app changes as you edit it; the preview shows the version you're editing. If text would be hard to read (below 4.5:1 contrast), it says so, and **Make it readable** lightens or darkens it just enough. **Duplicate**, **Export…** (a small `.json` file to share) and **Delete theme…** are at the bottom; **Import…** next to Your themes adds one from a file. Click a theme to use it, or a built-in look to go back.
-- **Git:** what Pull does when both sides have new commits (ask each time, merge, or rebase your commits on top) and with uncommitted changes; whether Fetch removes remote branches deleted on the remote, and lets fetched branches and tags replace local ones; how often to fetch in the background; diffs unified or side by side, and whether they show the whole file; changed files by path or in folders.
-- **Accounts:** the GitHub and GitLab accounts you're signed in to, and adding one.
-- **Tools:** the terminal "Open a terminal here" runs (if not the system's own; `{path}` stands for the repository's folder, as in `alacritty --working-directory "{path}"`), and the folder new clones go in.
-- **Updates and privacy:** whether to check for updates automatically, **Check for updates now**, and clearing the list of recent repositories.
-- **About:** the version and what's new in it, sending feedback, and the licenses.
+| Section | What's there |
+| --- | --- |
+| **Appearance** | Light, dark or match system; the look; interface size (90–150%); how the graph's lines bend; the sidebar's sections. |
+| **Git** | How Pull and Fetch behave; how often to fetch in the background; diff and file list defaults. |
+| **Accounts** | Your GitHub and GitLab accounts. |
+| **Tools** | The terminal to open (`{path}` stands for the folder), and where new clones go. |
+| **Updates and privacy** | Automatic updates, **Check for updates now**, and clearing recent repositories. |
+| **About** | The version, what's new, feedback, and licenses. |
 
-## Updates and crash reports
+### Your own themes
 
-**Updates.** An installed Git Raccoon checks for a new version when it starts and every half hour while it's open, and downloads it in the background. When it's ready, the toolbar shows **Restart to update**; your tabs and settings are kept. To look right away, use **Check for updates now** in Settings › Updates and privacy, or *Check for updates* in the command palette; it says whether you're up to date, or that the new version is downloaded.
+Under the looks, **New theme** opens the editor:
 
-**What's new.** After an update, Git Raccoon shows what changed since the version you had (and "What's new in this version" in the command palette shows it again).
+- Pick a colour for each part (surfaces, text, accent, changes, graph lines), for the dark and the light version.
+- The app changes as you edit.
+- If text would be hard to read, it says so; **Make it readable** fixes it.
 
-**Feedback.** The speech-bubble button in the toolbar (or "Send feedback" in the command palette) takes a bug report, feedback or an idea: write a title and a few details and press **Send**: it's posted as a public issue on Git Raccoon's GitHub page, for the project's board. Signed in to GitHub (Settings › Accounts), it's posted as you, so you'll see replies there. Otherwise it's posted without your name by Git Raccoon's feedback bot, and you can add how to reach you if you'd like a reply. Nothing else about you is sent; bug reports include the version and system. Tick **Include a screenshot of the window** to send what the window looked like when you opened the form; it's shown to you first, as it's public too.
+**Export…** saves a theme as a small `.json` file to share; **Import…** adds one.
 
-**Crash reports.** If Git Raccoon runs into a bug, it writes a report on your computer — nothing is sent. Next time you start it, it shows you the report and lets you choose: **Report on GitHub…** opens an issue you can read and add to before posting, **Copy report**, or **Don't send**.
+## Updates, feedback and crash reports
+
+- **Updates:** Git Raccoon checks for a new version at start and every half hour, and downloads it in the background. When it's ready, press **Restart to update**; your tabs and settings are kept. To check now: Settings › Updates and privacy › **Check for updates now**.
+- **What's new:** shown after each update (and again from the command palette).
+- **Feedback:** the speech-bubble button sends a bug report, feedback or an idea, as a public issue on GitHub. Signed in to GitHub, it's posted as you; otherwise it's posted anonymously, and you can add how to reach you. You can include a screenshot (shown to you first).
+- **Crash reports:** if Git Raccoon hits a bug, it writes a report on your computer. Nothing is sent: next time, it shows you the report and lets you choose whether to post it.
 
 ## Troubleshooting
 
-- **"Git isn't installed, or isn't on PATH."** Install [Git](https://git-scm.com), then restart Git Raccoon.
-- **Fetching or pushing asks for a password every time.** Set up a credential helper (Git Credential Manager comes with Git for Windows), or use SSH with your key in an SSH agent.
-- **"Password authentication is not supported" (GitHub).** GitHub doesn't take your account password for Git. Sign in to GitHub in Git Raccoon (**Settings → Accounts**), or give a personal access token as the password. If an old password is saved, remove it from your credential helper (on Windows: Credential Manager, `git:https://github.com`).
-- **"Not owned by current user" / "dubious ownership".** The folder belongs to another user, and Git doesn't trust it. Git's message shows the `git config --global --add safe.directory …` command that trusts it.
-- **"This host isn't known yet."** Git Raccoon asks you to confirm a new SSH host the first time; check its fingerprint against the one the host publishes.
-- **Large files show as small text files.** The repository uses Git LFS: install [git-lfs](https://git-lfs.com) and run `git lfs pull`.
-- **Something went wrong.** The error banner shows Git's own message. If it looks like a bug, a report on the project's [issues page](https://github.com/Trashpanda-GameDev/Git-Raccoon/issues) helps.
+| Problem | What to do |
+| --- | --- |
+| "Git isn't installed, or isn't on PATH." | Install [Git](https://git-scm.com), then restart Git Raccoon. |
+| Fetching or pushing asks for a password every time. | Set up a credential helper (Git Credential Manager comes with Git for Windows), or use SSH with an SSH agent. |
+| "Password authentication is not supported" (GitHub) | Sign in to GitHub in Settings › Accounts, or use a personal access token as the password. Remove an old saved password from your credential helper. |
+| "Not owned by current user" / "dubious ownership" | Git doesn't trust the folder. Its message shows the `git config --global --add safe.directory …` command that fixes it. |
+| "This host isn't known yet." | Confirm the new SSH host, after checking its fingerprint against the one it publishes. |
+| Large files show as small text files. | The repository uses Git LFS: install [git-lfs](https://git-lfs.com) and run `git lfs pull`. |
+| Something else went wrong. | The error banner shows Git's own message. If it looks like a bug, please [report it](https://github.com/Trashpanda-GameDev/Git-Raccoon/issues). |
