@@ -102,6 +102,23 @@ Mockup and clickable prototype: [Git Raccoon profiles](https://claude.ai/artifac
 - [ ] **First run:** one "Default" profile from the current Git name and email, holding every signed-in account, so nothing changes until a second profile is added.
 - Later: remember a profile per repository, or rules by remote (`github.com/acme/*` → Work) or folder; commit signing per profile; an SSH key per profile.
 
+### Merge requests without leaving the app
+
+Clickable prototype: [Git Raccoon merge requests](https://claude.ai/artifact/HZ9aRqi9yffGtvRmptrYW8). Build work: the [Merge requests milestone](https://github.com/Trashpanda-GameDev/Git-Raccoon/milestone/2).
+
+Today the sidebar lists open pull/merge requests, shows one's description, reviews and checks, checks out its branch and opens new ones; everything else needs the website. This is the rest, with one set of words for GitHub and GitLab (what a forge doesn't support is hidden).
+
+- [ ] **A request view in place of the graph** (Esc goes back): a header with its state, branches, checks, approvals and unresolved threads, and **Check out ▾**, **Review** and **Merge ▾**; tabs below it for **Conversation**, **Commits** and **Changes**.
+- [ ] **Changes:** the request's files (each with its open threads) and the diff view (Whole file, Split, Blame, line picking), with comment threads under the lines they're about: reply, resolve and unresolve.
+- [ ] **Comments are drafts until the review is finished**, then all sent at once: on a line (its **+**), on a range of lines (click line numbers, Shift+click or drag; or pick lines and right-click › *Comment on selection*), replies, and comments on the whole request. Drafts are marked, can be edited or deleted, and only you see them.
+- [ ] **Finish review:** lists every draft (click one to go to it), an optional summary, and **Comment**, **Approve** or **Request changes**; "Submit review and send 3" posts everything together.
+- [ ] **Conversation:** the description, threads with the code they're about (*Show in Changes*), check results, reviews and comments, in order; a comment box at the bottom (a draft too).
+- [ ] **Commits:** the request's commits, highlighted in the graph while the tab is open.
+- [ ] **Merge ▾:** Merge commit, Squash or Rebase (each explained; only what the repository allows), the commit message, *Delete the branch after merging*. When it can't be merged yet (approvals, failing checks), it says why instead of being hidden. Afterwards: a *Merged* banner saying what happened, and *Pull to get it*.
+- [ ] **Check out ▾:** the request's branch (following the request, so Pull brings new commits), or a **new worktree** opened in a tab; with uncommitted changes, ask: put them aside and check out (they come back with *Back to main*), use a worktree instead, or cancel. Once on it: *Pull the latest* and *Back to main*. A request from a fork gets a local branch that tracks it.
+- [ ] **The active profile's account** does the reviewing and merging (see Profiles); when it can't, say so up front.
+- Later: check logs and re-runs; editing the title, description, reviewers, assignees and labels; draft/ready, close/reopen; suggested changes with *Apply*; sidebar filters (*Mine*, *Review requested*), and a count of requests waiting on you.
+
 ## Later (ideas, not commitments)
 
 - Commit message suggestions from the staged diff
