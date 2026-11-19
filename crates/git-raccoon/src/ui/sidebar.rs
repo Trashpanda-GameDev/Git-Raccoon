@@ -246,14 +246,9 @@ fn section_header(
     }
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), HEADER), Sense::click());
-    // Its top edge, so the sections read as separate; an open one after
-    // another has the handle's line above it already.
-    let after_handle = open
-        && c.sizes
-            .open
-            .iter()
-            .position(|k| k == key)
-            .is_some_and(|at| at > 0);
+    // Its top edge, so the sections read as separate (right after a
+    // handle, the handle's line is it).
+    let after_handle = std::mem::take(&mut c.after_handle);
     if !after_handle {
         ui.painter().hline(
             rect.x_range(),
@@ -356,6 +351,8 @@ struct Sizes {
     shares: HashMap<String, f32>,
     /// The open sections, in order.
     open: Vec<String>,
+    /// A handle moved: the new shares show next frame.
+    dragged: bool,
 }
 
 /// Space between two open sections, to drag.
@@ -423,10 +420,12 @@ impl Sizes {
             }
             heights[at + 1] += -dy - want;
         }
+        // Shares only: this frame is half drawn, and its sections below
+        // would move by the drag if they took new heights now.
         for (k, h) in self.open.iter().zip(&heights) {
             self.shares.insert(k.clone(), *h);
-            self.heights.insert(k.clone(), *h);
         }
+        self.dragged = true;
     }
 }
 
@@ -511,6 +510,7 @@ fn body(
         rect.center().y,
         Stroke::new(thickness, colour),
     );
+    c.after_handle = true;
     if handle.double_clicked() {
         c.sizes.shares.clear();
     } else if handle.dragged() {
@@ -524,8 +524,8 @@ struct Ctx<'s> {
     /// ones hidden.
     all_sections: Vec<(&'static str, String)>,
     hidden: &'s [String],
-    /// Drawing the open sections (then the collapsed ones, at the bottom).
-    open_pass: bool,
+    /// The last thing drawn was a handle (its line is the next heading's).
+    after_handle: bool,
     collapsed: &'s mut HashSet<String>,
     filtering: bool,
     selected: Option<&'s str>,
@@ -543,12 +543,9 @@ enum Picked {
 }
 
 impl Ctx<'_> {
-    /// Whether a section is drawn now: it's shown, and it's open in the
-    /// first pass, collapsed in the second.
+    /// Whether a section is drawn: it's shown (not hidden).
     fn now(&self, key: &str) -> bool {
-        self.all_sections.iter().any(|(k, _)| *k == key)
-            && !self.hidden.iter().any(|h| h == key)
-            && self.is_open(key) == self.open_pass
+        self.all_sections.iter().any(|(k, _)| *k == key) && !self.hidden.iter().any(|h| h == key)
     }
 
     /// A click on a branch's row: Ctrl (Cmd) picks it, or unpicks it;
@@ -1238,12 +1235,11 @@ pub fn show(
     #[expect(clippy::cast_precision_loss, reason = "a few sections")]
     let chrome = HEADER * shown_keys.len() as f32 + HANDLE * open.len().saturating_sub(1) as f32;
     sizes.plan(&open, (ui.available_height() - chrome).max(0.0));
-    let collapsed_shown = shown_keys.len() - open.len();
     let mut c = Ctx {
         sizes,
         all_sections,
         hidden,
-        open_pass: true,
+        after_handle: false,
         collapsed,
         filtering: !f.is_empty(),
         selected,
@@ -1271,17 +1267,8 @@ pub fn show(
             ui.add_space(6.0);
         };
         let none = if f.is_empty() { "" } else { "No matches" };
-        // Open sections, then the collapsed ones at the bottom.
-        for open_pass in [true, false] {
-            c.open_pass = open_pass;
-            if !open_pass {
-                #[expect(clippy::cast_precision_loss, reason = "a few sections")]
-                let below = ui.available_height() - HEADER * collapsed_shown as f32;
-                if below > 0.0 {
-                    ui.add_space(below);
-                }
-            }
-
+        // In order: a collapsed section is just its heading, on the next.
+        {
             // Local branches.
             let open = c.is_open("local");
             let (toggled, add) = section_header(
@@ -1737,6 +1724,9 @@ pub fn show(
             }
         }
     });
+    if c.sizes.dragged {
+        ui.ctx().request_repaint();
+    }
     // Esc unpicks.
     if !c.picked.is_empty() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
         c.picked.clear();

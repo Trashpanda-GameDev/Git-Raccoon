@@ -1866,46 +1866,83 @@ fn sidebar_sections_scroll_on_their_own_and_resize() {
 }
 
 #[test]
-fn sidebar_sections_share_the_height_and_collapse_to_the_bottom() {
+fn sidebar_sections_share_the_height_and_collapse_in_place() {
     let sample = Sample::build();
     let mut h = harness(Settings::default());
     open(&mut h, sample.path());
     settle(&mut h);
     let bottom = h.ctx.content_rect().bottom();
     let top = |h: &Harness<'_, App>, s: &str| h.get_by_label(s).rect().top();
-    // A handle moves just the line between its two sections.
+    // A handle moves just the line between its two sections: the ones
+    // below stay where they are, in every frame of the drag.
     let (remote, tags, stashes) = (top(&h, "Remote"), top(&h, "Tags"), top(&h, "Stashes"));
-    let handle = h.get_by_label("Resize Local").rect().center();
-    drag(&mut h, handle, handle - egui::vec2(0.0, 60.0));
+    let from = h.get_by_label("Resize Local").rect().center();
+    h.event(egui::Event::PointerMoved(from));
+    h.run_ok();
+    h.event(egui::Event::PointerButton {
+        pos: from,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_ok();
+    for i in 1..=12 {
+        #[expect(clippy::cast_precision_loss, reason = "a few steps")]
+        h.event(egui::Event::PointerMoved(
+            from - egui::vec2(0.0, 5.0 * i as f32),
+        ));
+        h.step();
+        assert_eq!(
+            top(&h, "Tags"),
+            tags,
+            "Tags stays put while dragging (step {i})"
+        );
+        assert_eq!(top(&h, "Stashes"), stashes, "Stashes too (step {i})");
+    }
+    h.event(egui::Event::PointerButton {
+        pos: from - egui::vec2(0.0, 60.0),
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
     settle(&mut h);
     assert!(top(&h, "Remote") < remote - 40.0, "Remote moved up");
     assert_eq!(top(&h, "Tags"), tags, "Tags stayed");
     assert_eq!(top(&h, "Stashes"), stashes, "Stashes stayed");
-    // A collapsed section goes to the bottom, and the open ones fill the
-    // space it leaves.
+    // A collapsed section stays in its place, its heading right on top of
+    // the next section's; the open ones fill the space it leaves.
     h.get_by_label("Tags").click();
     settle(&mut h);
-    let worktrees = h.get_by_label("Worktrees").rect();
-    let tags = h.get_by_label("Tags").rect();
-    assert!(tags.top() > worktrees.top(), "Tags is below Worktrees");
-    assert!(
-        bottom - tags.bottom() < 12.0,
-        "Tags at the bottom: {tags:?}"
+    let (remote, tags, stashes) = (
+        h.get_by_label("Remote").rect(),
+        h.get_by_label("Tags").rect(),
+        h.get_by_label("Stashes").rect(),
     );
-    // With them all collapsed, every heading sits at the bottom.
+    assert!(remote.top() < tags.top(), "Tags is still below Remote");
+    screenshot(&mut h, "71a-sidebar-tags-collapsed");
+    assert!(
+        (stashes.top() - tags.bottom()).abs() < 1.0,
+        "Tags sits on Stashes: {tags:?} {stashes:?}"
+    );
+    let last = h.get_by_label("Worktrees").rect();
+    assert!(
+        (bottom - last.bottom()).abs() > 40.0,
+        "Worktrees is open, with room below its heading"
+    );
+    // With them all collapsed, the headings stack up at the top, in order.
+    let local = top(&h, "Local");
     for s in ["Local", "Remote", "Stashes", "Worktrees"] {
         h.get_by_label(s).click();
         settle(&mut h);
     }
-    let local = h.get_by_label("Local").rect();
+    assert_eq!(top(&h, "Local"), local, "Local stays at the top");
+    let heads: Vec<f32> = ["Local", "Remote", "Tags", "Stashes", "Worktrees"]
+        .iter()
+        .map(|s| top(&h, s))
+        .collect();
     assert!(
-        local.top() > bottom - 6.0 * 30.0,
-        "Local at the bottom: {local:?}"
-    );
-    let last = h.get_by_label("Worktrees").rect();
-    assert!(
-        (bottom - last.bottom()).abs() < 1.0,
-        "flush with the bottom: {last:?}"
+        heads.windows(2).all(|w| (w[1] - w[0] - 28.0).abs() < 1.0),
+        "{heads:?}"
     );
     screenshot(&mut h, "71-sidebar-collapsed");
 }
