@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Git Raccoon: a fast, friendly Git client</title>
-  <meta name="description" content="Git Raccoon is a free, open-source desktop app for Git. See your history as a graph, and commit, branch, merge, rebase and sync with buttons, menus and drag and drop. For Windows, macOS and Linux.">
+  <title>Git Raccoon: a fast, native Git client, written in Rust</title>
+  <meta name="description" content="Git Raccoon is a free, open-source Git client written in Rust: it opens a million-commit repository in about 3 seconds. See your history as a graph, and commit, branch, merge, rebase, sync and work with pull requests. For Windows, macOS and Linux.">
   <meta property="og:title" content="Git Raccoon">
-  <meta property="og:description" content="A fast, friendly, open-source Git client for Windows, macOS and Linux.">
+  <meta property="og:description" content="A fast, native, open-source Git client written in Rust, for Windows, macOS and Linux.">
   <meta property="og:image" content="https://trashpanda-gamedev.github.io/Git-Raccoon/social-preview.png">
   <meta property="og:image:width" content="1280">
   <meta property="og:image:height" content="640">
@@ -59,8 +59,8 @@
   </svg>
 
   <div class="wrap">
-    <h1>Git, <span class="accent">without the guesswork</span>.</h1>
-    <p class="lede">Git Raccoon is a free, open-source desktop app for Git. See your whole history as a graph, and commit, branch, merge, rebase and sync with buttons, menus and drag and drop. Fast on huge repositories, and careful with your work.</p>
+    <h1>Git, <span class="accent">at the speed of thought</span>.</h1>
+    <p class="lede">Git Raccoon is a native Git client written in Rust. It opens a million-commit repository in about three seconds, and never makes you wait for a frame. See your whole history as a graph; commit, branch, merge, rebase, sync and handle pull requests with buttons, menus and drag and drop. Free, open source, and careful with your work.</p>
     <div class="actions">
       <a class="button primary" id="hero-download" href="#download">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M4 19h16"/></svg>
@@ -68,13 +68,26 @@
       </a>
       <a class="button" href="guide.html">Read the guide</a>
     </div>
-    <p class="meta"><span id="version">Free and open source</span> · Windows, macOS and Linux</p>
+    <p class="meta"><span id="version">Free and open source</span> · Written in Rust · Windows, macOS and Linux</p>
 
     <div class="window">
       <img src="screenshots/history.png" width="2560" height="1600" alt="Git Raccoon showing a project's history as a graph of branches and merges, with the selected commit's details beside it.">
     </div>
   </div>
 </div>
+
+<section class="speed" aria-labelledby="speed-title">
+  <div class="wrap">
+    <h2 class="section-title" id="speed-title">Built in Rust. Blazing fast.</h2>
+    <p class="section-lede">No browser in disguise: Git Raccoon is a native app, drawn on your graphics card, with Git's work kept off the window so it never freezes. The numbers are from a repository with a million commits, on an ordinary four-core machine.</p>
+    <div class="stats">
+      <div class="stat"><strong>~3 s</strong><span>to open a repository of 1,000,000 commits</span></div>
+      <div class="stat"><strong>&lt;10 ms</strong><span>per frame while you scroll and jump through all of it</span></div>
+      <div class="stat"><strong>&lt;25 MB</strong><span>to download, on Windows, macOS or Linux</span></div>
+      <div class="stat"><strong>Native</strong><span>no Electron, no web view: drawn by your graphics card</span></div>
+    </div>
+  </div>
+</section>
 
 <section id="features">
   <div class="wrap">
@@ -89,7 +102,8 @@
           <ul>
             <li>Smooth on repositories with a million commits</li>
             <li>Search by message, author, SHA or file</li>
-            <li>Branches, remotes, tags and stashes a click away</li>
+            <li>A sidebar you arrange: resize, collapse or hide its sections</li>
+            <li>Columns you can reorder and resize, and curved or rounded lines</li>
           </ul>
         </div>
         <figure><a href="screenshots/history.png"><img src="screenshots/history.png" width="2560" height="1600" loading="lazy" alt="The commit graph with branches, tags and a remote branch."></a></figure>
@@ -97,21 +111,34 @@
 
       <div class="feature" style="--lane: var(--lane-2)">
         <div class="feature-text">
-          <h3>Diffs you can actually read</h3>
-          <p>Unified or side by side, with syntax highlighting for hundreds of languages and the changed words marked inside each line.</p>
+          <h3>Pull requests, next to your graph</h3>
+          <p>On GitHub, GitLab.com or your own GitLab, the open pull and merge requests and issues sit right under your branches: their description, reviews and checks, a click away.</p>
           <ul>
+            <li>Check out a request's branch in one click</li>
+            <li>Open a new one from your branch, and push first if it needs it</li>
+            <li>Sign in with your browser; tokens stay in your system's keychain</li>
+          </ul>
+        </div>
+        <figure><a href="screenshots/requests.png"><img src="screenshots/requests.png" width="2560" height="1600" loading="lazy" alt="A merge request open beside the graph, with its approval, checks and description, and the open requests and issues in the sidebar."></a></figure>
+      </div>
+
+      <div class="feature" style="--lane: var(--lane-3)">
+        <div class="feature-text">
+          <h3>Diffs you can actually read</h3>
+          <p>Unified or side by side, with syntax highlighting for hundreds of languages and the changed words marked inside each line. Just the changes, or the whole file with them in place.</p>
+          <ul>
+            <li>Pick lines by clicking or dragging, then copy or stage them</li>
             <li>Image changes shown as images</li>
-            <li>File history that follows renames</li>
             <li>Large and LFS files handled gracefully</li>
           </ul>
         </div>
         <figure><a href="screenshots/diff.png"><img src="screenshots/diff.png" width="2560" height="1600" loading="lazy" alt="A side-by-side diff with syntax highlighting and changed words marked."></a></figure>
       </div>
 
-      <div class="feature" style="--lane: var(--lane-3)">
+      <div class="feature" style="--lane: var(--lane-4)">
         <div class="feature-text">
           <h3>Stage exactly what you mean</h3>
-          <p>Stage whole files, single hunks, or just the lines you pick in the gutter. Write the message, press <span class="kbd">Ctrl</span>+<span class="kbd">Enter</span>, done.</p>
+          <p>Stage whole files, single hunks, or just the lines you pick. Write the message, press <span class="kbd">Ctrl</span>+<span class="kbd">Enter</span>, done.</p>
           <ul>
             <li>Discarded changes go to the Recycle Bin or Trash</li>
             <li>Amend, with a warning if it's already pushed</li>
@@ -121,7 +148,7 @@
         <figure><a href="screenshots/staging.png"><img src="screenshots/staging.png" width="2560" height="1600" loading="lazy" alt="Working changes, with a file's diff ready to stage hunk by hunk."></a></figure>
       </div>
 
-      <div class="feature" style="--lane: var(--lane-4)">
+      <div class="feature" style="--lane: var(--lane-5)">
         <div class="feature-text">
           <h3>Rewrite history without fear</h3>
           <p>Plan an interactive rebase by dragging commits into order and choosing pick, reword, squash, fixup or drop for each. Merge by dragging one branch onto another.</p>
@@ -134,30 +161,30 @@
         <figure><a href="screenshots/rebase.png"><img src="screenshots/rebase.png" width="2560" height="1600" loading="lazy" alt="The interactive rebase planner, with commits set to reword and squash."></a></figure>
       </div>
 
-      <div class="feature" style="--lane: var(--lane-5)">
+      <div class="feature" style="--lane: var(--lane-6)">
         <div class="feature-text">
           <h3>Fast from the keyboard</h3>
           <p>Press <span class="kbd">Ctrl</span>+<span class="kbd">K</span> and type a few letters to run any action, or to check out, merge, rebase onto or jump to any branch.</p>
           <ul>
             <li>Shortcuts for everyday work: fetch, pull, push, stash</li>
+            <li>Your terminal, opened in the repository: <span class="kbd">Ctrl</span>+<span class="kbd">`</span></li>
             <li>Each repository in its own tab</li>
-            <li>Arrow keys and Page Up/Down through history</li>
           </ul>
         </div>
         <figure><a href="screenshots/palette.png"><img src="screenshots/palette.png" width="2560" height="1600" loading="lazy" alt="The command palette, finding branches to check out."></a></figure>
       </div>
 
-      <div class="feature" style="--lane: var(--lane-6)">
+      <div class="feature" style="--lane: var(--lane-1)">
         <div class="feature-text">
           <h3>Who changed this, and why?</h3>
-          <p>Blame shows the commit and author behind every line; one click takes you to that commit and its message.</p>
+          <p>Turn on Blame and every line shows who last changed it, and when; turn on History and every commit that touched the file lines up beside it. Use one, both or neither: one click takes you to any of those commits.</p>
           <ul>
-            <li>Every commit that touched a file, beside its change</li>
+            <li>History that follows renames</li>
             <li>Commit details with authors, dates and parents</li>
-            <li>Copy a SHA with one click</li>
+            <li>Copy a SHA, a branch or a tag name with one click</li>
           </ul>
         </div>
-        <figure><a href="screenshots/blame.png"><img src="screenshots/blame.png" width="2560" height="1600" loading="lazy" alt="Blame, showing the commit and author of each line of a file."></a></figure>
+        <figure><a href="screenshots/blame.png"><img src="screenshots/blame.png" width="2560" height="1600" loading="lazy" alt="A whole file with the author and age of each line beside it, and the file's history down the left."></a></figure>
       </div>
     </div>
   </div>
@@ -173,7 +200,7 @@
       <div class="card" style="--lane: var(--lane-3)"><h4><span class="dot"></span>Signs in like Git</h4><p>Git Credential Manager, credential helpers and your SSH agent; passwords and new hosts are asked in a dialog.</p></div>
       <div class="card" style="--lane: var(--lane-4)"><h4><span class="dot"></span>Submodules and worktrees</h4><p>See their state, update them, open them in a tab, or add a worktree on a new branch.</p></div>
       <div class="card" style="--lane: var(--lane-5)"><h4><span class="dot"></span>Keeps itself up to date</h4><p>New versions download in the background; restart when it suits you, with your tabs and settings kept.</p></div>
-      <div class="card" style="--lane: var(--lane-6)"><h4><span class="dot"></span>Private by default</h4><p>No accounts, no tracking. Crash reports stay on your computer unless you choose to post one.</p></div>
+      <div class="card" style="--lane: var(--lane-6)"><h4><span class="dot"></span>Private by default</h4><p>No account needed, no tracking. Crash reports stay on your computer unless you choose to post one.</p></div>
     </div>
   </div>
 </section>
@@ -181,7 +208,7 @@
 <section id="themes">
   <div class="wrap">
     <h2 class="section-title">Make it yours</h2>
-    <p class="section-lede">Six looks, from Raccoon's warm browns to High contrast, each in a dark and a light version, or following your system's light and dark. Interface size from 50% to 200%.</p>
+    <p class="section-lede">Six looks, from Raccoon's warm browns to High contrast, each in a dark and a light version, or following your system's light and dark. Or make your own. Interface size from 50% to 200%.</p>
     <div class="mode-switch" role="group" aria-label="Show the looks">
       <button type="button" data-mode="dark" aria-pressed="true">Dark</button>
       <button type="button" data-mode="light" aria-pressed="false">Light</button>
@@ -193,6 +220,29 @@
       <figure><a href="screenshots/theme-forest-dark.png" data-dark="screenshots/theme-forest-dark.png" data-light="screenshots/theme-forest-light.png"><img src="screenshots/theme-forest-dark.png" data-dark="screenshots/theme-forest-dark.png" data-light="screenshots/theme-forest-light.png" width="1280" height="800" loading="lazy" alt="The Forest look."></a><figcaption>Forest</figcaption></figure>
       <figure><a href="screenshots/theme-paper-dark.png" data-dark="screenshots/theme-paper-dark.png" data-light="screenshots/theme-paper-light.png"><img src="screenshots/theme-paper-dark.png" data-dark="screenshots/theme-paper-dark.png" data-light="screenshots/theme-paper-light.png" width="1280" height="800" loading="lazy" alt="The Paper look."></a><figcaption>Paper</figcaption></figure>
       <figure><a href="screenshots/theme-high-contrast-dark.png" data-dark="screenshots/theme-high-contrast-dark.png" data-light="screenshots/theme-high-contrast-light.png"><img src="screenshots/theme-high-contrast-dark.png" data-dark="screenshots/theme-high-contrast-dark.png" data-light="screenshots/theme-high-contrast-light.png" width="1280" height="800" loading="lazy" alt="The High contrast look."></a><figcaption>High contrast</figcaption></figure>
+    </div>
+
+    <div class="feature theme-maker" style="--lane: var(--lane-5)">
+      <div class="feature-text">
+        <h3>Your own theme, in minutes</h3>
+        <p>Start from any look and change any colour, for its dark and its light version. The app changes as you edit, and text that would be hard to read is pointed out, with a fix in one click.</p>
+        <ul>
+          <li>Share themes as a file; import other people's</li>
+          <li>Pick how the graph's lines bend, and how round</li>
+        </ul>
+      </div>
+      <figure><a href="screenshots/theme-editor.png"><img src="screenshots/theme-editor.png" width="2560" height="1600" loading="lazy" alt="The theme editor, changing a theme's colours with a live preview."></a></figure>
+    </div>
+  </div>
+</section>
+
+<section class="next" aria-labelledby="next-title">
+  <div class="wrap">
+    <h2 class="section-title" id="next-title">Coming next</h2>
+    <p class="section-lede">Designed, and on their way. Follow along on the <a href="https://github.com/Trashpanda-GameDev/Git-Raccoon/blob/main/ROADMAP.md">roadmap</a>.</p>
+    <div class="grid">
+      <div class="card" style="--lane: var(--lane-3)"><h4><span class="dot"></span>Review and merge, right here</h4><p>Read a request's changes and conversation, comment on any line or range, and send your review in one go. Approve, then squash or merge, without opening the website.</p><p class="card-link"><a href="https://github.com/Trashpanda-GameDev/Git-Raccoon/milestone/2">Follow its progress</a></p></div>
+      <div class="card" style="--lane: var(--lane-4)"><h4><span class="dot"></span>Profiles for work and personal</h4><p>Switch who you commit as, and which GitHub or GitLab accounts push and pull, from one menu. Warned before you commit to a work repository as your personal self.</p><p class="card-link"><a href="https://github.com/Trashpanda-GameDev/Git-Raccoon/milestone/1">Follow its progress</a></p></div>
     </div>
   </div>
 </section>

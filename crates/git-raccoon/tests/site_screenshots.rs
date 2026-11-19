@@ -200,13 +200,18 @@ impl Drop for Demo {
 }
 
 fn harness(theme: ThemeChoice, theme_mode: ThemeMode) -> Harness<'static, App> {
-    let settings = Settings {
+    harness_with(Settings {
         theme,
         theme_mode,
         split_diff: true,
         no_update_checks: true,
+        // Not signed in to the demo's GitHub: no sign-in prompts in the way.
+        sidebar_hidden: vec!["requests".into(), "issues".into()],
         ..Settings::default()
-    };
+    })
+}
+
+fn harness_with(settings: Settings) -> Harness<'static, App> {
     Harness::builder()
         .with_size(egui::vec2(1280.0, 800.0))
         .with_pixels_per_point(2.0)
@@ -317,9 +322,26 @@ fn website_screenshots() {
     click(&mut h, "src/store.rs");
     shot(&mut h, "diff");
 
-    // Blame.
+    // The whole file, with its blame and history beside it.
+    click(&mut h, "Unified");
+    click(&mut h, "Whole file");
     click(&mut h, "Blame");
+    click(&mut h, "History");
+    let start = Instant::now();
+    while h
+        .state()
+        .repo()
+        .is_none_or(|r| r.open_blame().is_none() || r.open_history().is_none())
+    {
+        assert!(start.elapsed() < Duration::from_secs(20), "no blame");
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // Room for the code: without the sidebar.
+    press(&mut h, egui::Modifiers::COMMAND, Key::B);
+    settle(&mut h);
     shot(&mut h, "blame");
+    press(&mut h, egui::Modifiers::COMMAND, Key::B);
     h.key_press(Key::Escape);
     settle(&mut h);
     h.key_press(Key::Escape);
@@ -365,6 +387,184 @@ fn website_screenshots() {
     click(&mut h, "Working changes");
     click(&mut h, "src/cache.rs");
     shot(&mut h, "staging");
+    drop(h);
+
+    // Making a theme of your own.
+    let mut h = harness(ThemeChoice::Raccoon, ThemeMode::Dark);
+    open(&mut h, &demo.dir);
+    press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    click(&mut h, "New theme");
+    for (field, hex) in [
+        ("Accent colour", "#6fa8ff"),
+        ("Background colour", "#141821"),
+        ("Panels colour", "#1b2130"),
+        ("Borders colour", "#2b3446"),
+    ] {
+        h.get_by_label(field).click();
+        h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+        h.get_by_label(field).type_text(hex);
+        h.run_ok();
+    }
+    h.get_by_label("Theme name").click();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+    h.get_by_label("Theme name").type_text("Midnight Raccoon");
+    h.run_ok();
+    shot(&mut h, "theme-editor");
+    drop(h);
+
+    // Merge requests from a GitLab server, beside the graph.
+    requests(&demo);
+}
+
+/// A merge request open beside the graph, from a stand-in GitLab.
+fn requests(demo: &Demo) {
+    use git_raccoon::forge::{Account, Kind, accounts};
+    let mr = |iid: u64, title: &str, who: &str, source: &str, body: &str, status: &str| {
+        format!(
+            r#"{{"iid": {iid}, "title": "{title}", "author": {{"username": "{who}"}},
+            "source_branch": "{source}", "target_branch": "main", "source_project_id": 1,
+            "target_project_id": 1, "draft": false, "web_url": "https://example.com/mr/{iid}",
+            "description": "{body}", "created_at": "2026-11-12T09:30:00Z",
+            "user_notes_count": 3, "head_pipeline": {{"status": "{status}"}}}}"#
+        )
+    };
+    let expiry = mr(
+        7,
+        "Expire keys after a time to live",
+        "milo",
+        "feature/expiry",
+        "Keys can be given a time to live. A background sweep removes them once it has passed, so the store doesn't grow forever.",
+        "success",
+    );
+    let flush = mr(
+        9,
+        "Flush pending writes on exit",
+        "ada",
+        "fix/flush-on-exit",
+        "Ctrl+C lost the last few writes.",
+        "running",
+    );
+    let api = "/api/v4/projects/rocky%2Fstash-box";
+    let base = forge_server(vec![
+        ("GET /api/v4/user".into(), r#"{"username": "rocky"}"#.into()),
+        (format!("GET {api}/merge_requests?"), format!("[{expiry}, {flush}]")),
+        (
+            format!("GET {api}/issues?"),
+            r#"[{"iid": 11, "title": "Keys with spaces can't be read back", "author": {"username": "ada"},
+            "labels": ["bug"], "web_url": "u", "description": "", "created_at": "2026-11-10T00:00:00Z",
+            "user_notes_count": 2},
+            {"iid": 12, "title": "Compression for large values", "author": {"username": "milo"},
+            "labels": ["idea"], "web_url": "u", "description": "", "created_at": "2026-11-14T00:00:00Z",
+            "user_notes_count": 0}]"#
+                .into(),
+        ),
+        (format!("GET {api}/merge_requests/7"), expiry.clone()),
+        (
+            format!("GET {api}/merge_requests/7/approvals"),
+            r#"{"approved_by": [{"user": {"username": "ada"}}]}"#.into(),
+        ),
+        (format!("GET {api}/merge_requests/9"), flush.clone()),
+        (format!("GET {api}/merge_requests/9/approvals"), r#"{"approved_by": []}"#.into()),
+    ]);
+    demo.repo
+        .remote_set_url("origin", &format!("{base}/rocky/stash-box.git"))
+        .unwrap();
+    accounts::use_memory_store();
+    let account = Account {
+        kind: Kind::GitLab,
+        base: base.clone(),
+        login: "rocky".into(),
+        client: None,
+    };
+    accounts::save(
+        &account,
+        &accounts::Secret {
+            token: "demo".into(),
+            refresh: None,
+            expires: None,
+        },
+    )
+    .unwrap();
+    let mut h = harness_with(Settings {
+        theme: ThemeChoice::Raccoon,
+        theme_mode: ThemeMode::Dark,
+        no_update_checks: true,
+        accounts: vec![account],
+        ..Settings::default()
+    });
+    open(&mut h, &demo.dir);
+    let start = Instant::now();
+    while h
+        .state()
+        .repo()
+        .and_then(|r| r.forge.as_ref())
+        .is_none_or(|f| f.requests.is_none() || f.issues.is_none())
+    {
+        assert!(start.elapsed() < Duration::from_secs(20), "no requests");
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    h.run_ok();
+    click(&mut h, "!7 Expire keys after a time to live");
+    let start = Instant::now();
+    while h
+        .state()
+        .repo()
+        .and_then(|r| r.forge.as_ref())
+        .is_none_or(|f| f.detailed(7).is_none())
+    {
+        assert!(start.elapsed() < Duration::from_secs(20), "no details");
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    settle(&mut h);
+    shot(&mut h, "requests");
+}
+
+/// A stand-in GitLab: answers each request by its method and path (the
+/// longest matching prefix in `routes`).
+fn forge_server(routes: Vec<(String, String)>) -> String {
+    use std::io::{BufRead as _, BufReader, Read as _, Write as _};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let routes = std::sync::Arc::new(routes);
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let routes = std::sync::Arc::clone(&routes);
+            std::thread::spawn(move || {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut first = String::new();
+                let _ = reader.read_line(&mut first);
+                let mut length = 0;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                        break;
+                    }
+                    if let Some(n) = line.to_lowercase().strip_prefix("content-length:") {
+                        length = n.trim().parse().unwrap_or(0);
+                    }
+                }
+                let mut body = vec![0; length];
+                let _ = reader.read_exact(&mut body);
+                let request = first.split(' ').take(2).collect::<Vec<_>>().join(" ");
+                let reply = routes
+                    .iter()
+                    .filter(|(prefix, _)| request.starts_with(prefix.as_str()))
+                    .max_by_key(|(prefix, _)| prefix.len())
+                    .map_or_else(|| (404, "{}".to_string()), |(_, json)| (200, json.clone()));
+                let mut stream = stream;
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    reply.0,
+                    reply.1.len(),
+                    reply.1
+                );
+            });
+        }
+    });
+    base
 }
 
 const CARGO: &str = r#"[package]
