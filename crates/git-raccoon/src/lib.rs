@@ -16,6 +16,7 @@ pub mod settings;
 mod task;
 pub mod terminal;
 mod theme;
+pub mod themes;
 mod title_bar;
 mod ui;
 pub mod updates;

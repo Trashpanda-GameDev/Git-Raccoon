@@ -1,12 +1,13 @@
 //! Colours, fonts and widget styling.
 
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{PoisonError, RwLock, RwLockReadGuard};
 
 use eframe::egui::{self, Color32, CornerRadius, FontFamily, FontId, Stroke, TextStyle};
 use two_face::theme::EmbeddedThemeName;
 
 /// The colours of one look.
-struct Palette {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Palette {
     /// Built on egui's light visuals (otherwise dark).
     light: bool,
     bg: Color32,
@@ -586,7 +587,8 @@ pub struct Look {
 }
 
 impl Look {
-    fn palette(self) -> &'static Palette {
+    /// Its colours.
+    pub fn palette(self) -> &'static Palette {
         match (self.family, self.light) {
             (Family::Classic, false) => &DARK,
             (Family::Classic, true) => &LIGHT,
@@ -601,24 +603,6 @@ impl Look {
             (Family::HighContrast, false) => &HIGHCONTRAST,
             (Family::HighContrast, true) => &HIGHCONTRAST_LIGHT,
         }
-    }
-
-    fn index(self) -> u8 {
-        let family = Family::ALL
-            .iter()
-            .position(|f| *f == self.family)
-            .unwrap_or(0);
-        #[expect(clippy::cast_possible_truncation, reason = "six families")]
-        let family = family as u8;
-        family * 2 + u8::from(self.light)
-    }
-
-    fn from_index(i: u8) -> Look {
-        let family = Family::ALL
-            .get(usize::from(i / 2))
-            .copied()
-            .unwrap_or(Family::Raccoon);
-        family.look(i % 2 == 1)
     }
 
     /// Whether it's a light look.
@@ -640,12 +624,100 @@ impl Look {
     }
 }
 
-/// The current look, by [`Look::index`]: Raccoon's dark one to start with.
-static CURRENT: AtomicU8 = AtomicU8::new(0);
+/// The colours in use: a built-in look's, or a custom theme's. Raccoon's
+/// dark ones to start with.
+static CURRENT: RwLock<Palette> = RwLock::new(RACCOON);
 
-fn palette() -> &'static Palette {
-    let i = CURRENT.load(Ordering::Relaxed);
-    Look::from_index(i).palette()
+fn palette() -> RwLockReadGuard<'static, Palette> {
+    CURRENT.read().unwrap_or_else(PoisonError::into_inner)
+}
+
+impl Palette {
+    /// Whether it's built on the light visuals.
+    pub fn is_light(&self) -> bool {
+        self.light
+    }
+
+    /// The colours a custom theme edits, as they are here.
+    pub fn colours(&self) -> crate::themes::Colours {
+        use crate::themes::Hex;
+        crate::themes::Colours {
+            background: Hex(self.bg),
+            panels: Hex(self.bg_raised),
+            hover: Hex(self.bg_hover),
+            selected: Hex(self.bg_selected),
+            borders: Hex(self.border),
+            text: Hex(self.text),
+            secondary_text: Hex(self.muted),
+            accent: Hex(self.accent),
+            on_accent: Hex(self.on_accent),
+            added: Hex(self.add),
+            deleted: Hex(self.del),
+            modified: Hex(self.modified),
+            renamed: Hex(self.renamed),
+            danger: Hex(self.danger),
+            lanes: self.lanes.iter().map(|c| Hex(*c)).collect(),
+        }
+    }
+
+    /// This look with a custom theme's colours, and what follows from them
+    /// (the diffs' backgrounds from the added and deleted colours).
+    pub fn with(&self, c: &crate::themes::Colours) -> Palette {
+        let tint = |colour: Color32, alpha: u8| {
+            Color32::from_rgba_unmultiplied(colour.r(), colour.g(), colour.b(), alpha)
+        };
+        let mut lanes = self.lanes;
+        for (lane, hex) in lanes.iter_mut().zip(&c.lanes) {
+            *lane = hex.0;
+        }
+        Palette {
+            light: self.light,
+            bg: c.background.0,
+            bg_raised: c.panels.0,
+            bg_hover: c.hover.0,
+            bg_selected: c.selected.0,
+            border: c.borders.0,
+            text: c.text.0,
+            muted: c.secondary_text.0,
+            accent: c.accent.0,
+            on_accent: c.on_accent.0,
+            danger: c.danger.0,
+            danger_bg: c.background.0.lerp_to_gamma(c.danger.0, 0.18),
+            add: c.added.0,
+            del: c.deleted.0,
+            modified: c.modified.0,
+            renamed: c.renamed.0,
+            typechange: self.typechange,
+            hunk: c.secondary_text.0,
+            add_bg: tint(c.added.0, 31),
+            add_bg_strong: tint(c.added.0, 56),
+            del_bg: tint(c.deleted.0, 31),
+            del_bg_strong: tint(c.deleted.0, 56),
+            word_add: tint(c.added.0, 89),
+            word_del: tint(c.deleted.0, 89),
+            hunk_bg: tint(c.secondary_text.0, 15),
+            lanes,
+            syntax: self.syntax,
+        }
+    }
+}
+
+/// How two colours contrast (WCAG): from 1 (the same) to 21.
+pub fn contrast(a: Color32, b: Color32) -> f32 {
+    let (a, b) = (luminance(a), luminance(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
+fn luminance(c: Color32) -> f32 {
+    let linear = |c: u8| {
+        let c = f32::from(c) / 255.0;
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * linear(c.r()) + 0.7152 * linear(c.g()) + 0.0722 * linear(c.b())
 }
 
 /// The syntax colours for diffs in the current look.
@@ -808,8 +880,13 @@ pub fn apply(ctx: &egui::Context) {
 
 /// Switches to a look.
 pub fn set(ctx: &egui::Context, look: Look) {
-    CURRENT.store(look.index(), Ordering::Relaxed);
-    let light = look.is_light();
+    set_palette(ctx, *look.palette());
+}
+
+/// Switches to these colours (a look's, or a custom theme's).
+pub fn set_palette(ctx: &egui::Context, colours: Palette) {
+    *CURRENT.write().unwrap_or_else(PoisonError::into_inner) = colours;
+    let light = colours.light;
     ctx.set_theme(if light {
         egui::Theme::Light
     } else {
@@ -874,23 +951,6 @@ pub fn set(ctx: &egui::Context, look: Look) {
 #[cfg(test)]
 mod contrast_tests {
     use super::*;
-
-    fn luminance(c: Color32) -> f32 {
-        let linear = |c: u8| {
-            let c = f32::from(c) / 255.0;
-            if c <= 0.04045 {
-                c / 12.92
-            } else {
-                ((c + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * linear(c.r()) + 0.7152 * linear(c.g()) + 0.0722 * linear(c.b())
-    }
-
-    fn contrast(a: Color32, b: Color32) -> f32 {
-        let (a, b) = (luminance(a), luminance(b));
-        (a.max(b) + 0.05) / (a.min(b) + 0.05)
-    }
 
     #[test]
     fn label_text_reads_on_every_lane_colour() {

@@ -3,6 +3,10 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.14
+
+- **Make your own themes**: under Settings › Appearance, **New theme** starts one from the look in use, and the editor sets each colour (surfaces, text, accent, changes and the graph's lines) for its dark and light versions, by picker or by typing `#rrggbb`. The app changes as you edit, a preview shows the other version, and text that would be hard to read is pointed out with a fix in one click. Themes can be duplicated, exported to a file and imported.
+
 ## 0.5.13
 
 - **A clearer Settings window**: its settings are in sections down the side (Appearance, Git, Accounts, Tools, Updates and privacy, About), each with what it does beside it, and a search box finds any of them. Pull's and Fetch's usual ways, the clone folder, What's new and feedback are there now too, and each section can be put back to its defaults.

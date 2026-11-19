@@ -113,6 +113,10 @@ pub struct Settings {
     pub accounts: Vec<crate::forge::Account>,
     /// Changed files shown as a tree of folders, rather than by path.
     pub file_tree: bool,
+    /// Themes made here (or imported).
+    pub themes: Vec<crate::themes::CustomTheme>,
+    /// The one in use, by name; `None` for the built-in look in `theme`.
+    pub custom_theme: Option<String>,
     /// The graph's columns, in the order they're shown.
     pub columns: Vec<Column>,
     /// Widths given to the graph's columns by dragging their edges (the
@@ -293,6 +297,8 @@ impl Default for Settings {
             file_tree: false,
             terminal: String::new(),
             columns: Column::ALL.to_vec(),
+            themes: Vec::new(),
+            custom_theme: None,
             column_widths: Vec::new(),
             defaults: DEFAULTS,
         }
@@ -317,6 +323,12 @@ impl Settings {
 
     /// Sets the interface size, kept between the smallest and largest steps
     /// and rounded to a whole percent.
+    /// The custom theme in use, if one is (and still exists).
+    pub fn current_theme(&self) -> Option<&crate::themes::CustomTheme> {
+        let name = self.custom_theme.as_deref()?;
+        self.themes.iter().find(|t| t.name == name)
+    }
+
     pub fn set_zoom(&mut self, zoom: f32) {
         let zoom =
             (zoom.clamp(ZOOM_STEPS[0], ZOOM_STEPS[ZOOM_STEPS.len() - 1]) * 100.0).round() / 100.0;

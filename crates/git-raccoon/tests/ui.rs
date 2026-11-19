@@ -4880,6 +4880,100 @@ fn settings_are_in_sections_and_can_be_searched() {
     assert!(h.query_by_label("Search settings").is_none(), "closed");
 }
 
+/// Scrolls an item into view (as a person would), then clicks it.
+fn scroll_and_click(h: &mut Harness<'_, App>, label: &str) {
+    h.get_by_label(label).scroll_to_me();
+    h.run_ok();
+    h.get_by_label(label).click();
+    h.run_ok();
+}
+
+#[test]
+fn makes_edits_and_deletes_a_custom_theme() {
+    use egui::accesskit::Role;
+    use git_raccoon::settings::ThemeChoice;
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    // A new theme starts from the look in use, and is used straight away.
+    h.get_by_label("New theme").click();
+    h.run_ok();
+    assert_eq!(h.state().settings().themes.len(), 1);
+    assert_eq!(
+        h.state().settings().custom_theme.as_deref(),
+        Some("My theme")
+    );
+    h.get_by_label("Theme name");
+    // Its accent, typed: the app takes it as it's typed.
+    let set = |h: &mut Harness<'_, App>, field: &str, hex: &str| {
+        h.get_by_label(field).click();
+        h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+        h.get_by_label(field).type_text(hex);
+        h.run_ok();
+    };
+    set(&mut h, "Accent colour", "#6fa8ff");
+    let theme = &h.state().settings().themes[0];
+    assert_eq!(theme.dark.accent.text(), "#6fa8ff");
+    assert_eq!(
+        theme.light.accent, theme.light.accent,
+        "the light version is its own"
+    );
+    set(&mut h, "Background colour", "#141821");
+    set(&mut h, "Panels colour", "#1b2130");
+    // Hard-to-read text is pointed out, and fixed in one click.
+    set(&mut h, "Secondary text colour", "#3a4050");
+    h.get_by_label_contains("Secondary text on panels is");
+    screenshot(&mut h, "65-theme-editor");
+    h.get_by_label("Make secondary text on panels readable")
+        .click();
+    h.run_ok();
+    let dark = &h.state().settings().themes[0].dark;
+    assert!(
+        dark.problems()
+            .iter()
+            .all(|p| p.what != "Secondary text on panels")
+    );
+    // Renamed; the name in use follows.
+    h.get_by_label("Theme name").click();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+    h.get_by_label("Theme name").type_text("Midnight Raccoon");
+    h.run_ok();
+    assert_eq!(
+        h.state().settings().custom_theme.as_deref(),
+        Some("Midnight Raccoon")
+    );
+    // Back: a built-in look, then the theme again, from its swatch.
+    scroll_and_click(&mut h, "Done");
+    h.run_ok();
+    h.get_by_role_and_label(Role::RadioButton, "Forest").click();
+    h.run_ok();
+    assert_eq!(h.state().settings().theme, ThemeChoice::Forest);
+    assert_eq!(h.state().settings().custom_theme, None);
+    h.get_by_role_and_label(Role::RadioButton, "Midnight Raccoon")
+        .scroll_to_me();
+    h.run_ok();
+    h.get_by_role_and_label(Role::RadioButton, "Midnight Raccoon")
+        .click();
+    h.run_ok();
+    assert_eq!(
+        h.state().settings().custom_theme.as_deref(),
+        Some("Midnight Raccoon")
+    );
+    screenshot(&mut h, "66-your-themes");
+    // Deleting asks once more.
+    scroll_and_click(&mut h, "Edit Midnight Raccoon");
+    h.run_ok();
+    scroll_and_click(&mut h, "Delete theme…");
+    h.run_ok();
+    assert_eq!(h.state().settings().themes.len(), 1, "not yet");
+    scroll_and_click(&mut h, "Delete Midnight Raccoon");
+    h.run_ok();
+    assert!(h.state().settings().themes.is_empty());
+    assert_eq!(h.state().settings().custom_theme, None);
+    h.get_by_label("Light or dark");
+}
+
 #[test]
 fn shows_the_licenses() {
     let mut h = harness(Settings::default());

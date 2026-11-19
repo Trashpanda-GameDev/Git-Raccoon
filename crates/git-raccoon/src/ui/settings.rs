@@ -8,10 +8,15 @@ use egui_phosphor::regular as icon;
 
 use crate::settings::{PullChanges, PullStrategy, Settings, ThemeChoice, ThemeMode, ZOOMS};
 use crate::theme;
+use crate::themes::{CustomTheme, Field, Hex};
 use crate::ui::widgets;
 
 pub enum Action {
     Close,
+    /// Add a theme from a file.
+    ImportTheme,
+    /// Save this theme (by name) as a file.
+    ExportTheme(String),
     ClearRecent,
     Licenses,
     /// Sign in to a forge.
@@ -255,6 +260,13 @@ impl Row {
 struct View {
     section: Section,
     search: String,
+    /// The custom theme being edited (by name), and its name as typed.
+    editing: Option<String>,
+    name: String,
+    /// Editing its light version (otherwise its dark one).
+    light: bool,
+    /// Deleting it was asked for once: the button now says to confirm.
+    deleting: bool,
 }
 
 const LABEL: f32 = 190.0;
@@ -319,10 +331,14 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings) -> Option<Action> {
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         ui.add_space(4.0);
-                        if view.search.trim().is_empty() {
-                            page(ui, settings, view.section, &mut action);
+                        if !view.search.trim().is_empty() {
+                            let query = view.search.clone();
+                            results(ui, settings, &query, &mut view, &mut action);
+                        } else if view.editing.is_some() {
+                            editor(ui, settings, &mut view, &mut action);
                         } else {
-                            results(ui, settings, &view.search, &mut action);
+                            let section = view.section;
+                            page(ui, settings, section, &mut view, &mut action);
                         }
                     });
             });
@@ -333,6 +349,516 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings) -> Option<Action> {
         action = Some(Action::Close);
     }
     action
+}
+
+/// The themes made here, under the built-in looks: each to pick (or
+/// edit), and a new one, or one from a file.
+fn your_themes(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    view: &mut View,
+    action: &mut Option<Action>,
+) {
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Your themes").strong().size(13.0));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button("Import…").clicked() {
+                *action = Some(Action::ImportTheme);
+            }
+        });
+    });
+    ui.add_space(4.0);
+    let light = crate::app::look_for(settings.theme, settings.theme_mode, ui.ctx().system_theme())
+        .is_light();
+    let mut pick = None;
+    egui::Grid::new("your-themes")
+        .spacing(egui::vec2(8.0, 8.0))
+        .show(ui, |ui| {
+            for (i, t) in settings.themes.iter().enumerate() {
+                ui.vertical(|ui| {
+                    let chosen = settings.custom_theme.as_deref() == Some(t.name.as_str());
+                    let colours = t.colours(light);
+                    if custom_swatch(ui, &t.name, colours, chosen).clicked() {
+                        pick = Some(t.name.clone());
+                    }
+                    let edit = ui.small_button(format!("{}  Edit", icon::PENCIL_SIMPLE));
+                    let name = format!("Edit {}", t.name);
+                    ui.ctx()
+                        .accesskit_node_builder(edit.id, |n| n.set_label(name));
+                    if edit.clicked() {
+                        open_editor(view, &t.name, light);
+                    }
+                });
+                if i % 3 == 2 {
+                    ui.end_row();
+                }
+            }
+            // A new one, from the look in use.
+            let (rect, new) = ui.allocate_exact_size(egui::vec2(136.0, 64.0), egui::Sense::click());
+            new.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "New theme")
+            });
+            let stroke = if new.hovered() {
+                theme::text()
+            } else {
+                theme::muted()
+            };
+            ui.painter().rect_stroke(
+                rect,
+                6,
+                egui::Stroke::new(1.0, stroke),
+                egui::StrokeKind::Inside,
+            );
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                format!("{}  New theme", icon::PLUS),
+                theme::body(13.0),
+                stroke,
+            );
+            if new.on_hover_text("Starts from the look in use").clicked() {
+                let base = settings.current_theme().map_or(settings.theme, |t| t.base);
+                let mut made = settings
+                    .current_theme()
+                    .cloned()
+                    .unwrap_or_else(|| CustomTheme::starting_from("", base));
+                made.name = crate::themes::unique_name("My theme", &settings.themes);
+                let name = made.name.clone();
+                settings.themes.push(made);
+                pick = Some(name.clone());
+                open_editor(view, &name, light);
+            }
+        });
+    if let Some(name) = pick {
+        settings.custom_theme = Some(name);
+    }
+}
+
+fn open_editor(view: &mut View, name: &str, light: bool) {
+    view.editing = Some(name.to_string());
+    view.name = name.to_string();
+    view.light = light;
+    view.deleting = false;
+}
+
+/// A custom theme's swatch: its colours, with its name.
+fn custom_swatch(
+    ui: &mut egui::Ui,
+    name: &str,
+    c: &crate::themes::Colours,
+    chosen: bool,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(136.0, 64.0), egui::Sense::click());
+    let label = name.to_string();
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, chosen, &label)
+    });
+    let painter = ui.painter();
+    painter.rect_filled(rect, 6, c.background.0);
+    let strip = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 18.0));
+    painter.rect_filled(
+        strip,
+        egui::CornerRadius {
+            nw: 6,
+            ne: 6,
+            sw: 0,
+            se: 0,
+        },
+        c.panels.0,
+    );
+    for (i, lane) in c.lanes.iter().take(4).enumerate() {
+        #[expect(clippy::cast_precision_loss, reason = "four dots")]
+        let x = rect.left() + 14.0 + i as f32 * 12.0;
+        painter.circle_filled(egui::pos2(x, strip.center().y), 4.0, lane.0);
+    }
+    painter.rect_filled(
+        egui::Rect::from_min_size(
+            egui::pos2(rect.right() - 34.0, strip.center().y - 4.0),
+            egui::vec2(22.0, 8.0),
+        ),
+        3,
+        c.accent.0,
+    );
+    let text = egui::Rect::from_min_max(egui::pos2(rect.left(), rect.bottom() - 26.0), rect.max);
+    let shown = widgets::elided(
+        painter,
+        name,
+        theme::body(13.0),
+        c.text.0,
+        rect.width() - 16.0,
+    );
+    painter.galley(
+        egui::pos2(
+            text.center().x - shown.size().x / 2.0,
+            text.center().y - shown.size().y / 2.0,
+        ),
+        shown,
+        c.text.0,
+    );
+    let stroke = if chosen {
+        egui::Stroke::new(2.0, theme::accent())
+    } else if response.hovered() {
+        egui::Stroke::new(1.0, theme::muted())
+    } else {
+        egui::Stroke::new(1.0, theme::border())
+    };
+    painter.rect_stroke(rect, 6, stroke, egui::StrokeKind::Inside);
+    response
+}
+
+/// Editing a custom theme: its name, which version, its colours (with
+/// warnings where text would be hard to read), and a preview.
+fn editor(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    view: &mut View,
+    action: &mut Option<Action>,
+) {
+    let Some(index) = view
+        .editing
+        .as_deref()
+        .and_then(|name| settings.themes.iter().position(|t| t.name == name))
+    else {
+        view.editing = None;
+        return;
+    };
+    // Back, and its name.
+    ui.horizontal(|ui| {
+        let back = ui.button(format!("{}  Appearance", icon::CARET_LEFT));
+        ui.ctx()
+            .accesskit_node_builder(back.id, |n| n.set_label("Back to Appearance"));
+        if back.clicked() {
+            view.editing = None;
+        }
+        ui.add_space(8.0);
+        let field = ui.add(
+            egui::TextEdit::singleline(&mut view.name)
+                .desired_width(240.0)
+                .font(theme::body(16.0)),
+        );
+        ui.ctx()
+            .accesskit_node_builder(field.id, |n| n.set_label("Theme name"));
+        let wanted = view.name.trim().to_string();
+        let old = settings.themes[index].name.clone();
+        let taken = settings
+            .themes
+            .iter()
+            .any(|t| t.name == wanted && t.name != old);
+        if field.changed() && !wanted.is_empty() && !taken {
+            settings.themes[index].name = wanted.clone();
+            if settings.custom_theme.as_deref() == Some(old.as_str()) {
+                settings.custom_theme = Some(wanted.clone());
+            }
+            view.editing = Some(wanted);
+        }
+        if taken {
+            ui.label(
+                RichText::new("Another theme has that name")
+                    .size(12.0)
+                    .color(theme::danger()),
+            );
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // Clear of the scrollbar.
+            ui.add_space(14.0);
+            let name = settings.themes[index].name.clone();
+            if settings.custom_theme.as_deref() == Some(name.as_str()) {
+                ui.label(
+                    RichText::new("In use: changes show as you make them")
+                        .size(12.0)
+                        .color(theme::muted()),
+                );
+            } else if ui.button("Use this theme").clicked() {
+                settings.custom_theme = Some(name);
+            }
+        });
+    });
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Editing the").color(theme::muted()));
+        view.light = widgets::segmented(ui, view.light, &[(false, "Dark"), (true, "Light")]);
+        ui.label(RichText::new("version").color(theme::muted()));
+    });
+    let light = view.light;
+    // Text that would be hard to read, and the fix, where it's seen.
+    {
+        // Text that would be hard to read, and the fix.
+        let colours = settings.themes[index].colours_mut(light);
+        let problems = colours.problems();
+        for problem in &problems {
+            ui.add_space(6.0);
+            egui::Frame::new()
+                .fill(theme::bg_raised())
+                .stroke(egui::Stroke::new(1.0, theme::modified()))
+                .corner_radius(6)
+                .inner_margin(8)
+                .show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(
+                            RichText::new(format!(
+                                "{}  {} is {:.1}:1, hard to read.",
+                                icon::WARNING,
+                                problem.what,
+                                problem.ratio
+                            ))
+                            .color(theme::modified()),
+                        );
+                        let fix = ui.link("Make it readable");
+                        let name = format!("Make {} readable", problem.what.to_lowercase());
+                        ui.ctx()
+                            .accesskit_node_builder(fix.id, |n| n.set_label(name));
+                        if fix.clicked() {
+                            colours.fix(problem);
+                        }
+                    });
+                });
+        }
+    }
+    ui.add_space(6.0);
+    ui.horizontal_top(|ui| {
+        // The colours.
+        ui.vertical(|ui| {
+            ui.set_width(330.0);
+            let colours = settings.themes[index].colours_mut(light);
+            for (group, fields) in Field::GROUPS {
+                ui.add_space(6.0);
+                ui.label(widgets::section_label(group));
+                for &field in fields {
+                    colour_row(
+                        ui,
+                        field.name(),
+                        colours.get_mut(field),
+                        (index, light, field.name()),
+                    );
+                }
+            }
+            ui.add_space(6.0);
+            ui.label(widgets::section_label("Graph lines"));
+            ui.horizontal_wrapped(|ui| {
+                for (i, lane) in colours.lanes.iter_mut().enumerate() {
+                    let button = egui::widgets::color_picker::color_edit_button_srgba(
+                        ui,
+                        &mut lane.0,
+                        egui::widgets::color_picker::Alpha::Opaque,
+                    );
+                    let name = format!("Graph line {}", i + 1);
+                    ui.ctx()
+                        .accesskit_node_builder(button.id, |n| n.set_label(name));
+                }
+            });
+        });
+        ui.add_space(16.0);
+        // How it looks.
+        ui.vertical(|ui| {
+            ui.label(widgets::section_label("Preview"));
+            preview(ui, settings.themes[index].colours(light));
+        });
+    });
+    ui.add_space(14.0);
+    ui.horizontal(|ui| {
+        let name = settings.themes[index].name.clone();
+        if view.deleting {
+            let sure = ui.add(
+                egui::Button::new(
+                    RichText::new(format!("Delete {name}")).color(theme::on_accent()),
+                )
+                .fill(theme::danger().gamma_multiply(0.8)),
+            );
+            if sure.clicked() {
+                settings.themes.remove(index);
+                if settings.custom_theme.as_deref() == Some(name.as_str()) {
+                    settings.custom_theme = None;
+                }
+                view.editing = None;
+                return;
+            }
+            if ui.button("Keep it").clicked() {
+                view.deleting = false;
+            }
+        } else if ui
+            .add(
+                egui::Button::new(RichText::new("Delete theme…").color(theme::danger()))
+                    .frame(false),
+            )
+            .clicked()
+        {
+            view.deleting = true;
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let done = egui::Button::new(RichText::new("Done").color(theme::on_accent()).strong())
+                .fill(theme::accent());
+            if ui.add(done).clicked() {
+                view.editing = None;
+            }
+            if ui.button("Export…").clicked() {
+                *action = Some(Action::ExportTheme(name.clone()));
+            }
+            if ui.button("Duplicate").clicked() {
+                let mut copy = settings.themes[index].clone();
+                copy.name = crate::themes::unique_name(&format!("{name} copy"), &settings.themes);
+                let copy_name = copy.name.clone();
+                settings.themes.push(copy);
+                open_editor(view, &copy_name, light);
+            }
+        });
+    });
+}
+
+/// One colour: its name, a picker, and its "#rrggbb" to type.
+fn colour_row(ui: &mut egui::Ui, name: &str, colour: &mut Hex, key: (usize, bool, &str)) {
+    ui.horizontal(|ui| {
+        // A column of names, so the colours line up.
+        let (cell, _) = ui.allocate_exact_size(egui::vec2(130.0, 22.0), egui::Sense::hover());
+        ui.painter().text(
+            cell.left_center(),
+            egui::Align2::LEFT_CENTER,
+            name,
+            theme::body(theme::FONT_SIZE),
+            theme::text(),
+        );
+        let button = egui::widgets::color_picker::color_edit_button_srgba(
+            ui,
+            &mut colour.0,
+            egui::widgets::color_picker::Alpha::Opaque,
+        );
+        ui.ctx()
+            .accesskit_node_builder(button.id, |n| n.set_label(format!("{name} colour picker")));
+        // The text being typed is kept while it isn't a colour yet.
+        let id = egui::Id::new(("theme-hex", key));
+        let mut text: String = ui.data(|d| d.get_temp(id)).unwrap_or_else(|| colour.text());
+        let field = ui.add(
+            egui::TextEdit::singleline(&mut text)
+                .desired_width(80.0)
+                .font(theme::mono(12.0)),
+        );
+        ui.ctx()
+            .accesskit_node_builder(field.id, |n| n.set_label(format!("{name} colour")));
+        if field.changed()
+            && let Some(hex) = Hex::parse(&text)
+        {
+            *colour = hex;
+        }
+        if field.has_focus() {
+            ui.data_mut(|d| d.insert_temp(id, text));
+        } else {
+            ui.data_mut(|d| d.remove::<String>(id));
+        }
+    });
+}
+
+/// A small picture of the app in these colours: a toolbar, some of the
+/// graph with a selected row, and a diff.
+fn preview(ui: &mut egui::Ui, c: &crate::themes::Colours) {
+    let width = ui.available_width().max(200.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 300.0), egui::Sense::hover());
+    let p = ui.painter_at(rect);
+    p.rect_filled(rect, 8, c.background.0);
+    p.rect_stroke(
+        rect,
+        8,
+        egui::Stroke::new(1.0, c.borders.0),
+        egui::StrokeKind::Inside,
+    );
+    // Toolbar.
+    let bar = egui::Rect::from_min_size(rect.min, egui::vec2(width, 34.0));
+    p.rect_filled(
+        bar,
+        egui::CornerRadius {
+            nw: 8,
+            ne: 8,
+            sw: 0,
+            se: 0,
+        },
+        c.panels.0,
+    );
+    let pill = egui::Rect::from_min_size(bar.min + egui::vec2(10.0, 8.0), egui::vec2(64.0, 18.0));
+    p.rect_filled(pill, 4, c.accent.0);
+    p.text(
+        pill.center(),
+        egui::Align2::CENTER_CENTER,
+        format!("{} main", icon::CHECK),
+        theme::body(12.0),
+        c.on_accent.0,
+    );
+    p.text(
+        pill.right_center() + egui::vec2(12.0, 0.0),
+        egui::Align2::LEFT_CENTER,
+        "Fetch  Pull  Push",
+        theme::body(12.0),
+        c.secondary_text.0,
+    );
+    // Graph rows.
+    let rows = [
+        ("Pipeline cache", "2 days ago", 1),
+        ("Faster start", "3 days ago", 0),
+        ("Add icon", "6 days ago", 0),
+        ("Lay out commit lanes", "2 weeks ago", 2),
+    ];
+    for (i, (message, when, lane)) in rows.iter().enumerate() {
+        #[expect(clippy::cast_precision_loss, reason = "four rows")]
+        let top = bar.bottom() + 4.0 + i as f32 * 28.0;
+        let row = egui::Rect::from_min_size(egui::pos2(rect.left(), top), egui::vec2(width, 28.0));
+        if i == 1 {
+            p.rect_filled(row, 0, c.selected.0);
+        }
+        let colour = c.lanes.get(*lane).map_or(c.accent.0, |h| h.0);
+        #[expect(clippy::cast_precision_loss, reason = "a few lanes")]
+        let x = rect.left() + 18.0 + *lane as f32 * 14.0;
+        p.circle_stroke(
+            egui::pos2(x, row.center().y),
+            5.0,
+            egui::Stroke::new(2.5, colour),
+        );
+        p.text(
+            egui::pos2(rect.left() + 70.0, row.center().y),
+            egui::Align2::LEFT_CENTER,
+            message,
+            theme::body(13.0),
+            c.text.0,
+        );
+        p.text(
+            egui::pos2(rect.right() - 10.0, row.center().y),
+            egui::Align2::RIGHT_CENTER,
+            when,
+            theme::body(12.0),
+            c.secondary_text.0,
+        );
+    }
+    // A diff.
+    let top = bar.bottom() + 4.0 + 4.0 * 28.0 + 10.0;
+    let lines = [
+        (" let repo = Repo::discover(path)?;", None, c.text.0),
+        ("-Ok(repo)", Some(c.deleted.0), c.text.0),
+        (
+            "+if repo.is_bare() { return Err(Bare); }",
+            Some(c.added.0),
+            c.text.0,
+        ),
+        ("+Ok(repo)", Some(c.added.0), c.text.0),
+    ];
+    for (i, (text, tint, colour)) in lines.iter().enumerate() {
+        #[expect(clippy::cast_precision_loss, reason = "four lines")]
+        let y = top + i as f32 * 22.0;
+        let line = egui::Rect::from_min_size(
+            egui::pos2(rect.left() + 8.0, y),
+            egui::vec2(width - 16.0, 22.0),
+        );
+        if let Some(tint) = tint {
+            p.rect_filled(
+                line,
+                0,
+                egui::Color32::from_rgba_unmultiplied(tint.r(), tint.g(), tint.b(), 40),
+            );
+        }
+        p.text(
+            line.left_center() + egui::vec2(6.0, 0.0),
+            egui::Align2::LEFT_CENTER,
+            *text,
+            theme::mono(12.0),
+            *colour,
+        );
+    }
 }
 
 /// A section in the list on the left: its icon and name, from the left
@@ -366,7 +892,13 @@ fn nav_item(ui: &mut egui::Ui, section: Section, on: bool) -> egui::Response {
 }
 
 /// A section's heading and its settings.
-fn page(ui: &mut egui::Ui, settings: &mut Settings, section: Section, action: &mut Option<Action>) {
+fn page(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    section: Section,
+    view: &mut View,
+    action: &mut Option<Action>,
+) {
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
             ui.label(RichText::new(section.name()).strong().size(19.0));
@@ -398,12 +930,18 @@ fn page(ui: &mut egui::Ui, settings: &mut Settings, section: Section, action: &m
     });
     ui.add_space(8.0);
     for row in ROWS.iter().filter(|r| r.section == section) {
-        draw(ui, settings, row, action);
+        draw(ui, settings, row, view, action);
     }
 }
 
 /// The settings that match a search, from every section.
-fn results(ui: &mut egui::Ui, settings: &mut Settings, query: &str, action: &mut Option<Action>) {
+fn results(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    query: &str,
+    view: &mut View,
+    action: &mut Option<Action>,
+) {
     let found: Vec<&Row> = ROWS.iter().filter(|r| r.matches(query)).collect();
     ui.label(
         RichText::new(format!("Results for \u{201c}{}\u{201d}", query.trim()))
@@ -424,12 +962,18 @@ fn results(ui: &mut egui::Ui, settings: &mut Settings, query: &str, action: &mut
             ui.label(widgets::section_label(row.section.name()));
             last = Some(row.section);
         }
-        draw(ui, settings, row, action);
+        draw(ui, settings, row, view, action);
     }
 }
 
 /// One setting's row: its name and what it does, then its control.
-fn draw(ui: &mut egui::Ui, settings: &mut Settings, row: &Row, action: &mut Option<Action>) {
+fn draw(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    row: &Row,
+    view: &mut View,
+    action: &mut Option<Action>,
+) {
     ui.painter().hline(
         ui.max_rect().x_range(),
         ui.cursor().top(),
@@ -448,7 +992,7 @@ fn draw(ui: &mut egui::Ui, settings: &mut Settings, row: &Row, action: &mut Opti
             }
         });
         ui.add_space(12.0);
-        ui.vertical(|ui| control(ui, settings, row.name, action));
+        ui.vertical(|ui| control(ui, settings, row.name, view, action));
     });
     ui.add_space(10.0);
 }
@@ -458,7 +1002,13 @@ fn hint(ui: &mut egui::Ui, text: impl Into<String>) {
 }
 
 /// A setting's control.
-fn control(ui: &mut egui::Ui, settings: &mut Settings, name: &str, action: &mut Option<Action>) {
+fn control(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    name: &str,
+    view: &mut View,
+    action: &mut Option<Action>,
+) {
     match name {
         "Light or dark" => {
             ui.horizontal(|ui| {
@@ -487,14 +1037,17 @@ fn control(ui: &mut egui::Ui, settings: &mut Settings, name: &str, action: &mut 
                 .spacing(egui::vec2(8.0, 8.0))
                 .show(ui, |ui| {
                     for (i, choice) in ThemeChoice::ALL.into_iter().enumerate() {
-                        if swatch(ui, choice, mode, system, settings.theme == choice).clicked() {
+                        let chosen = settings.theme == choice && settings.current_theme().is_none();
+                        if swatch(ui, choice, mode, system, chosen).clicked() {
                             settings.theme = choice;
+                            settings.custom_theme = None;
                         }
                         if i % 3 == 2 {
                             ui.end_row();
                         }
                     }
                 });
+            your_themes(ui, settings, view, action);
         }
         "Interface size" => {
             let current = settings.zoom.unwrap_or(1.0);

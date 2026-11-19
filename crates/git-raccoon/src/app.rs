@@ -54,7 +54,7 @@ pub struct App {
     /// The settings window is open.
     settings_open: bool,
     /// The look and zoom last applied.
-    applied: Option<(theme::Look, f32)>,
+    applied: Option<(theme::Palette, f32)>,
     /// The title bar's colours need setting (the look changed).
     title_bar_stale: bool,
     updater: crate::updates::Updater,
@@ -453,15 +453,20 @@ impl App {
             self.settings.theme_mode,
             ctx.system_theme(),
         );
+        // A custom theme, in the same version (dark or light) as the look.
+        let colours = match self.settings.current_theme() {
+            Some(custom) => custom.palette(look.is_light()),
+            None => *look.palette(),
+        };
         let zoom = self.settings.zoom.unwrap_or(1.0);
-        if self.applied == Some((look, zoom)) {
+        if self.applied == Some((colours, zoom)) {
             return;
         }
-        let theme_changed = self.applied.is_none_or(|(l, _)| l != look);
-        self.applied = Some((look, zoom));
+        let theme_changed = self.applied.is_none_or(|(c, _)| c != colours);
+        self.applied = Some((colours, zoom));
         if theme_changed {
-            theme::set(ctx, look);
-            let light = (self.settings.theme_mode != ThemeMode::System).then(|| look.is_light());
+            theme::set_palette(ctx, colours);
+            let light = (self.settings.theme_mode != ThemeMode::System).then(|| colours.is_light());
             crate::title_bar::follow(ctx, light);
             self.title_bar_stale = true;
             // Diffs carry their colours: draw them again.
@@ -2241,6 +2246,38 @@ impl eframe::App for App {
                 Some(crate::ui::settings::Action::Licenses) => {
                     self.settings_open = false;
                     self.licenses = Some(crate::ui::licenses::Tab::GitRaccoon);
+                }
+                Some(crate::ui::settings::Action::ImportTheme) => {
+                    if let Some(file) = rfd::FileDialog::new()
+                        .set_title("A Git Raccoon theme")
+                        .add_filter("Theme", &["json"])
+                        .pick_file()
+                    {
+                        match std::fs::read_to_string(&file)
+                            .map_err(|e| e.to_string())
+                            .and_then(|text| crate::themes::CustomTheme::from_json(&text))
+                        {
+                            Ok(mut theme) => {
+                                theme.name =
+                                    crate::themes::unique_name(&theme.name, &self.settings.themes);
+                                self.settings.custom_theme = Some(theme.name.clone());
+                                self.settings.themes.push(theme);
+                            }
+                            Err(e) => self.error = Some(format!("Could not add the theme: {e}.")),
+                        }
+                    }
+                }
+                Some(crate::ui::settings::Action::ExportTheme(name)) => {
+                    if let Some(theme) = self.settings.themes.iter().find(|t| t.name == name)
+                        && let Some(file) = rfd::FileDialog::new()
+                            .set_title("Save the theme")
+                            .set_file_name(format!("{name}.json"))
+                            .add_filter("Theme", &["json"])
+                            .save_file()
+                        && let Err(e) = std::fs::write(&file, theme.to_json())
+                    {
+                        self.error = Some(format!("Could not save the theme: {e}."));
+                    }
                 }
                 Some(crate::ui::settings::Action::WhatsNew) => {
                     self.settings_open = false;
