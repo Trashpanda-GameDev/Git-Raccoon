@@ -863,6 +863,17 @@ pub enum Action {
     CheckoutRemote(String),
     /// Delete a branch on its remote ("origin/feature"), after asking.
     DeleteRemoteBranch(String),
+    /// Delete a local branch and its copy on a remote ("origin/feature").
+    DeleteBranchEverywhere {
+        name: String,
+        remote_branch: String,
+    },
+    /// Delete a tag on a remote, and here too when `local`.
+    DeleteTagOn {
+        name: String,
+        remote: String,
+        local: bool,
+    },
     /// Delete several local branches, or several on their remotes.
     DeleteBranches(Vec<String>),
     DeleteRemoteBranches(Vec<String>),
@@ -1105,8 +1116,9 @@ pub fn remote_branch_items(
 }
 
 /// What can be done with a tag at `target`.
-pub fn tag_items(name: &str, target: &str) -> Vec<(String, bool, Action)> {
-    vec![
+/// A tag's menu: deleting it here, on each remote, or both.
+pub fn tag_items(name: &str, target: &str, remotes: &[String]) -> Vec<(String, bool, Action)> {
+    let mut items = vec![
         (
             "Create branch here…".into(),
             true,
@@ -1115,8 +1127,50 @@ pub fn tag_items(name: &str, target: &str) -> Vec<(String, bool, Action)> {
                 label: name.into(),
             },
         ),
-        ("Delete tag…".into(), true, Action::DeleteTag(name.into())),
-    ]
+        ("Delete…".into(), true, Action::DeleteTag(name.into())),
+    ];
+    for remote in remotes {
+        for local in [false, true] {
+            let label = if local {
+                format!("Delete here and on {remote}…")
+            } else {
+                format!("Delete on {remote}…")
+            };
+            items.push((
+                label,
+                true,
+                Action::DeleteTagOn {
+                    name: name.into(),
+                    remote: remote.clone(),
+                    local,
+                },
+            ));
+        }
+    }
+    items
+}
+
+/// The extra deletes for a local branch label that stands for its remote
+/// copies too ("main" with "origin/main" on the same commit).
+pub fn shared_branch_items(name: &str, copies: &[String]) -> Vec<(String, bool, Action)> {
+    let mut items = Vec::new();
+    for copy in copies {
+        let remote = copy.split_once('/').map_or(copy.as_str(), |(r, _)| r);
+        items.push((
+            format!("Delete on {remote}…"),
+            true,
+            Action::DeleteRemoteBranch(copy.clone()),
+        ));
+        items.push((
+            format!("Delete here and on {remote}…"),
+            true,
+            Action::DeleteBranchEverywhere {
+                name: name.into(),
+                remote_branch: copy.clone(),
+            },
+        ));
+    }
+    items
 }
 
 /// Shows the sidebar.
@@ -1193,6 +1247,7 @@ pub fn show(
         .collect();
 
     let picked_id = egui::Id::new(("sidebar-picked", root));
+    let remote_names: Vec<String> = refs.remotes.iter().map(|r| r.name.clone()).collect();
     // The sections there are, with their names.
     let filtering = !f.is_empty();
     let mut all_sections: Vec<(&'static str, String)> =
@@ -1516,7 +1571,11 @@ pub fn show(
                         response.context_menu(|ui| {
                             copy_name(ui, &t.name);
                             web_items(ui, &mut c.action, page.as_ref());
-                            menu(ui, &mut c.action, tag_items(&t.name, &t.target));
+                            menu(
+                                ui,
+                                &mut c.action,
+                                tag_items(&t.name, &t.target, &remote_names),
+                            );
                         });
                     }
                 });

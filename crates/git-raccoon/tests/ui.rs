@@ -2223,21 +2223,16 @@ fn deletes_a_tag_here_on_the_remote_or_both() {
     let mut h = harness(Settings::default());
     open(&mut h, sample.path());
     settle(&mut h);
-    let delete = |h: &mut Harness<'_, App>, choice: &str, button: &str| {
-        menu_item(h, "v0.1.0", "Delete tag");
-        h.get_by_role_and_label(Role::RadioButton, choice).click();
-        h.run_ok();
+    let delete = |h: &mut Harness<'_, App>, item: &str, button: &str| {
+        menu_item(h, "v0.1.0", item);
         h.get_by_role_and_label(Role::Button, button).click();
         settle(h);
     };
 
     // Only on the remote: kept here.
-    menu_item(&mut h, "v0.1.0", "Delete tag");
-    h.get_by_role_and_label(Role::RadioButton, "Only on origin")
-        .click();
-    h.run_ok();
+    menu_item(&mut h, "v0.1.0", "Delete on origin…");
     screenshot(&mut h, "81-delete-tag");
-    h.get_by_role_and_label(Role::Button, "Delete on remote")
+    h.get_by_role_and_label(Role::Button, "Delete on origin")
         .click();
     settle(&mut h);
     assert!(!there(), "gone from origin");
@@ -2248,15 +2243,90 @@ fn deletes_a_tag_here_on_the_remote_or_both() {
     assert!(there(), "back on origin");
 
     // Here and on the remote; undo brings both back.
-    delete(&mut h, "Here and on origin", "Delete everywhere");
+    delete(&mut h, "Delete here and on origin…", "Delete in both");
     assert!(!there() && !here(h.state()), "gone from both");
     h.get_by_label("Undo").click();
     settle(&mut h);
     assert!(there() && here(h.state()), "back in both");
 
     // Only here, as before.
-    delete(&mut h, "Only here", "Delete tag");
+    delete(&mut h, "Delete…", "Delete tag");
     assert!(there() && !here(h.state()));
+    let _ = std::fs::remove_dir_all(&bare);
+}
+
+#[test]
+fn a_branch_label_shared_with_its_remote_copy_deletes_either_or_both() {
+    use egui::accesskit::Role;
+    let sample = Sample::build();
+    let bare = sample.dir.with_extension("shared.git");
+    git(&sample, &["init", "-q", "--bare", bare.to_str().unwrap()]);
+    git(
+        &sample,
+        &["remote", "set-url", "origin", bare.to_str().unwrap()],
+    );
+    // feature/graph is merged into main; "solo" has a commit nowhere else.
+    git(&sample, &["push", "-q", "origin", "main", "feature/graph"]);
+    git(&sample, &["checkout", "-q", "-b", "solo"]);
+    std::fs::write(sample.dir.join("solo.txt"), "solo\n").unwrap();
+    git(&sample, &["add", "solo.txt"]);
+    git(&sample, &["commit", "-qm", "Solo work"]);
+    git(&sample, &["push", "-q", "origin", "solo"]);
+    git(&sample, &["checkout", "-q", "main"]);
+    let there = |b: &str| {
+        let out = std::process::Command::new("git")
+            .args(["ls-remote", "--heads", bare.to_str().unwrap(), b])
+            .output()
+            .unwrap();
+        !String::from_utf8_lossy(&out.stdout).trim().is_empty()
+    };
+    let here = |app: &App, b: &str| app.repo().unwrap().refs.local.iter().any(|l| l.name == b);
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    settle(&mut h);
+    // On the graph, feature/graph and origin/feature/graph are one label.
+    // A commit's label on the graph, by its row.
+    let open_menu = |h: &mut Harness<'_, App>, summary: &str| {
+        let row = h.get_by_label(summary).rect();
+        right_click_at(h, egui::pos2(row.left() + 30.0, row.center().y));
+    };
+    // feature/graph and origin/feature/graph: one label, on "Colour lanes".
+    open_menu(&mut h, "Colour lanes");
+    screenshot(&mut h, "82-shared-label-menu");
+    h.get_by_label_contains("Delete here and on origin…")
+        .click();
+    h.run_ok();
+    h.get_by_role_and_label(Role::Button, "Delete in both")
+        .click();
+    settle(&mut h);
+    assert!(
+        !here(h.state(), "feature/graph") && !there("feature/graph"),
+        "gone from both"
+    );
+    h.get_by_label("Undo").click();
+    settle(&mut h);
+    assert!(
+        here(h.state(), "feature/graph") && there("feature/graph"),
+        "back in both"
+    );
+
+    // Work that's on no other branch: asked again, nothing deleted yet.
+    open_menu(&mut h, "Solo work");
+    h.get_by_label_contains("Delete here and on origin…")
+        .click();
+    h.run_ok();
+    h.get_by_role_and_label(Role::Button, "Delete in both")
+        .click();
+    settle(&mut h);
+    h.get_by_label("Delete both anyway");
+    assert!(
+        here(h.state(), "solo") && there("solo"),
+        "nothing deleted yet"
+    );
+    h.get_by_role_and_label(Role::Button, "Delete both anyway")
+        .click();
+    settle(&mut h);
+    assert!(!here(h.state(), "solo") && !there("solo"));
     let _ = std::fs::remove_dir_all(&bare);
 }
 

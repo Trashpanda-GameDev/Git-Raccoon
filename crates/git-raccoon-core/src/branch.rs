@@ -155,6 +155,42 @@ pub fn unmerged(path: &str, names: &[String]) -> Result<Vec<String>> {
     Ok(out)
 }
 
+/// Whether branch `name`'s commits are all on some other branch or tag,
+/// local or remote, besides `except` (its remote copies): so deleting it
+/// and them together leaves nothing out of the graph.
+pub fn kept_elsewhere(path: &str, name: &str, except: &[String]) -> Result<bool> {
+    let repo = Repository::discover(path)?;
+    let tip = repo
+        .find_branch(name, git2::BranchType::Local)?
+        .get()
+        .target()
+        .ok_or_else(|| Error::Command(format!("{name} points nowhere")))?;
+    let skip = |r: &str| {
+        r == format!("refs/heads/{name}") || except.iter().any(|e| r == format!("refs/remotes/{e}"))
+    };
+    for reference in repo.references()?.flatten() {
+        let Some(full) = reference.name() else {
+            continue;
+        };
+        if skip(full)
+            || full.ends_with("/HEAD")
+            || !(full.starts_with("refs/heads/")
+                || full.starts_with("refs/remotes/")
+                || full.starts_with("refs/tags/"))
+        {
+            continue;
+        }
+        let Ok(commit) = reference.peel_to_commit() else {
+            continue;
+        };
+        let at = commit.id();
+        if at == tip || repo.graph_descendant_of(at, tip).unwrap_or(false) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Deletes several local branches: none of them, unless `force`, if any
 /// has unmerged work (the error names them).
 pub fn delete_many(path: &str, names: &[String], force: bool) -> Result<()> {

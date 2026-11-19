@@ -5,7 +5,7 @@ release page). Newest first; a version's heading is just its number.
 
 ## 0.5.16
 
-- **Delete a tag on the remote too, or only there**: *Delete tag…* now asks where: only here (as before), here and on the remote, or only on the remote (keeping it here to fix and push again). With several remotes, you pick which. Undo puts it back, on the remote as well.
+- **Delete a tag or branch on the remote too, or only there**: a tag's menu has *Delete…* (here, as before), *Delete on origin…* (kept here, to fix and push again) and *Delete here and on origin…*, one pair per remote. On the graph, where a branch and its copy on the remote share one label (`main ☁`), its menu has the same three, so the remote copy can be deleted from there too. Deleting a branch in both places first checks its commits are on some other branch, and asks again if they aren't. Undo puts everything back, on the remote as well.
 - **A hand holds what you drag**: dragging a branch (in the sidebar or by its label on the graph), a tab, or a commit in the interactive rebase planner shows a closed hand, as dragging a column heading already did, instead of the four-arrows pointer Windows shows. Commits in the planner show an open hand when you point at them.
 
 ## 0.5.15
