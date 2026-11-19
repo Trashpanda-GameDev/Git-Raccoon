@@ -246,12 +246,21 @@ fn section_header(
     }
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), HEADER), Sense::click());
-    // Its top edge, so the sections read as separate.
-    ui.painter().hline(
-        rect.x_range(),
-        rect.top(),
-        Stroke::new(1.0, theme::border()),
-    );
+    // Its top edge, so the sections read as separate; an open one after
+    // another has the handle's line above it already.
+    let after_handle = open
+        && c.sizes
+            .open
+            .iter()
+            .position(|k| k == key)
+            .is_some_and(|at| at > 0);
+    if !after_handle {
+        ui.painter().hline(
+            rect.x_range(),
+            rect.top(),
+            Stroke::new(1.0, theme::border()),
+        );
+    }
     // Which sections to show.
     response.context_menu(|ui| {
         ui.label(
