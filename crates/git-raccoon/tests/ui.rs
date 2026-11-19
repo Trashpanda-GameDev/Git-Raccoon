@@ -4984,8 +4984,8 @@ fn draws_branch_lines_the_chosen_way() {
     assert_eq!(h.state().settings().branch_lines, LineStyle::Curved);
     press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
     for (style, name) in [
-        (LineStyle::Angled, "Angled"),
-        (LineStyle::Straight, "Straight"),
+        (LineStyle::Rounded, "Rounded"),
+        (LineStyle::Curved, "Curved"),
     ] {
         h.get_by_role_and_label(Role::RadioButton, name)
             .scroll_to_me();
@@ -4993,7 +4993,7 @@ fn draws_branch_lines_the_chosen_way() {
         h.get_by_role_and_label(Role::RadioButton, name).click();
         h.run_ok();
         assert_eq!(h.state().settings().branch_lines, style);
-        if style == LineStyle::Angled {
+        if style == LineStyle::Rounded {
             screenshot(&mut h, "67-branch-lines-setting");
         }
         h.get_by_label("Close settings").click();

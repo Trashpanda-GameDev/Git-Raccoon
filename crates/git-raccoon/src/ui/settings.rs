@@ -152,7 +152,7 @@ const ROWS: &[Row] = &[
         section: Section::Appearance,
         name: "Branch lines",
         hint: "How the graph's lines bend where branches fork and merge.",
-        words: "graph curves curved lines branches straight angled bend",
+        words: "graph curves curved rounded lines branches bend",
     },
     Row {
         section: Section::Appearance,
@@ -898,6 +898,7 @@ fn line_tile(ui: &mut egui::Ui, style: LineStyle, chosen: bool) -> egui::Respons
         style,
         side,
         false,
+        true,
     );
     crate::ui::history::branch_line(
         &painter,
@@ -905,6 +906,7 @@ fn line_tile(ui: &mut egui::Ui, style: LineStyle, chosen: bool) -> egui::Respons
         egui::pos2(left, join),
         style,
         side,
+        false,
         false,
     );
     painter.line_segment(

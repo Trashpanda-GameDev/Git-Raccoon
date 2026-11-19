@@ -37,23 +37,22 @@ pub fn now() -> i64 {
 /// How the graph's lines bend between lanes.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LineStyle {
-    /// A smooth S-curve.
+    /// A smooth S-curve between rows.
     #[default]
     Curved,
-    /// A straight diagonal.
-    Straight,
-    /// Down, across, then down.
-    Angled,
+    /// Along a commit's row, then into the other lane with a rounded
+    /// corner: a merge leaves its commit sideways, a branch comes into
+    /// its parent sideways.
+    Rounded,
 }
 
 impl LineStyle {
-    pub const ALL: [LineStyle; 3] = [LineStyle::Curved, LineStyle::Straight, LineStyle::Angled];
+    pub const ALL: [LineStyle; 2] = [LineStyle::Curved, LineStyle::Rounded];
 
     pub fn name(self) -> &'static str {
         match self {
             LineStyle::Curved => "Curved",
-            LineStyle::Straight => "Straight",
-            LineStyle::Angled => "Angled",
+            LineStyle::Rounded => "Rounded",
         }
     }
 }

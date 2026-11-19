@@ -565,7 +565,10 @@ pub enum Click {
 }
 
 /// A line from `a` down to `b` in the graph, bending between lanes as
-/// `style` says (dotted for a stash's).
+/// `style` says (dotted for a stash's). Rounded, it runs along `a`'s row
+/// for a merge leaving its commit (`merge`), or along `b`'s for a branch
+/// coming into its parent, and turns into the other lane with a rounded
+/// corner.
 pub fn branch_line(
     painter: &egui::Painter,
     a: Pos2,
@@ -573,6 +576,7 @@ pub fn branch_line(
     style: LineStyle,
     stroke: Stroke,
     dotted: bool,
+    merge: bool,
 ) {
     let points: Vec<Pos2> = if (a.x - b.x).abs() < 0.5 {
         vec![a, b]
@@ -592,8 +596,14 @@ pub fn branch_line(
                 }
                 curve.flatten(Some(0.5))
             }
-            LineStyle::Straight => vec![a, b],
-            LineStyle::Angled => vec![a, Pos2::new(a.x, mid), Pos2::new(b.x, mid), b],
+            LineStyle::Rounded => {
+                let corner = if merge {
+                    Pos2::new(b.x, a.y)
+                } else {
+                    Pos2::new(a.x, b.y)
+                };
+                rounded(a, corner, b, 7.0)
+            }
         }
     };
     if dotted {
@@ -601,6 +611,32 @@ pub fn branch_line(
     } else {
         painter.add(egui::Shape::line(points, stroke));
     }
+}
+
+/// The path `a` → `corner` → `b`, its corner rounded with radius `r` (or
+/// less, where the sides are shorter).
+fn rounded(a: Pos2, corner: Pos2, b: Pos2, r: f32) -> Vec<Pos2> {
+    let into = corner - a;
+    let out = b - corner;
+    let r = r.min(into.length()).min(out.length());
+    if r < 0.5 {
+        return vec![a, corner, b];
+    }
+    let start = corner - into.normalized() * r;
+    let end = corner + out.normalized() * r;
+    let mut points = vec![a, start];
+    // The turn, as a quadratic curve through the corner.
+    for i in 1..8 {
+        #[expect(clippy::cast_precision_loss, reason = "eight steps")]
+        let t = i as f32 / 8.0;
+        let u = 1.0 - t;
+        points.push(Pos2::new(
+            u * u * start.x + 2.0 * u * t * corner.x + t * t * end.x,
+            u * u * start.y + 2.0 * u * t * corner.y + t * t * end.y,
+        ));
+    }
+    points.extend([end, b]);
+    points
 }
 
 /// Whether a row is a stash.
@@ -871,7 +907,10 @@ pub fn show(
                 let stroke = Stroke::new(2.0, theme::lane_color(usize::from(e.lane)));
                 // A stash's line to its commit is dotted.
                 let dotted = stash && usize::from(e.from) == c.column;
-                branch_line(&graph, a, b, lines, stroke, dotted);
+                // A merge leaves its commit; other lines come into the
+                // commit below (for the rounded style).
+                let merge = usize::from(e.from) == c.column && e.lane != e.from;
+                branch_line(&graph, a, b, lines, stroke, dotted, merge);
             }
         }
         if wip
