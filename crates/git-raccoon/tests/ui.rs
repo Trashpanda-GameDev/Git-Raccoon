@@ -1916,6 +1916,7 @@ fn sidebar_sections_can_be_hidden() {
     // Right-click a heading, and untick Tags.
     h.get_by_label("Stashes").click_secondary();
     h.run_ok();
+    screenshot(&mut h, "73-sidebar-menu");
     h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Tags")
         .click();
     settle(&mut h);
@@ -1924,6 +1925,14 @@ fn sidebar_sections_can_be_hidden() {
         h.state().settings().sidebar_hidden,
         vec!["tags".to_string()]
     );
+    // The same switches in the settings.
+    press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    settle(&mut h);
+    type_into(&mut h, "Search settings", "sidebar");
+    settle(&mut h);
+    screenshot(&mut h, "74-settings-sidebar");
+    h.key_press(Key::Escape);
+    settle(&mut h);
     // And back.
     menu_item(&mut h, "Local", "Show all sections");
     settle(&mut h);
@@ -1961,6 +1970,7 @@ fn hunks_stage_from_the_whole_file() {
     h.get_by_label("notes.txt").click();
     settle(&mut h);
     assert_eq!(h.get_all_by_label("Stage hunk").count(), 2);
+    screenshot(&mut h, "76-whole-file-staging");
     h.get_all_by_label("Stage hunk").nth(1).unwrap().click();
     wait_for(&mut h, "the second hunk staged", |app| {
         app.repo()
@@ -2008,6 +2018,11 @@ fn a_diff_can_show_the_whole_file() {
     // Every line, with the changed one twice (before and after), no header.
     assert_eq!(rows(&h), 201);
     screenshot(&mut h, "72-whole-file");
+    h.get_by_label("Split").click();
+    settle(&mut h);
+    screenshot(&mut h, "75-whole-file-split");
+    h.get_by_label("Unified").click();
+    settle(&mut h);
     h.get_by_label("Changes").click();
     settle(&mut h);
     assert_eq!(rows(&h), 9);
