@@ -13,6 +13,20 @@ use crate::{Error, Result};
 /// A `git` command for the repository at `path`, without a console window
 /// on Windows and never waiting on an editor or a terminal prompt.
 fn git(path: &str) -> Command {
+    git_asking(path, true)
+}
+
+/// A `git` command that never asks anyone anything: no password or
+/// passphrase dialogs, no credential manager windows. For work the user
+/// didn't start (fetching in the background): what needs asking fails.
+fn git_quiet(path: &str) -> Command {
+    let mut cmd = git_asking(path, false);
+    cmd.env("GCM_INTERACTIVE", "never")
+        .env("SSH_ASKPASS_REQUIRE", "never");
+    cmd
+}
+
+fn git_asking(path: &str, ask: bool) -> Command {
     let mut cmd = Command::new("git");
     cmd.arg("-C")
         .arg(path)
@@ -21,7 +35,7 @@ fn git(path: &str) -> Command {
         // Buffer output even into a pipe: by default Git flushes after every
         // record there, which makes a million-commit walk twice as slow.
         .env("GIT_FLUSH", "0");
-    if let Some(ask) = crate::askpass::current() {
+    if let Some(ask) = crate::askpass::current().filter(|_| ask) {
         // Questions (passwords, passphrases, new host keys) go to the app.
         // A user's own askpass programs win.
         cmd.env(crate::askpass::ENV, &ask.value);
@@ -94,6 +108,24 @@ fn finish(
 /// printed; a failure becomes [`Error::Command`] with its output.
 pub fn run(path: &str, args: &[&str], stdin: Option<&str>) -> Result<String> {
     run_env(path, args, stdin, &[])
+}
+
+/// [`run`], never asking for credentials (see [`git_quiet`]).
+pub fn run_quiet(path: &str, args: &[&str]) -> Result<String> {
+    let output = spawn(
+        git_quiet(path)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+    )?
+    .wait_with_output()
+    .map_err(|e| Error::Command(format!("git did not finish: {e}")))?;
+    let text = combine(
+        &String::from_utf8_lossy(&output.stderr),
+        &String::from_utf8_lossy(&output.stdout),
+    );
+    finish(args, output.status.success(), output.status, text)
 }
 
 /// [`run`], with extra environment variables for git.

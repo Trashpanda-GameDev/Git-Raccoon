@@ -1272,6 +1272,12 @@ pub struct RepoView {
     pub show_blame: bool,
     /// The diff the picked lines are in.
     picked_in: Option<DiffKey>,
+    /// When the remotes were last fetched (or the repository opened), and
+    /// a fetch running in the background.
+    last_fetch: std::time::Instant,
+    auto_fetch: Option<Task<Result<(), String>>>,
+    /// Why the last background fetch failed, if it did.
+    pub auto_fetch_error: Option<String>,
     pub extras: Extras,
     /// A repository (a submodule or worktree) to open in a tab.
     pub open_request: Option<String>,
@@ -1369,6 +1375,9 @@ impl RepoView {
             show_history: false,
             show_blame: false,
             picked_in: None,
+            last_fetch: std::time::Instant::now(),
+            auto_fetch: None,
+            auto_fetch_error: None,
             refresh_started: std::time::Instant::now(),
             diff: Keyed::default(),
             images: Keyed::default(),
@@ -1570,7 +1579,66 @@ impl RepoView {
         self.start(ctx, op, None);
     }
 
+    /// Fetches every remote in the background once `minutes` have passed
+    /// since the last fetch (0: never), unless something else is running.
+    pub fn auto_fetch(&mut self, ctx: &egui::Context, minutes: u32, prune: bool) {
+        if let Some(result) = self.auto_fetch.as_ref().and_then(Task::poll) {
+            self.auto_fetch = None;
+            self.last_fetch = std::time::Instant::now();
+            self.auto_fetch_error = result.err();
+            self.refresh(ctx);
+        }
+        if minutes == 0 || self.auto_fetch.is_some() || self.op.is_some() {
+            return;
+        }
+        if self.refs.remotes.is_empty() {
+            return;
+        }
+        let due = std::time::Duration::from_secs(u64::from(minutes) * 60);
+        let since = self.last_fetch.elapsed();
+        if since < due {
+            // Look again when it's due.
+            ctx.request_repaint_after(due - since);
+            return;
+        }
+        let path = self.path().to_string();
+        self.auto_fetch = Some(Task::spawn(ctx, move || {
+            sync::fetch_quietly(&path, prune).map_err(|e| e.to_string())
+        }));
+    }
+
+    /// Makes the next background fetch due now (for tests).
+    #[doc(hidden)]
+    pub fn fetch_due_now(&mut self) {
+        let long_ago = std::time::Instant::now().checked_sub(std::time::Duration::from_secs(3600));
+        self.last_fetch = long_ago.unwrap_or(self.last_fetch);
+    }
+
+    /// A line on background fetching, for the Fetch button's tip.
+    pub fn auto_fetch_status(&self, minutes: u32) -> Option<String> {
+        if minutes == 0 {
+            return None;
+        }
+        if self.auto_fetch.is_some() {
+            return Some("Fetching in the background…".into());
+        }
+        if let Some(e) = &self.auto_fetch_error {
+            return Some(format!("The last background fetch didn't work: {e}"));
+        }
+        let ago = self.last_fetch.elapsed().as_secs() / 60;
+        let left = u64::from(minutes).saturating_sub(ago);
+        Some(match ago {
+            0 => format!("Fetched under a minute ago; again in {left} min."),
+            n => format!("Fetched {n} min ago; again in {left} min."),
+        })
+    }
+
     fn start(&mut self, ctx: &egui::Context, op: Op, message: Option<String>) {
+        if matches!(op, Op::Fetch(_) | Op::FetchRemote(..)) {
+            // A fetch by hand counts too: the next one is a while off.
+            self.last_fetch = std::time::Instant::now();
+            self.auto_fetch_error = None;
+        }
         let path = self.path().to_string();
         let task_op = op.clone();
         let control = Arc::new(Control {

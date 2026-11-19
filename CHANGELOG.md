@@ -5,6 +5,7 @@ release page). Newest first; a version's heading is just its number.
 
 ## 0.5.15
 
+- **Fetches in the background**, every 10 minutes to start with: new commits on the remotes show up without pressing Fetch. Settings › Git › *Fetch automatically* sets how often (1 to 60 minutes), or 0 to turn it off. It never asks for a password: a remote that needs one is left for you to fetch, and the Fetch button's tip says when it last fetched (or why it couldn't).
 - **Pick the branch a new pull/merge request goes into from a list** of the remote's branches (the default one first), instead of typing its name.
 - **Pick lines in a diff to copy or stage**: click a line to pick it, Shift+click (or drag) for a range, Ctrl+click to add or take out one. Right-click them to **Copy** their text (or press Ctrl+C), and in your uncommitted changes to **Stage selection** (or Unstage selection), which takes just the changed ones among them, or to pick every line. Esc lets go of them.
 - **History and Blame are toggles beside the diff**, no longer a view of their own: **History** lists every commit that changed the file down the side of its diff (click one to see its change), and **Blame** shows who last changed each line, in a column beside it (best with **Whole file**). Use either, both or neither; they're remembered. Click a commit in the blame to go to it.

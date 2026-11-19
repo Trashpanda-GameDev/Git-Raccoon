@@ -65,6 +65,8 @@ pub struct OpenRepo<'a> {
     pub remotes: Vec<&'a str>,
     /// How Fetch goes.
     pub fetch: FetchOptions,
+    /// Background fetching: when it last ran, or why it didn't work.
+    pub auto_fetch: Option<String>,
     /// How Pull goes.
     pub pull: PullOptions,
 }
@@ -336,7 +338,13 @@ fn sync_buttons(ui: &mut egui::Ui, repo: &OpenRepo<'_>) -> Option<Action> {
             "Fetch",
             icon::CLOUD_ARROW_DOWN,
             String::new(),
-            "Fetch from all remotes: see new commits without changing your branches".to_string(),
+            match &repo.auto_fetch {
+                Some(line) => format!(
+                    "Fetch from all remotes: see new commits without changing your branches\n{line}"
+                ),
+                None => "Fetch from all remotes: see new commits without changing your branches"
+                    .to_string(),
+            },
             Action::Fetch(None),
         ),
         (

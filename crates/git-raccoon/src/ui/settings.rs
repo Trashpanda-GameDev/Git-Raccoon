@@ -109,6 +109,7 @@ impl Section {
                 settings.pull = d.pull;
                 settings.fetch_prune = d.fetch_prune;
                 settings.fetch_force = d.fetch_force;
+                settings.auto_fetch_minutes = d.auto_fetch_minutes;
                 settings.split_diff = d.split_diff;
                 settings.whole_file = d.whole_file;
                 settings.file_tree = d.file_tree;
@@ -205,6 +206,12 @@ const ROWS: &[Row] = &[
         name: "Fetching",
         hint: "",
         words: "fetch prune deleted remote branches tags force",
+    },
+    Row {
+        section: Section::Git,
+        name: "Fetch automatically",
+        hint: "",
+        words: "auto fetch interval minutes background remotes",
     },
     Row {
         section: Section::Git,
@@ -1309,6 +1316,27 @@ fn control(
                 RichText::new("Can drop tags you made here; asks first.")
                     .size(12.0)
                     .color(theme::modified()),
+            );
+        }
+        "Fetch automatically" => {
+            ui.horizontal(|ui| {
+                ui.label("Every");
+                let minutes = ui.add(
+                    egui::DragValue::new(&mut settings.auto_fetch_minutes)
+                        .range(0..=60)
+                        .speed(0.2)
+                        .suffix(" min"),
+                );
+                ui.ctx().accesskit_node_builder(minutes.id, |n| {
+                    n.set_label("Fetch interval in minutes")
+                });
+                if settings.auto_fetch_minutes == 0 {
+                    ui.label(RichText::new("Off").color(theme::muted()));
+                }
+            });
+            hint(
+                ui,
+                "In minutes, between 0 and 60 (0 turns it off). Fetches every remote of the open repository in the background. It never asks for a password: a remote that needs one is left to Fetch.",
             );
         }
         "Diffs" => {

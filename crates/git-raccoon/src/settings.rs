@@ -151,6 +151,8 @@ pub struct Settings {
     /// How Fetch goes: pruning remote branches deleted there, and letting
     /// fetched refs overwrite local ones.
     pub fetch_prune: bool,
+    /// Fetch every remote in the background this often (minutes); 0: never.
+    pub auto_fetch_minutes: u32,
     pub fetch_force: bool,
     /// How Pull goes.
     pub pull: PullOptions,
@@ -349,6 +351,7 @@ impl Default for Settings {
             diff_history: false,
             diff_blame: false,
             fetch_prune: true,
+            auto_fetch_minutes: 10,
             fetch_force: false,
             pull: PullOptions::default(),
             hide_sidebar: false,

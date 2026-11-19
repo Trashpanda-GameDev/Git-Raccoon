@@ -1586,6 +1586,7 @@ impl App {
                     lfs: r.extras.lfs,
                     remotes: r.refs.remotes.iter().map(|r| r.name.as_str()).collect(),
                     fetch: self.settings.fetch_options(),
+                    auto_fetch: r.auto_fetch_status(self.settings.auto_fetch_minutes.min(60)),
                     pull: self.settings.pull,
                 });
                 toolbar::show(
@@ -2177,6 +2178,11 @@ impl eframe::App for App {
         self.poll_clone(ctx);
         if let Some(repo) = &mut self.repo {
             repo.whole_file = self.settings.whole_file;
+            repo.auto_fetch(
+                ctx,
+                self.settings.auto_fetch_minutes.min(60),
+                self.settings.fetch_prune,
+            );
             repo.show_history = self.settings.diff_history;
             repo.show_blame = self.settings.diff_blame;
             repo.poll(ctx);

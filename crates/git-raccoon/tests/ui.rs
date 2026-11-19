@@ -1989,6 +1989,89 @@ fn hunks_stage_from_the_whole_file() {
 }
 
 #[test]
+fn fetches_in_the_background_when_its_time() {
+    let sample = Sample::build();
+    // A remote with a commit the sample doesn't have yet.
+    let bare = sample.dir.with_extension("auto.git");
+    git(&sample, &["init", "-q", "--bare", bare.to_str().unwrap()]);
+    git(&sample, &["push", "-q", bare.to_str().unwrap(), "main"]);
+    let other = sample.dir.with_extension("other");
+    git(
+        &sample,
+        &[
+            "clone",
+            "-q",
+            "-b",
+            "main",
+            bare.to_str().unwrap(),
+            other.to_str().unwrap(),
+        ],
+    );
+    std::fs::write(other.join("later.txt"), "later\n").unwrap();
+    for args in [
+        &["add", "later.txt"][..],
+        &[
+            "-c",
+            "user.name=A",
+            "-c",
+            "user.email=a@example.com",
+            "commit",
+            "-qm",
+            "Later on",
+        ],
+        &["push", "-q"],
+    ] {
+        let ok = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&other)
+            .status()
+            .unwrap();
+        assert!(ok.success());
+    }
+    git(
+        &sample,
+        &["remote", "set-url", "origin", bare.to_str().unwrap()],
+    );
+    let mut h = harness(Settings {
+        auto_fetch_minutes: 5,
+        ..Settings::default()
+    });
+    open(&mut h, sample.path());
+    settle(&mut h);
+    let behind = |app: &App| {
+        app.repo()
+            .unwrap()
+            .refs
+            .local
+            .iter()
+            .find(|b| b.name == "main")
+            .and_then(|b| b.upstream.as_ref())
+            .map_or(0, |u| u.behind)
+    };
+    assert_eq!(behind(h.state()), 0, "not fetched yet: not due");
+    h.state_mut().repo_mut().unwrap().fetch_due_now();
+    wait_for(&mut h, "the background fetch", |app| behind(app) == 1);
+    let _ = std::fs::remove_dir_all(&other);
+    let _ = std::fs::remove_dir_all(&bare);
+}
+
+#[test]
+fn the_fetch_interval_is_a_setting() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    assert_eq!(
+        h.state().settings().auto_fetch_minutes,
+        10,
+        "every 10 minutes to start with"
+    );
+    press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    type_into(&mut h, "Search settings", "fetch");
+    h.get_by_label("Fetch interval in minutes");
+    screenshot(&mut h, "79-fetch-interval");
+}
+
+#[test]
 fn a_diff_can_show_the_whole_file() {
     let sample = Sample::build();
     let file = Path::new(sample.path()).join("long.txt");

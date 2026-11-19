@@ -140,6 +140,17 @@ pub fn fetch_remote(
     fetch_with(path, options, &[remote], on, cancel)
 }
 
+/// Fetches from every remote in the background: never asks for a
+/// password or passphrase (a remote that needs one fails, quietly), and
+/// never forces: only what can't lose anything.
+pub fn fetch_quietly(path: &str, prune: bool) -> Result<()> {
+    let mut args = vec!["fetch", "--quiet", "--all"];
+    if prune {
+        args.push("--prune");
+    }
+    crate::cli::run_quiet(path, &args).map(drop)
+}
+
 /// Fetches from every remote.
 pub fn fetch(
     path: &str,
@@ -569,6 +580,31 @@ mod tests {
         assert!(has_gone(), "kept without pruning");
         fetch_remote(s.b.path(), "origin", &options(true), &mut |_| {}, &none).unwrap();
         assert!(!has_gone(), "pruned");
+    }
+
+    #[test]
+    fn fetches_quietly_in_the_background() {
+        let s = setup();
+        let none = AtomicBool::new(false);
+        commit_file(&s.a, "f.txt", "two\n", "second");
+        push(s.a.path(), false, &mut |_| {}, &none).unwrap();
+        let before = head(&s.b);
+        fetch_quietly(s.b.path(), true).unwrap();
+        let r = refs::load_refs(s.b.path()).unwrap();
+        let local = r.local.iter().find(|b| b.name == s.branch).unwrap();
+        assert_eq!(local.upstream.as_ref().unwrap().behind, 1, "fetched");
+        assert_eq!(head(&s.b), before, "nothing checked out moved");
+
+        // A remote that would need a password fails, rather than asking.
+        cli::run(
+            s.b.path(),
+            &["remote", "add", "locked", "http://127.0.0.1:9/nobody.git"],
+            None,
+        )
+        .unwrap();
+        let started = std::time::Instant::now();
+        assert!(fetch_quietly(s.b.path(), true).is_err());
+        assert!(started.elapsed() < std::time::Duration::from_secs(30));
     }
 
     #[test]
