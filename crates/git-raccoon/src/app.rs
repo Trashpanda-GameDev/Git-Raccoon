@@ -2787,6 +2787,7 @@ fn request_action(
     use crate::forge_view::Sent;
     use crate::ui::request::Action;
     let head = repo.head_branch().map(str::to_string);
+    let root = repo.path().to_string();
     let Some(f) = repo.forge.as_mut() else {
         return Ok(());
     };
@@ -2913,6 +2914,29 @@ fn request_action(
                     ]),
                 );
             }
+        }
+        Action::ApplySuggestions(ids, message) => {
+            f.send(ctx, Sent::Apply, move |s| s.apply(&ids, &message));
+        }
+        Action::ApplyHere(g) => {
+            let file = std::path::Path::new(&root).join(&g.path);
+            let text = std::fs::read_to_string(&file)
+                .map_err(|e| format!("Couldn't read {}: {e}.", g.path))?;
+            let Some(changed) =
+                crate::forge::review::replace_lines(&text, g.start, g.end, &g.from, &g.to)
+            else {
+                return Err(format!(
+                    "{} has changed there since the suggestion (pull, or apply it by hand).",
+                    g.path
+                ));
+            };
+            std::fs::write(&file, changed)
+                .map_err(|e| format!("Couldn't write {}: {e}.", g.path))?;
+            f.state.sent = Some(Ok(format!(
+                "Applied to {}: commit and push it when you're ready.",
+                g.path
+            )));
+            repo.refresh_status(ctx);
         }
         Action::GoToCommit(id) => {
             if repo.history.locate(&id).is_some() {

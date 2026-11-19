@@ -11,8 +11,8 @@ use git_raccoon_core::details::{DiffLine, FileDiff, FileStatus, Hunk, LineKind};
 
 use crate::forge::Kind;
 use crate::forge::review::{
-    self, Anchor, Change, Draft, Event, Finish, Line, Merge, Method, Outcome, Overview, State,
-    Thread, Verdict,
+    self, Anchor, Change, Draft, Event, Finish, Line, Merge, Method, Outcome, Overview, Part,
+    State, Suggestion, Thread, Verdict,
 };
 use crate::forge::{Request, Review};
 use crate::forge_view::{Composer, Finishing, ForgeView, Merging, RequestState, Tab};
@@ -43,6 +43,11 @@ pub enum Action {
     },
     Resolve(String, bool),
     Merge(Merge),
+    /// Apply suggestions on the forge (GitLab), in one commit with this
+    /// message.
+    ApplySuggestions(Vec<String>, String),
+    /// Apply a suggestion to the file here, on the request's branch.
+    ApplyHere(Suggestion),
 }
 
 /// What the view needs from the repository.
@@ -110,7 +115,12 @@ pub fn show(ui: &mut egui::Ui, forge: &mut ForgeView, here: &Here<'_>) -> Option
         return action;
     };
     let state = &mut forge.state;
+    state.gitlab = kind == Kind::GitLab;
+    state.on_branch = on_its_branch(&r, kind, here.branch);
     header(ui, kind, &r, &o, state, here, loading, &mut action);
+    if let Some(a) = batch_bar(ui, state) {
+        action = Some(a);
+    }
     tabs(ui, &o, state);
     egui::Frame::new()
         .fill(theme::bg())
@@ -574,7 +584,7 @@ fn draft_card(
                     }
                 });
             });
-            markdown(ui, cache, &draft.body);
+            body_with_suggestions(ui, cache, (&draft.body, &[]), None, action);
         });
 }
 
@@ -713,7 +723,14 @@ fn thread_card(
         for c in &t.comments {
             ui.add_space(4.0);
             who_and_when(ui, &c.author, "", c.created, now);
-            markdown(ui, &mut state.markdown, &c.body);
+            let frame = Some((state.gitlab, state.on_branch, &mut state.batch));
+            body_with_suggestions(
+                ui,
+                &mut state.markdown,
+                (&c.body, &c.suggestions),
+                frame,
+                action,
+            );
         }
         for (i, d) in drafts.iter().enumerate() {
             if d.reply_to.as_deref() == Some(t.reply.as_str()) && !t.reply.is_empty() {
@@ -762,6 +779,207 @@ fn thread_card(
         }
     });
     ui.data_mut(|m| m.insert_temp(id, open));
+}
+
+/// What a suggestion card can do: whether it's GitLab (applied there) or
+/// GitHub (applied here, on the request's branch), whether that branch is
+/// checked out, and the suggestions picked to apply together.
+type SuggestionFrame<'a> = Option<(bool, bool, &'a mut std::collections::BTreeSet<String>)>;
+
+/// A comment's body: its text as Markdown, and each suggested change as a
+/// card (with Apply, when `frame` says how).
+fn body_with_suggestions(
+    ui: &mut egui::Ui,
+    cache: &mut CommonMarkCache,
+    (body, suggestions): (&str, &[Suggestion]),
+    mut frame: SuggestionFrame<'_>,
+    action: &mut Option<Action>,
+) {
+    let parts = review::parts(body);
+    if !parts.iter().any(|p| matches!(p, Part::Suggestion { .. })) {
+        markdown(ui, cache, body);
+        return;
+    }
+    let mut n = 0;
+    for part in parts {
+        match part {
+            Part::Text(text) => markdown(ui, cache, &text),
+            Part::Suggestion { to, .. } => {
+                let g = suggestions.get(n);
+                n += 1;
+                let frame = frame
+                    .as_mut()
+                    .map(|(gitlab, on, batch)| (*gitlab, *on, &mut **batch));
+                if let Some(a) = suggestion_card(ui, g, &to, frame) {
+                    *action = Some(a);
+                }
+            }
+        }
+    }
+}
+
+/// A suggested change: the lines now (red) and what they'd become (green),
+/// and applying it.
+fn suggestion_card(
+    ui: &mut egui::Ui,
+    g: Option<&Suggestion>,
+    to: &str,
+    frame: SuggestionFrame<'_>,
+) -> Option<Action> {
+    let mut action = None;
+    egui::Frame::new()
+        .fill(theme::bg())
+        .stroke(Stroke::new(1.0, theme::border()))
+        .corner_radius(4)
+        .inner_margin(egui::Margin::symmetric(8, 6))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("{}  Suggested change", icon::PENCIL_SIMPLE))
+                        .size(12.0)
+                        .strong(),
+                );
+                if let Some(g) = g {
+                    let lines = if g.start == g.end {
+                        format!("line {}", g.start)
+                    } else {
+                        format!("lines {}–{}", g.start, g.end)
+                    };
+                    ui.label(RichText::new(lines).size(11.0).color(theme::muted()));
+                    if g.applied {
+                        ui.label(
+                            RichText::new(format!("{}  Applied", icon::CHECK))
+                                .size(11.0)
+                                .color(theme::add()),
+                        );
+                    } else if !g.appliable {
+                        ui.label(RichText::new("Outdated").size(11.0).color(theme::muted()))
+                            .on_hover_text("The lines changed since: it can't be applied as it is");
+                    }
+                }
+            });
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let row = |ui: &mut egui::Ui, sign: &str, text: &str, colour, bg| {
+                egui::Frame::new().fill(bg).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(
+                        RichText::new(format!("{sign} {text}"))
+                            .font(theme::mono(12.0))
+                            .color(colour),
+                    );
+                });
+            };
+            if let Some(g) = g {
+                for line in g.from.lines() {
+                    row(ui, "−", line, theme::del(), theme::del_bg());
+                }
+            }
+            for line in to.lines() {
+                row(ui, "+", line, theme::add(), theme::add_bg());
+            }
+            if to.is_empty() {
+                ui.label(
+                    RichText::new("(removes the lines)")
+                        .size(11.0)
+                        .color(theme::muted()),
+                );
+            }
+            ui.spacing_mut().item_spacing.y = 4.0;
+            let (Some(g), Some((gitlab, on_branch, batch))) = (g, frame) else {
+                return;
+            };
+            if g.applied || !g.appliable {
+                return;
+            }
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if gitlab {
+                    let apply = ui.small_button("Apply").on_hover_text(
+                        "GitLab commits it to the request's branch (pull to get it here)",
+                    );
+                    ui.ctx()
+                        .accesskit_node_builder(apply.id, |n| n.set_label("Apply suggestion"));
+                    if apply.clicked() {
+                        action = Some(Action::ApplySuggestions(
+                            vec![g.id.clone()],
+                            String::new(),
+                        ));
+                    }
+                    let mut picked = batch.contains(&g.id);
+                    if ui
+                        .checkbox(&mut picked, "Apply with others")
+                        .on_hover_text("Pick several, then apply them together in one commit")
+                        .changed()
+                    {
+                        if picked {
+                            batch.insert(g.id.clone());
+                        } else {
+                            batch.remove(&g.id);
+                        }
+                    }
+                } else {
+                    let apply = ui
+                        .add_enabled(on_branch, egui::Button::new("Apply here").small())
+                        .on_hover_text(
+                            "Changes the file on its branch here; commit and push it when you're ready",
+                        )
+                        .on_disabled_hover_text(
+                            "Check out its branch first (GitHub can't apply it for you)",
+                        );
+                    ui.ctx().accesskit_node_builder(apply.id, |n| {
+                        n.set_label("Apply suggestion here");
+                    });
+                    if apply.clicked() {
+                        action = Some(Action::ApplyHere(g.clone()));
+                    }
+                }
+            });
+        });
+    action
+}
+
+/// Suggestions picked to apply together: how many, and applying them.
+fn batch_bar(ui: &mut egui::Ui, state: &mut RequestState) -> Option<Action> {
+    if state.batch.is_empty() {
+        return None;
+    }
+    let mut action = None;
+    egui::Frame::new()
+        .fill(theme::bg_raised())
+        .inner_margin(egui::Margin {
+            left: 16,
+            right: 12,
+            top: 4,
+            bottom: 6,
+        })
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let n = state.batch.len();
+                let s = if n == 1 { "" } else { "s" };
+                ui.label(RichText::new(format!("{n} suggestion{s} picked")).strong());
+                let message = ui.add(
+                    egui::TextEdit::singleline(&mut state.batch_message)
+                        .hint_text("Commit message (optional)")
+                        .desired_width(320.0),
+                );
+                ui.ctx().accesskit_node_builder(message.id, |n| {
+                    n.set_label("Suggestions commit message");
+                });
+                let go = egui::Button::new(format!("Apply {n} in one commit"));
+                if ui.add_enabled(state.sending.is_none(), go).clicked() {
+                    action = Some(Action::ApplySuggestions(
+                        state.batch.iter().cloned().collect(),
+                        state.batch_message.clone(),
+                    ));
+                }
+                if ui.small_button("Clear").clicked() {
+                    state.batch.clear();
+                }
+            });
+        });
+    action
 }
 
 /// A few lines of code, as in the diff.
@@ -1354,6 +1572,50 @@ fn diff_with_threads(
                             if ui.button(label).clicked() {
                                 state.composer = picked_anchor(d, state).map(|at| Composer {
                                     at: Some(at),
+                                    ..Composer::default()
+                                });
+                                ui.close();
+                            }
+                            // The picked lines, as the request has them, to change.
+                            let suggest = picked_anchor(d, state).and_then(|at| {
+                                let end = at.line.new?;
+                                let start = at.start.map_or(Some(end), |s| s.new)?;
+                                let text: Vec<&str> = state
+                                    .picked
+                                    .iter()
+                                    .map(|&(h, l)| &d.diff.hunks[h].lines[l])
+                                    .filter(|l| {
+                                        l.new_line.is_some_and(|n| (start..=end).contains(&n))
+                                    })
+                                    .map(|l| l.content.as_str())
+                                    .collect();
+                                let whole = text.len() == (end - start + 1) as usize;
+                                whole.then(|| {
+                                    (
+                                        at,
+                                        review::suggestion_block(
+                                            state.gitlab,
+                                            start,
+                                            end,
+                                            &text.join("\n"),
+                                        ),
+                                    )
+                                })
+                            });
+                            if ui
+                                .add_enabled(
+                                    suggest.is_some(),
+                                    egui::Button::new("Suggest a change"),
+                                )
+                                .on_disabled_hover_text(
+                                    "Pick lines of the new version, one after another",
+                                )
+                                .clicked()
+                                && let Some((at, body)) = suggest
+                            {
+                                state.composer = Some(Composer {
+                                    at: Some(at),
+                                    body,
                                     ..Composer::default()
                                 });
                                 ui.close();

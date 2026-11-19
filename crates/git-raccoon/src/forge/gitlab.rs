@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use super::http::{self, Auth, encode, text};
 use super::review::{
     Anchor, Change, Check, Comment, Commit, DiffRefs, Draft, Event, File, Finish, Line, Merge,
-    Method, Outcome, Overview, State, Thread, Verdict,
+    Method, Outcome, Overview, State, Suggestion, Thread, Verdict,
 };
 use super::{Checks, Issue, NewRequest, Request, Review, Session, timestamp};
 
@@ -87,11 +87,31 @@ pub fn details(s: &Session, number: u64) -> Result<Request, String> {
 }
 
 fn note(n: &Value) -> Comment {
+    let path = text(&n["position"], "new_path");
     Comment {
         id: n["id"].as_u64().unwrap_or_default().to_string(),
         author: text(&n["author"], "username"),
         body: text(n, "body"),
         created: timestamp(n["created_at"].as_str().unwrap_or_default()),
+        suggestions: n["suggestions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|g| {
+                let line = |key: &str| u32::try_from(g[key].as_u64().unwrap_or(0)).unwrap_or(0);
+                let content = |key: &str| text(g, key).trim_end_matches('\n').to_string();
+                Suggestion {
+                    id: g["id"].as_u64().unwrap_or_default().to_string(),
+                    path: path.clone(),
+                    start: line("from_line"),
+                    end: line("to_line"),
+                    from: content("from_content"),
+                    to: content("to_content"),
+                    applied: g["applied"].as_bool().unwrap_or(false),
+                    appliable: g["appliable"].as_bool().unwrap_or(false),
+                }
+            })
+            .collect(),
     }
 }
 
@@ -397,6 +417,22 @@ fn user_ids(s: &Session, names: &[String]) -> Result<Vec<u64>, String> {
         .collect()
 }
 
+/// Applies suggestions, in one commit on the request's branch.
+pub fn apply(s: &Session, ids: &[String], message: &str) -> Result<(), String> {
+    let ids: Vec<u64> = ids.iter().filter_map(|i| i.parse().ok()).collect();
+    let mut body = json!({"ids": ids});
+    if !message.trim().is_empty() {
+        body["commit_message"] = json!(message.trim());
+    }
+    http::put(
+        FORGE,
+        &format!("{}/api/v4/suggestions/batch_apply", s.project.base),
+        &Auth::Bearer(&s.token),
+        &body,
+    )?;
+    Ok(())
+}
+
 /// A comment on the whole request.
 pub fn comment(s: &Session, number: u64, body: &str) -> Result<(), String> {
     http::post(
@@ -631,6 +667,7 @@ mod tests {
                 r#"[{"id":"d1","individual_note":true,"notes":[{"id":1,"body":"Hi","author":{"username":"milo"},"created_at":"2026-11-02T00:00:00Z","system":false}]},
                     {"id":"d2","individual_note":true,"notes":[{"id":2,"body":"approved this merge request","author":{"username":"rocky"},"created_at":"2026-11-03T00:00:00Z","system":true}]},
                     {"id":"d3","individual_note":false,"notes":[{"id":3,"body":"Why y?","author":{"username":"milo"},"created_at":"2026-11-04T00:00:00Z","system":false,
+                        "suggestions":[{"id":77,"from_line":1,"to_line":1,"from_content":"y\n","to_content":"z\n","applied":false,"appliable":true}],
                         "resolvable":true,"resolved":true,
                         "position":{"old_path":"a.rs","new_path":"a.rs","old_line":null,"new_line":1}}]}]"#
                     .into(),
@@ -642,6 +679,8 @@ mod tests {
             (204, String::new()),
             (201, "{}".into()),
             (201, "{}".into()),
+            // Applying a suggestion.
+            (200, "[]".into()),
         ]);
         let s = session(&base);
         let (r, o) = s.view(12).unwrap();
@@ -658,6 +697,16 @@ mod tests {
         assert!(o.threads[0].resolved);
         assert_eq!(o.threads[0].at.as_ref().unwrap().line.new, Some(1));
         assert_eq!(o.unresolved(), 0);
+        let g = &o.threads[0].comments[0].suggestions[0];
+        assert_eq!(
+            (
+                g.id.as_str(),
+                g.path.as_str(),
+                g.from.as_str(),
+                g.to.as_str()
+            ),
+            ("77", "a.rs", "y", "z")
+        );
         assert_eq!(o.events.len(), 3);
         assert!(
             matches!(&o.events[1], Event::Review { verdict: Verdict::Approved, author, .. } if author == "rocky")
@@ -690,6 +739,7 @@ mod tests {
         ];
         s.submit(12, &o.refs, &drafts, "Thanks", Finish::Approve)
             .unwrap();
+        s.apply(&["77".into()], "Use z").unwrap();
         let seen = seen.lock().unwrap();
         let api = "/api/v4/projects/team%2Fsub%2Fapp/merge_requests/12";
         assert_eq!(
@@ -706,5 +756,10 @@ mod tests {
         assert_eq!(seen[9].0, format!("POST {api}/draft_notes/bulk_publish"));
         assert_eq!(seen[10].0, format!("POST {api}/notes"));
         assert_eq!(seen[11].0, format!("POST {api}/approve"));
+        assert_eq!(seen[12].0, "PUT /api/v4/suggestions/batch_apply");
+        assert_eq!(
+            serde_json::from_str::<Value>(&seen[12].2).unwrap(),
+            json!({"ids": [77], "commit_message": "Use z"})
+        );
     }
 }

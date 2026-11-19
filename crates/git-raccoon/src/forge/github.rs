@@ -4,8 +4,8 @@ use serde_json::{Value, json};
 
 use super::http::{self, Auth, text};
 use super::review::{
-    Anchor, Change, Check, Comment, Commit, DiffRefs, Draft, Event, File, Finish, Line, Merge,
-    Method, Outcome, Overview, State, Thread, Verdict,
+    self, Anchor, Change, Check, Comment, Commit, DiffRefs, Draft, Event, File, Finish, Line,
+    Merge, Method, Outcome, Overview, State, Suggestion, Thread, Verdict,
 };
 use super::{Checks, Issue, NewRequest, Request, Review, Session, timestamp};
 
@@ -196,6 +196,7 @@ fn thread(v: &Value) -> Thread {
             author: text(&c["author"], "login"),
             body: text(c, "body"),
             created: timestamp(c["createdAt"].as_str().unwrap_or_default()),
+            suggestions: Vec::new(),
         })
         .collect();
     let outdated = v["isOutdated"].as_bool().unwrap_or(false) || v["line"].is_null();
@@ -295,6 +296,7 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
             author: text(&c["user"], "login"),
             body: text(c, "body"),
             created: timestamp(c["created_at"].as_str().unwrap_or_default()),
+            suggestions: Vec::new(),
         }));
     }
     for review in reviews.as_array().into_iter().flatten() {
@@ -328,6 +330,38 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
         .flatten()
         .map(thread)
         .collect();
+    // GitHub keeps suggestions in the comments' text: on the lines the
+    // thread is on, as the request has them.
+    for t in &mut o.threads {
+        let Some(at) = t.at.as_ref().filter(|_| !t.outdated) else {
+            continue;
+        };
+        let Some(end) = at.line.new else { continue };
+        let start = at.start.and_then(|l| l.new).unwrap_or(end);
+        let patch = o
+            .files
+            .iter()
+            .find(|f| f.path == at.path)
+            .map(|f| f.patch.as_str())
+            .unwrap_or_default();
+        let from = review::new_lines(patch, start, end);
+        for c in &mut t.comments {
+            for (i, part) in review::parts(&c.body).into_iter().enumerate() {
+                if let review::Part::Suggestion { to, .. } = part {
+                    c.suggestions.push(Suggestion {
+                        id: format!("{}-{i}", c.id),
+                        path: at.path.clone(),
+                        start,
+                        end,
+                        from: from.clone().unwrap_or_default(),
+                        to,
+                        applied: false,
+                        appliable: from.is_some() && !t.resolved,
+                    });
+                }
+            }
+        }
+    }
     o.events.extend((0..o.threads.len()).map(Event::Thread));
     o.sort();
     let repo = get(s, "")?;
@@ -717,7 +751,7 @@ mod tests {
                 r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[
                     {"id":"T1","isResolved":false,"isOutdated":false,"path":"src/map.rs","line":2,"startLine":1,
                      "originalLine":2,"originalStartLine":1,"diffSide":"RIGHT","startDiffSide":"RIGHT",
-                     "comments":{"nodes":[{"databaseId":42,"body":"Why b?","createdAt":"2026-11-05T00:00:00Z","diffHunk":"@@","author":{"login":"milo"}}]}}
+                     "comments":{"nodes":[{"databaseId":42,"body":"Why b?\n```suggestion\nB\nc\n```","createdAt":"2026-11-05T00:00:00Z","diffHunk":"@@","author":{"login":"milo"}}]}}
                 ]}}}}}"#
                     .into(),
             ),
@@ -748,6 +782,13 @@ mod tests {
             (Some(2), Some(1))
         );
         assert_eq!(t.reply, "42");
+        // Its suggestion: lines 1 and 2 as the request has them, and what
+        // they'd be.
+        let g = &t.comments[0].suggestions[0];
+        assert_eq!(
+            (g.start, g.end, g.from.as_str(), g.to.as_str(), g.appliable),
+            (1, 2, "b\nc", "B\nc", true)
+        );
         assert_eq!(o.unresolved(), 1);
         // The comment, the approval, then the thread; the empty review isn't there.
         assert!(matches!(&o.events[0], Event::Comment(c) if c.author == "milo"));

@@ -60,6 +60,7 @@ pub enum Sent {
     Review,
     Resolve,
     Merge,
+    Apply,
 }
 
 /// How the open request's view stands: what's picked and being written.
@@ -85,6 +86,12 @@ pub struct RequestState {
     pub reviewed: bool,
     /// Laid-out Markdown.
     pub markdown: egui_commonmark::CommonMarkCache,
+    /// Suggestions picked to apply together (GitLab), and the commit's message.
+    pub batch: BTreeSet<String>,
+    pub batch_message: String,
+    /// This frame: the request is on GitLab, and its branch is checked out.
+    pub gitlab: bool,
+    pub on_branch: bool,
 }
 
 type Lists = (Result<Vec<Request>, String>, Result<Vec<Issue>, String>);
@@ -281,6 +288,7 @@ impl ForgeView {
                 Sent::Review => "Review sent.",
                 Sent::Resolve => "Thread updated.",
                 Sent::Merge => "Merged.",
+                Sent::Apply => "Applied: GitLab committed it to the branch (pull to get it here).",
             };
             let merged = matches!(what, Sent::Merge) && result.is_ok();
             if result.is_ok() {
@@ -290,6 +298,10 @@ impl ForgeView {
                 }
                 if merged {
                     self.state.merging = None;
+                }
+                if matches!(what, Sent::Apply) {
+                    self.state.batch.clear();
+                    self.state.batch_message.clear();
                 }
             }
             self.state.sent = Some(result.map(|()| done.to_string()));

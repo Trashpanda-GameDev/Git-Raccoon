@@ -119,6 +119,7 @@ Built in 0.5.18, with one set of words for GitHub and GitLab (what a forge doesn
 - [x] **Merge:** Merge commit, Squash or Rebase (each explained; only what the repository allows), the commit message, *Delete the branch after merging*. When it can't be merged yet, it says why. Afterwards: a *Merged* banner, and *Pull to get it*.
 - [x] **Check out ▾:** the request's branch (following the request, so Pull brings new commits; uncommitted changes in the way get the usual offer to put them aside), or a **new worktree** beside the repository. Once on it: *Pull the latest* and *Back to main*. A request from a fork gets a branch of its own.
   - [ ] Open the new worktree in a tab by itself, and bring put-aside changes back with *Back to main*.
+- [x] **Suggested changes:** shown as what they'd change; **Apply** (GitLab, one at a time or several in one commit) or **Apply here** on the checked-out branch (GitHub, whose API can't); *Suggest a change* on picked lines.
 - [ ] **The active profile's account** does the reviewing and merging (waits on Profiles); when it can't, say so up front.
 - [x] **Opening a request:**
   - [x] The target branch is a **dropdown** of the remote's branches, starting on the repository's default branch (not a text field).
@@ -129,7 +130,7 @@ Built in 0.5.18, with one set of words for GitHub and GitLab (what a forge doesn
   - [x] **Title and description filled in**: one commit → its message; several → the branch name and the commits listed; the repository's template when it has one (a picker for several).
   - [x] **Reviewers, assignees and labels**; GitLab's *Delete source branch* and *Squash when merging*.
   - [x] **Push and open in one step** ("Push 3 commits and open"), setting the upstream; draft or ready; then straight to the new request's view.
-- Later: check logs and re-runs; editing the title, description, reviewers, assignees and labels; draft/ready, close/reopen; suggested changes with *Apply*; sidebar filters (*Mine*, *Review requested*), and a count of requests waiting on you.
+- Later: check logs and re-runs; editing the title, description, reviewers, assignees and labels; draft/ready, close/reopen; sidebar filters (*Mine*, *Review requested*), and a count of requests waiting on you.
 
 ## Later (ideas, not commitments)
 

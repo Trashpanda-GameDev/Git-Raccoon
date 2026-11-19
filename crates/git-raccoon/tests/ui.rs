@@ -3512,8 +3512,10 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
         ("GET /api/v4/projects/team%2Fapp/merge_requests/12/discussions", r#"[
             {"id": "d1", "individual_note": true, "notes": [{"id": 1, "body": "Looks **good**", "author": {"username": "milo"},
                 "created_at": "2026-11-02T00:00:00Z", "system": false}]},
-            {"id": "d2", "individual_note": false, "notes": [{"id": 2, "body": "Why another?", "author": {"username": "milo"},
+            {"id": "d2", "individual_note": false, "notes": [{"id": 2, "body": "Why another?\n```suggestion:-0+0\nOne more\n```", "author": {"username": "milo"},
                 "created_at": "2026-11-03T00:00:00Z", "system": false, "resolvable": true, "resolved": false,
+                "suggestions": [{"id": 5, "from_line": 3, "to_line": 3, "from_content": "Another\n",
+                    "to_content": "One more\n", "applied": false, "appliable": true}],
                 "position": {"old_path": "README.md", "new_path": "README.md", "old_line": null, "new_line": 3}}]}]"#.into()),
         ("GET /api/v4/projects/team%2Fapp/merge_requests/13", mr(13, "Faster start", "cache")),
         ("GET /api/v4/projects/team%2Fapp/merge_requests/13/approvals", r#"{"approved_by": []}"#.into()),
@@ -3524,6 +3526,7 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
         // Reviewing and merging.
         ("POST /api/v4/projects/team%2Fapp/merge_requests/12/draft_notes", "{}".into()),
         ("PUT /api/v4/projects/team%2Fapp/merge_requests/12", "{}".into()),
+        ("PUT /api/v4/suggestions/batch_apply", "[]".into()),
         // Opening one.
         ("POST /api/v4/projects/team%2Fapp/merge_requests", mr(13, "Faster start", "cache")),
         // Signing in with the browser.
@@ -3585,6 +3588,49 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     h.get_by_label_contains("README.md, line 3");
     screenshot(&mut h, "50-merge-request");
 
+    // A suggestion in the thread: what it changes, and applying it.
+    h.get_by_label_contains("Suggested change");
+    h.get_by_label("+ One more");
+    h.get_by_label("− Another");
+    screenshot(&mut h, "58-suggestion");
+    h.get_by_label("Apply suggestion").click();
+    let applied = |app: &App| {
+        app.repo()
+            .unwrap()
+            .forge
+            .as_ref()
+            .is_some_and(|f| f.state.sending.is_none() && f.state.sent.is_some())
+    };
+    wait_for(&mut h, "applying it", applied);
+    {
+        let seen = seen.lock().unwrap();
+        let apply = seen
+            .iter()
+            .find(|(r, _)| r == "PUT /api/v4/suggestions/batch_apply")
+            .expect("applied on GitLab");
+        assert_eq!(apply.1, r#"{"ids":[5]}"#);
+    }
+    // Several, in one commit.
+    h.get_by_label("Apply with others").click();
+    h.run_ok();
+    type_into(&mut h, "Suggestions commit message", "Tidy the README");
+    h.get_by_label("Apply 1 in one commit").click();
+    wait_for(&mut h, "applying them", |app| {
+        applied(app)
+            && app
+                .repo()
+                .unwrap()
+                .forge
+                .as_ref()
+                .unwrap()
+                .state
+                .batch
+                .is_empty()
+    });
+    assert!(seen.lock().unwrap().iter().any(|(r, b)| {
+        r == "PUT /api/v4/suggestions/batch_apply" && b.contains("Tidy the README")
+    }));
+
     // Changes: the diff, with the thread under its line.
     h.get_by_label("Changes").click();
     h.run_ok();
@@ -3606,6 +3652,26 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
             .iter()
             .any(|(r, _)| r == &format!("PUT {api}/merge_requests/12/discussions/d2?resolved=true"))
     );
+    // Suggesting a change: the picked line, ready to edit.
+    h.get_by_label("Select line: New line").click_secondary();
+    h.run_ok();
+    h.get_by_label("Suggest a change").click();
+    h.run_ok();
+    let body = h
+        .state()
+        .repo()
+        .unwrap()
+        .forge
+        .as_ref()
+        .unwrap()
+        .state
+        .composer
+        .clone()
+        .unwrap()
+        .body;
+    assert_eq!(body, "```suggestion:-0+0\nNew line\n```");
+    h.get_by_label("Cancel").click();
+    h.run_ok();
     // A comment on a line: a draft, until the review is finished.
     h.get_by_label("Select line: Old line").click_secondary();
     h.run_ok();

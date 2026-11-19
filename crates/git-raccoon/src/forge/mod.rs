@@ -382,6 +382,15 @@ impl Session {
         }
     }
 
+    /// Applies suggestions on the forge, in one commit (GitLab only:
+    /// GitHub's API can't).
+    pub fn apply(&self, ids: &[String], message: &str) -> Result<(), String> {
+        match self.project.kind {
+            Kind::GitHub => Err("GitHub can't apply suggestions through its API".into()),
+            Kind::GitLab => gitlab::apply(self, ids, message),
+        }
+    }
+
     /// Posts a comment on the whole request, now.
     pub fn comment(&self, number: u64, body: &str) -> Result<(), String> {
         match self.project.kind {

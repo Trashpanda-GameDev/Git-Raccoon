@@ -22,6 +22,134 @@ pub struct Comment {
     pub body: String,
     /// Seconds since the Unix epoch.
     pub created: i64,
+    /// The changes it suggests, in the order its body has them.
+    pub suggestions: Vec<Suggestion>,
+}
+
+/// A change suggested in a comment: lines `start..=end` of the file (as
+/// changed by the request) to become `to`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Suggestion {
+    /// The forge's id for it (GitLab's); empty where it has none (GitHub).
+    pub id: String,
+    pub path: String,
+    pub start: u32,
+    pub end: u32,
+    /// What the lines are now, and what they'd become.
+    pub from: String,
+    pub to: String,
+    pub applied: bool,
+    /// It can still be applied (the lines haven't changed since).
+    pub appliable: bool,
+}
+
+/// A piece of a comment's body: text, or a suggested change (as many lines
+/// above and below the comment's line as it covers, and the new text).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Part {
+    Text(String),
+    Suggestion { above: u32, below: u32, to: String },
+}
+
+/// Splits a comment's body at its suggestion blocks ("```suggestion", or
+/// GitLab's "```suggestion:-2+0").
+pub fn parts(body: &str) -> Vec<Part> {
+    let mut out = Vec::new();
+    let mut text = String::new();
+    let mut lines = body.lines();
+    while let Some(line) = lines.next() {
+        let Some(rest) = line.trim_start().strip_prefix("```suggestion") else {
+            text.push_str(line);
+            text.push('\n');
+            continue;
+        };
+        let (mut above, mut below) = (0, 0);
+        if let Some(range) = rest.trim().strip_prefix(':') {
+            // "-2+1"
+            let range = range.trim_start_matches('-');
+            let (a, b) = range.split_once('+').unwrap_or((range, "0"));
+            above = a.trim().parse().unwrap_or(0);
+            below = b.trim().parse().unwrap_or(0);
+        }
+        let mut to = Vec::new();
+        for inner in lines.by_ref() {
+            if inner.trim() == "```" {
+                break;
+            }
+            to.push(inner);
+        }
+        if !text.trim().is_empty() {
+            out.push(Part::Text(std::mem::take(&mut text)));
+        }
+        text.clear();
+        out.push(Part::Suggestion {
+            above,
+            below,
+            to: to.join("\n"),
+        });
+    }
+    if !text.trim().is_empty() {
+        out.push(Part::Text(text));
+    }
+    out
+}
+
+/// The text of lines `start..=end` (on the new side) of a patch.
+pub fn new_lines(patch: &str, start: u32, end: u32) -> Option<String> {
+    let lines: Vec<String> = number(patch)
+        .into_iter()
+        .filter(|l| l.kind != '@' && l.kind != '-')
+        .filter(|l| l.line.new.is_some_and(|n| (start..=end).contains(&n)))
+        .map(|l| l.text)
+        .collect();
+    (lines.len() == (end - start + 1) as usize).then(|| lines.join("\n"))
+}
+
+/// A suggestion block for picked lines (`text`), on the line `end` of a
+/// range starting at `start`: GitLab says how many lines above it covers.
+pub fn suggestion_block(gitlab: bool, start: u32, end: u32, text: &str) -> String {
+    let head = if gitlab {
+        format!("```suggestion:-{}+0", end.saturating_sub(start))
+    } else {
+        "```suggestion".to_string()
+    };
+    format!("{head}\n{text}\n```")
+}
+
+/// `text` with lines `start..=end` (counting from 1) replaced by `new`, if
+/// they still read `expected` (`None` if they don't, or aren't there).
+pub fn replace_lines(
+    text: &str,
+    start: u32,
+    end: u32,
+    expected: &str,
+    new: &str,
+) -> Option<String> {
+    let crlf = text.contains("\r\n");
+    let ending = if crlf { "\r\n" } else { "\n" };
+    let trailing = text.ends_with('\n');
+    let mut lines: Vec<&str> = text.lines().collect();
+    let (from, to) = (
+        usize::try_from(start).ok()?.checked_sub(1)?,
+        usize::try_from(end).ok()?,
+    );
+    if from > to || to > lines.len() {
+        return None;
+    }
+    if lines[from..to].join("\n") != expected.replace("\r\n", "\n") {
+        return None;
+    }
+    let replacement: Vec<&str> = if new.is_empty() {
+        Vec::new()
+    } else {
+        new.lines().collect()
+    };
+    lines.splice(from..to, replacement);
+    let mut out = lines.join(ending);
+    if trailing {
+        out.push_str(ending);
+    }
+    Some(out)
 }
 
 /// A line in a diff: its number in the old file, the new one, or both
@@ -400,5 +528,53 @@ mod tests {
             .map(|l| l.text)
             .collect();
         assert_eq!(texts, ["old", "new", "more"]);
+    }
+
+    #[test]
+    fn finds_and_applies_suggestions() {
+        let body = "Better:\n```suggestion:-1+0\nlet a = 1;\nlet b = 2;\n```\nThanks";
+        assert_eq!(
+            parts(body),
+            [
+                Part::Text("Better:\n".into()),
+                Part::Suggestion {
+                    above: 1,
+                    below: 0,
+                    to: "let a = 1;\nlet b = 2;".into()
+                },
+                Part::Text("Thanks\n".into()),
+            ]
+        );
+        assert_eq!(
+            parts("```suggestion\n```"),
+            [Part::Suggestion {
+                above: 0,
+                below: 0,
+                to: String::new()
+            }]
+        );
+        let file = "one\r\ntwo\r\nthree\r\n";
+        assert_eq!(
+            replace_lines(file, 2, 3, "two\nthree", "2\n3\n4").as_deref(),
+            Some("one\r\n2\r\n3\r\n4\r\n")
+        );
+        assert_eq!(
+            replace_lines(file, 2, 2, "changed", "x"),
+            None,
+            "it changed since"
+        );
+        assert_eq!(
+            replace_lines(file, 3, 4, "three", "x"),
+            None,
+            "past the end"
+        );
+        assert_eq!(
+            new_lines("@@ -1,2 +1,2 @@\n a\n-b\n+c\n", 1, 2).as_deref(),
+            Some("a\nc")
+        );
+        assert_eq!(
+            suggestion_block(true, 4, 6, "x"),
+            "```suggestion:-2+0\nx\n```"
+        );
     }
 }
