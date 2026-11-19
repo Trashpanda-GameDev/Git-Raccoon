@@ -247,7 +247,7 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
                 } else if danger {
                     (theme::danger().gamma_multiply(0.8), egui::Color32::WHITE)
                 } else if i == 0 {
-                    (theme::accent(), theme::on_accent())
+                    (theme::accent_fill(), theme::on_accent())
                 } else {
                     (theme::bg_hover(), theme::text())
                 };

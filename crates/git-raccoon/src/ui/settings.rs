@@ -711,7 +711,7 @@ fn editor(
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let done = egui::Button::new(RichText::new("Done").color(theme::on_accent()).strong())
-                .fill(theme::accent());
+                .fill(theme::accent_fill());
             if ui.add(done).clicked() {
                 view.editing = None;
             }
@@ -797,7 +797,7 @@ fn preview(ui: &mut egui::Ui, c: &crate::themes::Colours) {
         c.panels.0,
     );
     let pill = egui::Rect::from_min_size(bar.min + egui::vec2(10.0, 8.0), egui::vec2(64.0, 18.0));
-    p.rect_filled(pill, 4, c.accent.0);
+    p.rect_filled(pill, 4, theme::fill_for(c.accent.0, c.on_accent.0));
     p.text(
         pill.center(),
         egui::Align2::CENTER_CENTER,

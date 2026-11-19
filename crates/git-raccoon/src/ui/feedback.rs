@@ -188,7 +188,7 @@ pub fn show(ctx: &egui::Context, form: &mut Form) -> Option<Action> {
                     .color(if ready { theme::on_accent() } else { theme::muted() })
                     .strong(),
             )
-            .fill(if ready { theme::accent() } else { theme::bg_hover() });
+            .fill(if ready { theme::accent_fill() } else { theme::bg_hover() });
             let send = ui.add_enabled(ready, send);
             if send.on_disabled_hover_text("Write a title first").clicked() {
                 action = Some(Action::Send);

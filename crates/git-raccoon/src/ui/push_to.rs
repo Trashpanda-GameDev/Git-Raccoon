@@ -50,7 +50,8 @@ pub fn show(ui: &mut egui::Ui, target: &mut PushTarget, refs: &Refs) -> Option<A
             }
             let label = RichText::new(format!("Push to {}/{name}", target.remote));
             let go = if problem.is_none() {
-                egui::Button::new(label.color(theme::on_accent()).strong()).fill(theme::accent())
+                egui::Button::new(label.color(theme::on_accent()).strong())
+                    .fill(theme::accent_fill())
             } else {
                 egui::Button::new(label.color(theme::muted())).fill(theme::bg_hover())
             };

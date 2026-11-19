@@ -316,7 +316,7 @@ pub fn show(
             } else {
                 let go =
                     egui::Button::new(RichText::new("Clone").color(theme::on_accent()).strong())
-                        .fill(theme::accent());
+                        .fill(theme::accent_fill());
                 if ui.add_enabled(ready && free, go).clicked() {
                     action = Some(Action::Clone);
                 }

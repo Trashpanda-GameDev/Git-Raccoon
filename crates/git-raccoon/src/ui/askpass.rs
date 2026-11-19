@@ -91,5 +91,6 @@ pub fn show(ctx: &egui::Context, prompt: &mut Prompt) -> Option<Option<String>> 
 }
 
 fn primary(label: &str) -> egui::Button<'_> {
-    egui::Button::new(RichText::new(label).color(theme::on_accent()).strong()).fill(theme::accent())
+    egui::Button::new(RichText::new(label).color(theme::on_accent()).strong())
+        .fill(theme::accent_fill())
 }

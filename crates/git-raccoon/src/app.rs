@@ -1759,7 +1759,7 @@ impl App {
                             let label = RichText::new(format!("Continue {noun}"));
                             let go = if ready {
                                 egui::Button::new(label.color(theme::on_accent()).strong())
-                                    .fill(theme::accent())
+                                    .fill(theme::accent_fill())
                             } else {
                                 egui::Button::new(label.color(theme::muted()))
                                     .fill(theme::bg_hover())

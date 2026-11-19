@@ -319,7 +319,7 @@ pub fn new_request(ctx: &egui::Context, f: &mut NewForm) -> Option<NewAction> {
                     .strong(),
             )
             .fill(if ready {
-                theme::accent()
+                theme::accent_fill()
             } else {
                 theme::bg_hover()
             });

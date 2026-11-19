@@ -50,7 +50,7 @@ pub fn show(ctx: &egui::Context, report: &Report, more: usize) -> Option<Action>
             let send = egui::Button::new(
                 RichText::new("Report on GitHub…").color(theme::on_accent()).strong(),
             )
-            .fill(theme::accent());
+            .fill(theme::accent_fill());
             if ui.add(send).clicked() {
                 action = Some(Action::Send);
             }

@@ -60,7 +60,7 @@ pub fn show(
                             .fill(theme::danger().gamma_multiply(0.8))
                     } else {
                         egui::Button::new(label.color(theme::on_accent()).strong())
-                            .fill(theme::accent())
+                            .fill(theme::accent_fill())
                     };
                     let tip = if !changed {
                         "Change something first"
@@ -302,6 +302,6 @@ fn drag_label(ctx: &egui::Context, planner: &Planner) {
     let galley = painter.layout_no_wrap(r.summary.clone(), theme::body(12.0), theme::on_accent());
     let rect = egui::Rect::from_min_size(pos + egui::vec2(14.0, 10.0), galley.size())
         .expand2(egui::vec2(8.0, 4.0));
-    painter.rect_filled(rect, 6, theme::accent());
+    painter.rect_filled(rect, 6, theme::accent_fill());
     painter.galley(rect.min + egui::vec2(8.0, 4.0), galley, theme::on_accent());
 }

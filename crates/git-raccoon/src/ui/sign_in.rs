@@ -288,7 +288,7 @@ pub fn show(ctx: &egui::Context, s: &mut SignIn) -> Option<Action> {
                     .color(if ready { theme::on_accent() } else { theme::muted() })
                     .strong(),
             )
-            .fill(if ready { theme::accent() } else { theme::bg_hover() });
+            .fill(if ready { theme::accent_fill() } else { theme::bg_hover() });
             if ui.add_enabled(ready, go).clicked() {
                 action = Some(if browser.is_some() {
                     Action::Browser

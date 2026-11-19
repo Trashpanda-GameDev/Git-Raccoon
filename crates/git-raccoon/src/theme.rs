@@ -774,6 +774,31 @@ pub fn on_accent() -> Color32 {
     palette().on_accent
 }
 
+/// The accent as a fill with text on it (buttons): darkened (or, under
+/// dark text, lightened) just enough that the text reads, at 4.5:1. The
+/// plain accent stays for lines, links and outlines, which need to stand
+/// out from the background instead.
+pub fn accent_fill() -> Color32 {
+    fill_for(accent(), on_accent())
+}
+
+/// `fill`, moved away from `text`'s lightness until `text` reads on it.
+pub fn fill_for(fill: Color32, text: Color32) -> Color32 {
+    const READABLE: f32 = 4.5;
+    if contrast(text, fill) >= READABLE {
+        return fill;
+    }
+    let away = if luminance(text) > 0.5 {
+        Color32::BLACK
+    } else {
+        Color32::WHITE
+    };
+    (1..=40_u8)
+        .map(|step| fill.lerp_to_gamma(away, f32::from(step) / 100.0))
+        .find(|c| contrast(text, *c) >= READABLE)
+        .unwrap_or(away)
+}
+
 pub fn danger() -> Color32 {
     palette().danger
 }
@@ -951,6 +976,26 @@ pub fn set_palette(ctx: &egui::Context, colours: Palette) {
 #[cfg(test)]
 mod contrast_tests {
     use super::*;
+
+    #[test]
+    fn button_text_reads_in_every_look() {
+        for family in Family::ALL {
+            for light in [false, true] {
+                let p = family.look(light).palette();
+                let fill = fill_for(p.accent, p.on_accent);
+                let c = contrast(p.on_accent, fill);
+                assert!(c >= 4.5, "{} {light}: {c:.2}", family.name());
+                // Only moved where it had to be, and not far.
+                if contrast(p.on_accent, p.accent) >= 4.5 {
+                    assert_eq!(fill, p.accent, "{} {light}", family.name());
+                }
+            }
+        }
+        // Raccoon's orange buttons, darker: about #b8502f.
+        let p = Family::Raccoon.look(false).palette();
+        let fill = fill_for(p.accent, p.on_accent);
+        assert!(fill.r() < p.accent.r() && fill.r() > 0xa8, "{fill:?}");
+    }
 
     #[test]
     fn label_text_reads_on_every_lane_colour() {

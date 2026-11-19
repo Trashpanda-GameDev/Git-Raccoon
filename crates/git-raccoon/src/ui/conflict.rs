@@ -242,5 +242,6 @@ fn primary_if(label: &str, enabled: bool) -> egui::Button<'_> {
 }
 
 fn primary(label: &str) -> egui::Button<'_> {
-    egui::Button::new(RichText::new(label).color(theme::on_accent()).strong()).fill(theme::accent())
+    egui::Button::new(RichText::new(label).color(theme::on_accent()).strong())
+        .fill(theme::accent_fill())
 }

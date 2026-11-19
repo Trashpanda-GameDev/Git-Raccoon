@@ -185,6 +185,8 @@ impl Colours {
 
     /// Where text would be hard to read: what, how well it contrasts, and
     /// the colour that would fix it (the text's, against its background).
+    /// (Text on the accent isn't among them: buttons darken or lighten the
+    /// accent themselves until their text reads.)
     pub fn problems(&self) -> Vec<Problem> {
         let pairs = [
             (Field::Text, Field::Background, "Text on the background"),
@@ -199,7 +201,6 @@ impl Colours {
                 Field::Panels,
                 "Secondary text on panels",
             ),
-            (Field::OnAccent, Field::Accent, "Text on the accent"),
         ];
         pairs
             .into_iter()
@@ -400,9 +401,11 @@ mod tests {
     #[test]
     fn finds_hard_to_read_text_and_fixes_it() {
         let mut c = CustomTheme::starting_from("Mine", ThemeChoice::Raccoon).dark;
-        // Raccoon's one known weak spot: its buttons' cream on orange.
-        let known: Vec<&str> = c.problems().iter().map(|p| p.what).collect();
-        assert_eq!(known, ["Text on the accent"]);
+        assert!(
+            c.problems().is_empty(),
+            "the built-in look reads well: {:?}",
+            c.problems()
+        );
         c.secondary_text = Hex(Color32::from_rgb(0x55, 0x52, 0x50));
         let problems = c.problems();
         assert!(

@@ -826,7 +826,7 @@ pub fn drag_label(ctx: &egui::Context) {
     );
     let rect = Rect::from_min_size(pos + egui::vec2(14.0, 10.0), galley.size())
         .expand2(egui::vec2(8.0, 4.0));
-    painter.rect_filled(rect, 6, theme::accent());
+    painter.rect_filled(rect, 6, theme::accent_fill());
     painter.galley(rect.min + egui::vec2(8.0, 4.0), galley, theme::on_accent());
 }
 

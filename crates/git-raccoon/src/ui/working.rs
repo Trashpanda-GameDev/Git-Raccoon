@@ -747,7 +747,7 @@ fn commit_box(
             .strong(),
     )
     .fill(if can_commit {
-        theme::accent()
+        theme::accent_fill()
     } else {
         theme::bg_hover()
     });

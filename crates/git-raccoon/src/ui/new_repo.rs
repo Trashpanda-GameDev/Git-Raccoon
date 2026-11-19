@@ -333,7 +333,7 @@ pub fn show(ctx: &egui::Context, form: &mut Form, accounts: &[Account]) -> Optio
                 "Create repository"
             };
             let go = egui::Button::new(RichText::new(label).color(theme::on_accent()).strong())
-                .fill(theme::accent());
+                .fill(theme::accent_fill());
             if ui.add_enabled(problem.is_none(), go).clicked() {
                 action = Some(Action::Create);
             }

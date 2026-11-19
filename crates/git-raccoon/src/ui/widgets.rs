@@ -208,7 +208,7 @@ pub fn sideways_scrollbar(
 pub fn primary_button(ui: &mut Ui, label: &str) -> Response {
     ui.add(
         egui::Button::new(RichText::new(label).color(theme::on_accent()).strong())
-            .fill(theme::accent())
+            .fill(theme::accent_fill())
             .min_size(egui::vec2(0.0, 32.0)),
     )
 }

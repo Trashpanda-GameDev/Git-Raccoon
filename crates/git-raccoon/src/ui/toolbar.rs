@@ -238,7 +238,7 @@ pub fn show(
                         .size(12.0)
                         .color(theme::on_accent()),
                 )
-                .fill(theme::accent());
+                .fill(theme::accent_fill());
                 if ui
                     .add(button)
                     .on_hover_text("A new version is downloaded. Your tabs and settings are kept.")

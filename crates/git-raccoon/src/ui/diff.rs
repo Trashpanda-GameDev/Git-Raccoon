@@ -135,7 +135,7 @@ pub fn show(
                         let stage = egui::Button::new(
                             RichText::new(label).color(theme::on_accent()).strong(),
                         )
-                        .fill(theme::accent());
+                        .fill(theme::accent_fill());
                         if ui.add_enabled(!st.busy, stage).clicked() {
                             action = Some(Action::StagePicked);
                         }
