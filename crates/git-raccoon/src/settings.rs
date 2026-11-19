@@ -46,6 +46,16 @@ pub enum LineStyle {
     Rounded,
 }
 
+/// How the graph's lines between lanes look, each kind its own way.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BranchLines {
+    /// From a branch's first commit into the commit it started from.
+    pub starts: LineStyle,
+    /// From a merge commit out to the branch it merges.
+    pub merges: LineStyle,
+}
+
 impl LineStyle {
     pub const ALL: [LineStyle; 2] = [LineStyle::Curved, LineStyle::Rounded];
 
@@ -136,8 +146,8 @@ pub struct Settings {
     pub accounts: Vec<crate::forge::Account>,
     /// Changed files shown as a tree of folders, rather than by path.
     pub file_tree: bool,
-    /// How the graph's lines bend where branches fork and merge.
-    pub branch_lines: LineStyle,
+    /// How the graph's lines look where branches start and are merged.
+    pub branch_lines: BranchLines,
     /// Themes made here (or imported).
     pub themes: Vec<crate::themes::CustomTheme>,
     /// The one in use, by name; `None` for the built-in look in `theme`.
@@ -323,7 +333,7 @@ impl Default for Settings {
             terminal: String::new(),
             columns: Column::ALL.to_vec(),
             themes: Vec::new(),
-            branch_lines: LineStyle::default(),
+            branch_lines: BranchLines::default(),
             custom_theme: None,
             column_widths: Vec::new(),
             defaults: DEFAULTS,

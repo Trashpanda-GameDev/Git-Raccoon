@@ -150,9 +150,15 @@ const ROWS: &[Row] = &[
     },
     Row {
         section: Section::Appearance,
-        name: "Branch lines",
-        hint: "How the graph's lines bend where branches fork and merge.",
-        words: "graph curves curved rounded lines branches bend",
+        name: "Where a branch starts",
+        hint: "The line from a branch's first commit into the commit it started from.",
+        words: "graph branch lines curves curved rounded start fork out",
+    },
+    Row {
+        section: Section::Appearance,
+        name: "Where a branch is merged",
+        hint: "The line from a merge commit out to the branch it merges.",
+        words: "graph branch lines curves curved rounded merge in",
     },
     Row {
         section: Section::Appearance,
@@ -870,64 +876,62 @@ fn preview(ui: &mut egui::Ui, c: &crate::themes::Colours) {
     }
 }
 
-/// A choice of how branch lines bend: a fork and a merge drawn that way,
-/// with its name.
-fn line_tile(ui: &mut egui::Ui, style: LineStyle, chosen: bool) -> egui::Response {
+/// A choice of how a line looks: a branch starting (or, for `merge`, a
+/// merge) drawn that way, with its name.
+fn line_tile(ui: &mut egui::Ui, style: LineStyle, merge: bool, chosen: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(96.0, 76.0), egui::Sense::click());
-    let name = style.name();
+    let kind = if merge { "merges" } else { "branch starts" };
+    let name = format!("{} {kind}", style.name());
     response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, chosen, name)
+        egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, chosen, &name)
     });
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 6, theme::bg());
-    // Two lanes: one forks off and merges back.
     let (left, right) = (rect.left() + 34.0, rect.left() + 62.0);
-    let (top, fork, join, bottom) = (
-        rect.top() + 8.0,
-        rect.top() + 18.0,
-        rect.top() + 40.0,
-        rect.top() + 52.0,
+    let (top, upper, lower, bottom) = (
+        rect.top() + 6.0,
+        rect.top() + 16.0,
+        rect.top() + 42.0,
+        rect.top() + 54.0,
     );
     let main = egui::Stroke::new(2.0, theme::lane_color(0));
     let side = egui::Stroke::new(2.0, theme::lane_color(1));
     painter.line_segment([egui::pos2(left, top), egui::pos2(left, bottom)], main);
-    crate::ui::history::branch_line(
-        &painter,
-        egui::pos2(left, fork),
-        egui::pos2(right, fork + 11.0),
-        style,
-        side,
-        false,
-        true,
-    );
-    crate::ui::history::branch_line(
-        &painter,
-        egui::pos2(right, join - 11.0),
-        egui::pos2(left, join),
-        style,
-        side,
-        false,
-        false,
-    );
-    painter.line_segment(
-        [
-            egui::pos2(right, fork + 11.0),
-            egui::pos2(right, join - 11.0),
-        ],
-        side,
-    );
-    for (x, y, colour) in [
-        (left, fork, main.color),
-        (right, fork + 11.0, side.color),
-        (left, join, main.color),
-    ] {
+    let dots = if merge {
+        // A merge on the main line, and the branch it brings in.
+        painter.line_segment([egui::pos2(right, lower), egui::pos2(right, bottom)], side);
+        crate::ui::history::branch_line(
+            &painter,
+            egui::pos2(left, upper),
+            egui::pos2(right, lower),
+            style,
+            side,
+            false,
+            true,
+        );
+        [(left, upper, main.color), (right, lower, side.color)]
+    } else {
+        // A branch's first commit, and the commit it started from.
+        painter.line_segment([egui::pos2(right, top), egui::pos2(right, upper)], side);
+        crate::ui::history::branch_line(
+            &painter,
+            egui::pos2(right, upper),
+            egui::pos2(left, lower),
+            style,
+            side,
+            false,
+            false,
+        );
+        [(right, upper, side.color), (left, lower, main.color)]
+    };
+    for (x, y, colour) in dots {
         painter.circle_filled(egui::pos2(x, y), 3.5, theme::bg());
         painter.circle_stroke(egui::pos2(x, y), 3.5, egui::Stroke::new(2.0, colour));
     }
     painter.text(
         egui::pos2(rect.center().x, rect.bottom() - 11.0),
         egui::Align2::CENTER_CENTER,
-        name,
+        style.name(),
         theme::body(12.0),
         theme::text(),
     );
@@ -1130,11 +1134,22 @@ fn control(
                 });
             your_themes(ui, settings, view, action);
         }
-        "Branch lines" => {
+        "Where a branch starts" => {
             ui.horizontal(|ui| {
                 for style in LineStyle::ALL {
-                    if line_tile(ui, style, settings.branch_lines == style).clicked() {
-                        settings.branch_lines = style;
+                    let chosen = settings.branch_lines.starts == style;
+                    if line_tile(ui, style, false, chosen).clicked() {
+                        settings.branch_lines.starts = style;
+                    }
+                }
+            });
+        }
+        "Where a branch is merged" => {
+            ui.horizontal(|ui| {
+                for style in LineStyle::ALL {
+                    let chosen = settings.branch_lines.merges == style;
+                    if line_tile(ui, style, true, chosen).clicked() {
+                        settings.branch_lines.merges = style;
                     }
                 }
             });

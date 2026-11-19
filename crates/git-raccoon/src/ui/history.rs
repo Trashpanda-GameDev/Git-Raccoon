@@ -1,6 +1,6 @@
 //! The commit list with its graph. Only the rows on screen are drawn.
 
-use crate::settings::{Column, LineStyle};
+use crate::settings::{BranchLines, Column, LineStyle};
 use eframe::egui::{self, Color32, Pos2, Rect, RichText, Sense, Stroke, epaint::CubicBezierShape};
 use egui_phosphor::regular as icon;
 use git_raccoon_core::repo::{GraphCommit, RefKind, RefLabel};
@@ -689,7 +689,7 @@ pub fn show(
     now: i64,
     order: &mut Vec<Column>,
     widths: &mut Vec<(Column, f32)>,
-    lines: LineStyle,
+    lines: BranchLines,
 ) -> Option<Click> {
     let total = repo.history.total();
     let width = ui.available_width();
@@ -910,7 +910,8 @@ pub fn show(
                 // A merge leaves its commit; other lines come into the
                 // commit below (for the rounded style).
                 let merge = usize::from(e.from) == c.column && e.lane != e.from;
-                branch_line(&graph, a, b, lines, stroke, dotted, merge);
+                let style = if merge { lines.merges } else { lines.starts };
+                branch_line(&graph, a, b, style, stroke, dotted, merge);
             }
         }
         if wip

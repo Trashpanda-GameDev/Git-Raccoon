@@ -4977,33 +4977,44 @@ fn makes_edits_and_deletes_a_custom_theme() {
 #[test]
 fn draws_branch_lines_the_chosen_way() {
     use egui::accesskit::Role;
-    use git_raccoon::settings::LineStyle;
+    use git_raccoon::settings::{BranchLines, LineStyle};
     let sample = Sample::build();
     let mut h = harness(Settings::default());
     open(&mut h, sample.path());
-    assert_eq!(h.state().settings().branch_lines, LineStyle::Curved);
+    assert_eq!(h.state().settings().branch_lines, BranchLines::default());
+    assert_eq!(h.state().settings().branch_lines.starts, LineStyle::Curved);
     press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
-    for (style, name) in [
-        (LineStyle::Rounded, "Rounded"),
-        (LineStyle::Curved, "Curved"),
-    ] {
+    let pick = |h: &mut Harness<'_, App>, name: &str| {
         h.get_by_role_and_label(Role::RadioButton, name)
             .scroll_to_me();
         h.run_ok();
         h.get_by_role_and_label(Role::RadioButton, name).click();
         h.run_ok();
-        assert_eq!(h.state().settings().branch_lines, style);
-        if style == LineStyle::Rounded {
-            screenshot(&mut h, "67-branch-lines-setting");
+    };
+    // Rounded merges, curved branch starts: each its own way.
+    pick(&mut h, "Rounded merges");
+    assert_eq!(
+        h.state().settings().branch_lines,
+        BranchLines {
+            starts: LineStyle::Curved,
+            merges: LineStyle::Rounded
         }
-        h.get_by_label("Close settings").click();
-        settle(&mut h);
-        screenshot(&mut h, &format!("68-branch-lines-{}", name.to_lowercase()));
-        press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
-    }
+    );
+    screenshot(&mut h, "67-branch-lines-setting");
+    h.get_by_label("Close settings").click();
+    settle(&mut h);
+    screenshot(&mut h, "68-branch-lines-rounded-merges");
+    press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    pick(&mut h, "Rounded branch starts");
+    assert_eq!(h.state().settings().branch_lines.starts, LineStyle::Rounded);
+    h.get_by_label("Close settings").click();
+    settle(&mut h);
+    screenshot(&mut h, "68-branch-lines-rounded-both");
     // Found by what people call them, too.
+    press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
     type_into(&mut h, "Search settings", "curves");
-    h.get_by_label("Branch lines");
+    h.get_by_label("Where a branch starts");
+    h.get_by_label("Where a branch is merged");
 }
 
 #[test]

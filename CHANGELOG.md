@@ -5,7 +5,7 @@ release page). Newest first; a version's heading is just its number.
 
 ## 0.5.14
 
-- **Choose how branch lines bend** in the graph, under Settings › Appearance › Branch lines: **Curved** (as before), or **Rounded**, where a merge's line leaves the merge commit sideways along its row, and a branch's line comes into the commit it started from sideways along that commit's row, turning into the other lane with a rounded corner.
+- **Choose how the graph's lines look** where a branch starts and where it's merged, each on its own (Settings › Appearance): **Curved**, as before, or **Rounded**, where the line runs along the commit's row and turns into the other lane with a rounded corner (a merge's line leaves the merge commit sideways; a branch's line comes into the commit it started from sideways).
 - **Make your own themes**: under Settings › Appearance, **New theme** starts one from the look in use, and the editor sets each colour (surfaces, text, accent, changes and the graph's lines) for its dark and light versions, by picker or by typing `#rrggbb`. The app changes as you edit, a preview shows the other version, and text that would be hard to read is pointed out with a fix in one click. Themes can be duplicated, exported to a file and imported.
 
 ## 0.5.13
