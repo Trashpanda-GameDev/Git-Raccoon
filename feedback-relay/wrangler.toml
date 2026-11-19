@@ -7,9 +7,10 @@ compatibility_date = "2024-09-23"
 # Where issues go, and where screenshots are kept.
 ISSUES_REPO = "Trashpanda-GameDev/Git-Raccoon"
 IMAGES_REPO = "Trashpanda-GameDev/git-raccoon-feedback-images"
-# The GitHub App's id and its installation's id: fill these in.
+# The GitHub App's id and its installation's id (on Git-Raccoon and
+# git-raccoon-feedback-images).
 APP_ID = "5839685"
-INSTALLATION_ID = ""
+INSTALLATION_ID = "183832713"
 
 # The App's private key is a secret, not a variable:
 #   npx wrangler@3 secret put PRIVATE_KEY < git-raccoon-feedback.private-key.pem
