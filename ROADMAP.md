@@ -90,7 +90,7 @@ The operations people open a GUI for.
 
 ### Profiles: who you commit as, and with which accounts
 
-Mockup and clickable prototype: [Git Raccoon profiles](https://claude.ai/artifact/EHXRYoBeVSrxSwNXLSaveU).
+Mockup and clickable prototype: [Git Raccoon profiles](https://claude.ai/artifact/EHXRYoBeVSrxSwNXLSaveU). Build work: the [Profiles milestone](https://github.com/Trashpanda-GameDev/Git-Raccoon/milestone/1).
 
 - [ ] **A profile** has a name, a colour, the name and email to commit as, and the forge accounts to use (at most one per forge, so it's always clear which account pushes).
 - [ ] **Accounts aren't owned by a profile.** They're signed in once, under Settings › Accounts, and any number of profiles can use the same one (one GitHub account with a work and a personal email is the common case). Each profile's editor says which other profiles use an account; signing out of one says which profiles lose it.
