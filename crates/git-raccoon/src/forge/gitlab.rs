@@ -3,6 +3,10 @@
 use serde_json::{Value, json};
 
 use super::http::{self, Auth, encode, text};
+use super::review::{
+    Anchor, Change, Check, Comment, Commit, DiffRefs, Draft, Event, File, Finish, Line, Merge,
+    Method, Outcome, Overview, State, Thread, Verdict,
+};
 use super::{Checks, Issue, NewRequest, Request, Review, Session, timestamp};
 
 const FORGE: &str = "GitLab";
@@ -80,6 +84,338 @@ pub fn details(s: &Session, number: u64) -> Result<Request, String> {
         Review::Approved
     };
     Ok(r)
+}
+
+fn note(n: &Value) -> Comment {
+    Comment {
+        id: n["id"].as_u64().unwrap_or_default().to_string(),
+        author: text(&n["author"], "username"),
+        body: text(n, "body"),
+        created: timestamp(n["created_at"].as_str().unwrap_or_default()),
+    }
+}
+
+fn line_of(old: &Value, new: &Value) -> Option<Line> {
+    let line = Line {
+        old: old.as_u64().and_then(|n| u32::try_from(n).ok()),
+        new: new.as_u64().and_then(|n| u32::try_from(n).ok()),
+    };
+    (line.old.is_some() || line.new.is_some()).then_some(line)
+}
+
+fn anchor(p: &Value) -> Option<Anchor> {
+    if p.is_null() {
+        return None;
+    }
+    let line = line_of(&p["old_line"], &p["new_line"])?;
+    let start = line_of(
+        &p["line_range"]["start"]["old_line"],
+        &p["line_range"]["start"]["new_line"],
+    )
+    .filter(|s| *s != line);
+    let path = text(p, "new_path");
+    let old = text(p, "old_path");
+    Some(Anchor {
+        old_path: (!old.is_empty() && old != path).then_some(old),
+        path,
+        line,
+        start,
+    })
+}
+
+/// How a pipeline job went.
+fn outcome(status: &str) -> Outcome {
+    match status {
+        "success" | "skipped" | "manual" => Outcome::Passed,
+        "failed" | "canceled" => Outcome::Failed,
+        _ => Outcome::Running,
+    }
+}
+
+/// Why GitLab won't merge it, from its `detailed_merge_status`.
+fn blocked(status: &str, target: &str) -> Option<String> {
+    Some(match status {
+        "mergeable" | "checking" | "unchecked" | "preparing" | "" => return None,
+        "not_approved" => "It needs approvals first".into(),
+        "ci_must_pass" => "Its pipeline has to pass first".into(),
+        "ci_still_running" => "Its pipeline is still running".into(),
+        "conflict" | "broken_status" => format!("It has conflicts with {target}"),
+        "discussions_not_resolved" => "Its threads have to be resolved first".into(),
+        "draft_status" => "It's a draft: mark it ready first".into(),
+        "need_rebase" => format!("It has to be rebased onto {target} first"),
+        "not_open" => "It isn't open".into(),
+        "blocked_status" => "Another merge request has to be merged first".into(),
+        "requested_changes" => "A reviewer asked for changes".into(),
+        other => format!("GitLab won't merge it yet ({})", other.replace('_', " ")),
+    })
+}
+
+/// Everything for a request's view.
+pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
+    let v = get(s, &format!("/merge_requests/{number}"))?;
+    let mut r = request(&v);
+    let approvals = get(s, &format!("/merge_requests/{number}/approvals"))?;
+    r.reviews = approvals["approved_by"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|a| (text(&a["user"], "username"), Review::Approved))
+        .collect();
+    r.review = if r.reviews.is_empty() {
+        Review::None
+    } else {
+        Review::Approved
+    };
+    let mut o = Overview {
+        state: match v["state"].as_str() {
+            Some("merged") => State::Merged,
+            Some("closed" | "locked") => State::Closed,
+            _ => State::Open,
+        },
+        refs: DiffRefs {
+            base: text(&v["diff_refs"], "base_sha"),
+            start: text(&v["diff_refs"], "start_sha"),
+            head: text(&v["diff_refs"], "head_sha"),
+        },
+        ..Overview::default()
+    };
+    // The pipeline's jobs are its checks.
+    if let Some(id) = v["head_pipeline"]["id"].as_u64() {
+        let jobs = get(s, &format!("/pipelines/{id}/jobs?per_page=100"))?;
+        o.checks = jobs
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|j| Check {
+                name: text(j, "name"),
+                outcome: outcome(j["status"].as_str().unwrap_or_default()),
+                url: text(j, "web_url"),
+            })
+            .collect();
+    }
+    for c in &o.checks {
+        match c.outcome {
+            Outcome::Passed => r.checks.passed += 1,
+            Outcome::Failed => r.checks.failed += 1,
+            Outcome::Running => r.checks.pending += 1,
+        }
+    }
+    let diffs = get(s, &format!("/merge_requests/{number}/diffs?per_page=100"))?;
+    o.files = diffs
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|f| {
+            let path = text(f, "new_path");
+            let old = text(f, "old_path");
+            File {
+                change: if f["new_file"].as_bool().unwrap_or(false) {
+                    Change::Added
+                } else if f["deleted_file"].as_bool().unwrap_or(false) {
+                    Change::Deleted
+                } else if f["renamed_file"].as_bool().unwrap_or(false) {
+                    Change::Renamed
+                } else {
+                    Change::Modified
+                },
+                old_path: (old != path).then_some(old),
+                path,
+                patch: text(f, "diff"),
+            }
+        })
+        .collect();
+    let commits = get(s, &format!("/merge_requests/{number}/commits?per_page=100"))?;
+    o.commits = commits
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|c| Commit {
+            sha: text(c, "id"),
+            summary: text(c, "title"),
+            author: text(c, "author_name"),
+            created: timestamp(c["created_at"].as_str().unwrap_or_default()),
+        })
+        .rev() // GitLab lists them newest first.
+        .collect();
+    let discussions = get(
+        s,
+        &format!("/merge_requests/{number}/discussions?per_page=100"),
+    )?;
+    for d in discussions.as_array().into_iter().flatten() {
+        let notes: Vec<&Value> = d["notes"].as_array().into_iter().flatten().collect();
+        let Some(first) = notes.first() else { continue };
+        if first["system"].as_bool().unwrap_or(false) {
+            // Of what GitLab notes itself, approvals belong in the conversation.
+            if text(first, "body").starts_with("approved this merge request") {
+                o.events.push(Event::Review {
+                    author: text(&first["author"], "username"),
+                    verdict: Verdict::Approved,
+                    body: String::new(),
+                    created: timestamp(first["created_at"].as_str().unwrap_or_default()),
+                });
+            }
+            continue;
+        }
+        if d["individual_note"].as_bool().unwrap_or(false) && first["position"].is_null() {
+            o.events.push(Event::Comment(note(first)));
+            continue;
+        }
+        let id = text(d, "id");
+        o.threads.push(Thread {
+            at: anchor(&first["position"]),
+            resolved: first["resolved"].as_bool().unwrap_or(false),
+            resolvable: first["resolvable"].as_bool().unwrap_or(false),
+            outdated: false,
+            hunk: String::new(),
+            reply: id.clone(),
+            id,
+            comments: notes.iter().map(|n| note(n)).collect(),
+        });
+    }
+    o.events.extend((0..o.threads.len()).map(Event::Thread));
+    o.sort();
+    let project = get(s, "")?;
+    o.merge.methods = match project["squash_option"].as_str() {
+        Some("never") => vec![Method::Merge],
+        Some("always") => vec![Method::Squash],
+        Some("default_on") => vec![Method::Squash, Method::Merge],
+        _ => vec![Method::Merge, Method::Squash],
+    };
+    o.merge.can_delete_branch = !r.from_fork;
+    o.merge.blocked = match o.state {
+        State::Merged => Some("It's merged already".into()),
+        State::Closed => Some("It's closed".into()),
+        State::Open => blocked(
+            v["detailed_merge_status"].as_str().unwrap_or_default(),
+            &r.target,
+        ),
+    };
+    Ok((r, o))
+}
+
+/// GitLab's name for a line of a file's diff.
+fn line_code(path: &str, line: &Line) -> String {
+    use sha1::{Digest as _, Sha1};
+    let hash: String = Sha1::digest(path.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    format!("{hash}_{}_{}", line.old.unwrap_or(0), line.new.unwrap_or(0))
+}
+
+fn position(at: &Anchor, refs: &DiffRefs) -> Value {
+    let old_path = at.old_path.clone().unwrap_or_else(|| at.path.clone());
+    let mut p = json!({
+        "position_type": "text",
+        "base_sha": refs.base,
+        "start_sha": refs.start,
+        "head_sha": refs.head,
+        "old_path": old_path,
+        "new_path": at.path,
+    });
+    if let Some(n) = at.line.old {
+        p["old_line"] = json!(n);
+    }
+    if let Some(n) = at.line.new {
+        p["new_line"] = json!(n);
+    }
+    if let Some(start) = &at.start {
+        let end = |l: &Line| {
+            json!({
+                "line_code": line_code(&at.path, l),
+                "type": if l.new.is_some() && l.old.is_none() { "new" } else if l.new.is_none() { "old" } else { "" },
+                "old_line": l.old,
+                "new_line": l.new,
+            })
+        };
+        p["line_range"] = json!({"start": end(start), "end": end(&at.line)});
+    }
+    p
+}
+
+/// Sends a review: each draft as a GitLab draft note, all published at
+/// once, then the summary and the approval.
+pub fn submit(
+    s: &Session,
+    number: u64,
+    refs: &DiffRefs,
+    drafts: &[Draft],
+    summary: &str,
+    finish: Finish,
+) -> Result<(), String> {
+    let auth = Auth::Bearer(&s.token);
+    let base = format!("{}/merge_requests/{number}", api(s));
+    for d in drafts {
+        let mut body = json!({"note": d.body});
+        if let Some(to) = &d.reply_to {
+            body["in_reply_to_discussion_id"] = json!(to);
+        } else if let Some(at) = &d.at {
+            body["position"] = position(at, refs);
+        }
+        http::post(FORGE, &format!("{base}/draft_notes"), &auth, &body)?;
+    }
+    if !drafts.is_empty() {
+        http::post(
+            FORGE,
+            &format!("{base}/draft_notes/bulk_publish"),
+            &auth,
+            &json!({}),
+        )?;
+    }
+    if !summary.trim().is_empty() {
+        comment(s, number, summary)?;
+    }
+    if finish == Finish::Approve {
+        http::post(FORGE, &format!("{base}/approve"), &auth, &json!({}))?;
+    }
+    Ok(())
+}
+
+/// A comment on the whole request.
+pub fn comment(s: &Session, number: u64, body: &str) -> Result<(), String> {
+    http::post(
+        FORGE,
+        &format!("{}/merge_requests/{number}/notes", api(s)),
+        &Auth::Bearer(&s.token),
+        &json!({"body": body}),
+    )?;
+    Ok(())
+}
+
+pub fn resolve(s: &Session, number: u64, thread: &str, resolved: bool) -> Result<(), String> {
+    http::put(
+        FORGE,
+        &format!(
+            "{}/merge_requests/{number}/discussions/{thread}?resolved={resolved}",
+            api(s)
+        ),
+        &Auth::Bearer(&s.token),
+        &json!({}),
+    )?;
+    Ok(())
+}
+
+pub fn merge(s: &Session, r: &Request, how: &Merge) -> Result<(), String> {
+    let squash = how.method == Method::Squash;
+    let mut body = json!({
+        "squash": squash,
+        "should_remove_source_branch": how.delete_branch && !r.from_fork,
+    });
+    if !how.message.trim().is_empty() {
+        let key = if squash {
+            "squash_commit_message"
+        } else {
+            "merge_commit_message"
+        };
+        body[key] = json!(how.message.trim());
+    }
+    http::put(
+        FORGE,
+        &format!("{}/merge_requests/{}/merge", api(s), r.number),
+        &Auth::Bearer(&s.token),
+        &body,
+    )?;
+    Ok(())
 }
 
 pub fn issues(s: &Session) -> Result<Vec<Issue>, String> {
@@ -226,5 +562,109 @@ mod tests {
         let sent: Value = serde_json::from_str(&seen[1].2).unwrap();
         assert_eq!(sent["title"], "Draft: Pipeline cache");
         assert_eq!(sent["source_branch"], "cache");
+    }
+
+    #[test]
+    fn views_a_merge_request_and_sends_a_review() {
+        let mr = MR.replace(
+            r#""head_pipeline": {"status": "running"}"#,
+            r#""head_pipeline": {"id": 99, "status": "failed"}, "state": "opened",
+               "detailed_merge_status": "not_approved",
+               "diff_refs": {"base_sha": "b", "start_sha": "s", "head_sha": "h"}"#,
+        );
+        let (base, seen) = mock::serve(vec![
+            (200, mr),
+            (200, r#"{"approved_by": []}"#.into()),
+            (200, r#"[{"name":"test","status":"failed","web_url":"j"}]"#.into()),
+            (
+                200,
+                r#"[{"old_path":"a.rs","new_path":"a.rs","diff":"@@ -1 +1 @@\n-x\n+y\n"}]"#.into(),
+            ),
+            (
+                200,
+                r#"[{"id":"c2","title":"Second","author_name":"Ada","created_at":"2026-11-02T00:00:00Z"},
+                    {"id":"c1","title":"First","author_name":"Ada","created_at":"2026-11-01T00:00:00Z"}]"#
+                    .into(),
+            ),
+            (
+                200,
+                r#"[{"id":"d1","individual_note":true,"notes":[{"id":1,"body":"Hi","author":{"username":"milo"},"created_at":"2026-11-02T00:00:00Z","system":false}]},
+                    {"id":"d2","individual_note":true,"notes":[{"id":2,"body":"approved this merge request","author":{"username":"rocky"},"created_at":"2026-11-03T00:00:00Z","system":true}]},
+                    {"id":"d3","individual_note":false,"notes":[{"id":3,"body":"Why y?","author":{"username":"milo"},"created_at":"2026-11-04T00:00:00Z","system":false,
+                        "resolvable":true,"resolved":true,
+                        "position":{"old_path":"a.rs","new_path":"a.rs","old_line":null,"new_line":1}}]}]"#
+                    .into(),
+            ),
+            (200, r#"{"squash_option":"default_off"}"#.into()),
+            // The review: two drafts, publishing, the summary, approving.
+            (201, "{}".into()),
+            (201, "{}".into()),
+            (204, String::new()),
+            (201, "{}".into()),
+            (201, "{}".into()),
+        ]);
+        let s = session(&base);
+        let (r, o) = s.view(12).unwrap();
+        assert_eq!(r.checks.failed, 1);
+        assert_eq!(o.files[0].change, Change::Modified);
+        assert_eq!(
+            o.commits
+                .iter()
+                .map(|c| c.summary.as_str())
+                .collect::<Vec<_>>(),
+            ["First", "Second"]
+        );
+        assert_eq!(o.threads.len(), 1);
+        assert!(o.threads[0].resolved);
+        assert_eq!(o.threads[0].at.as_ref().unwrap().line.new, Some(1));
+        assert_eq!(o.unresolved(), 0);
+        assert_eq!(o.events.len(), 3);
+        assert!(
+            matches!(&o.events[1], Event::Review { verdict: Verdict::Approved, author, .. } if author == "rocky")
+        );
+        assert_eq!(o.merge.methods, [Method::Merge, Method::Squash]);
+        assert_eq!(o.merge.blocked.as_deref(), Some("It needs approvals first"));
+
+        let drafts = [
+            Draft {
+                at: Some(Anchor {
+                    path: "a.rs".into(),
+                    old_path: None,
+                    line: Line {
+                        old: None,
+                        new: Some(1),
+                    },
+                    start: Some(Line {
+                        old: Some(1),
+                        new: None,
+                    }),
+                }),
+                reply_to: None,
+                body: "Hm".into(),
+            },
+            Draft {
+                at: None,
+                reply_to: Some("d3".into()),
+                body: "Because.".into(),
+            },
+        ];
+        s.submit(12, &o.refs, &drafts, "Thanks", Finish::Approve)
+            .unwrap();
+        let seen = seen.lock().unwrap();
+        let api = "/api/v4/projects/team%2Fsub%2Fapp/merge_requests/12";
+        assert_eq!(
+            seen[2].0,
+            "GET /api/v4/projects/team%2Fsub%2Fapp/pipelines/99/jobs?per_page=100"
+        );
+        assert_eq!(seen[7].0, format!("POST {api}/draft_notes"));
+        let first: Value = serde_json::from_str(&seen[7].2).unwrap();
+        assert_eq!(first["position"]["head_sha"], "h");
+        assert_eq!(first["position"]["new_line"], 1);
+        assert_eq!(first["position"]["line_range"]["start"]["type"], "old");
+        let reply: Value = serde_json::from_str(&seen[8].2).unwrap();
+        assert_eq!(reply["in_reply_to_discussion_id"], "d3");
+        assert_eq!(seen[9].0, format!("POST {api}/draft_notes/bulk_publish"));
+        assert_eq!(seen[10].0, format!("POST {api}/notes"));
+        assert_eq!(seen[11].0, format!("POST {api}/approve"));
     }
 }

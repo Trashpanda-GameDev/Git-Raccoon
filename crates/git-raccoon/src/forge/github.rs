@@ -3,6 +3,10 @@
 use serde_json::{Value, json};
 
 use super::http::{self, Auth, text};
+use super::review::{
+    Anchor, Change, Check, Comment, Commit, DiffRefs, Draft, Event, File, Finish, Line, Merge,
+    Method, Outcome, Overview, State, Thread, Verdict,
+};
 use super::{Checks, Issue, NewRequest, Request, Review, Session, timestamp};
 
 const FORGE: &str = "GitHub";
@@ -49,11 +53,8 @@ pub fn requests(s: &Session) -> Result<Vec<Request>, String> {
     Ok(list.as_array().into_iter().flatten().map(request).collect())
 }
 
-pub fn details(s: &Session, number: u64) -> Result<Request, String> {
-    let v = get(s, &format!("/pulls/{number}"))?;
-    let mut r = request(&v);
-    // Each reviewer's latest say.
-    let reviews = get(s, &format!("/pulls/{number}/reviews?per_page=100"))?;
+/// Each reviewer's latest say, and what it comes to.
+fn verdicts(reviews: &Value) -> (Vec<(String, Review)>, Review) {
     let mut latest: Vec<(String, Review)> = Vec::new();
     for review in reviews.as_array().into_iter().flatten() {
         let who = text(&review["user"], "login");
@@ -65,37 +66,415 @@ pub fn details(s: &Session, number: u64) -> Result<Request, String> {
         latest.retain(|(w, _)| *w != who);
         latest.push((who, state));
     }
-    r.review = if latest.iter().any(|(_, s)| *s == Review::ChangesRequested) {
+    let overall = if latest.iter().any(|(_, s)| *s == Review::ChangesRequested) {
         Review::ChangesRequested
     } else if latest.is_empty() {
         Review::None
     } else {
         Review::Approved
     };
-    r.reviews = latest;
-    // Checks: check runs (Actions and apps), and older commit statuses.
-    let sha = text(&v["head"], "sha");
-    if !sha.is_empty() {
-        let runs = get(s, &format!("/commits/{sha}/check-runs?per_page=100"))?;
-        for run in runs["check_runs"].as_array().into_iter().flatten() {
-            match (run["status"].as_str(), run["conclusion"].as_str()) {
-                (Some("completed"), Some("success" | "neutral" | "skipped")) => {
-                    r.checks.passed += 1
-                }
-                (Some("completed"), _) => r.checks.failed += 1,
-                _ => r.checks.pending += 1,
-            }
-        }
-        let statuses = get(s, &format!("/commits/{sha}/status"))?;
-        for status in statuses["statuses"].as_array().into_iter().flatten() {
-            match status["state"].as_str() {
-                Some("success") => r.checks.passed += 1,
-                Some("pending") => r.checks.pending += 1,
-                _ => r.checks.failed += 1,
-            }
+    (latest, overall)
+}
+
+/// Check runs (Actions and apps), and older commit statuses.
+fn checks(s: &Session, sha: &str) -> Result<(Checks, Vec<Check>), String> {
+    let mut counts = Checks::default();
+    let mut list = Vec::new();
+    if sha.is_empty() {
+        return Ok((counts, list));
+    }
+    let runs = get(s, &format!("/commits/{sha}/check-runs?per_page=100"))?;
+    for run in runs["check_runs"].as_array().into_iter().flatten() {
+        let outcome = match (run["status"].as_str(), run["conclusion"].as_str()) {
+            (Some("completed"), Some("success" | "neutral" | "skipped")) => Outcome::Passed,
+            (Some("completed"), _) => Outcome::Failed,
+            _ => Outcome::Running,
+        };
+        list.push(Check {
+            name: text(run, "name"),
+            outcome,
+            url: text(run, "html_url"),
+        });
+    }
+    let statuses = get(s, &format!("/commits/{sha}/status"))?;
+    for status in statuses["statuses"].as_array().into_iter().flatten() {
+        let outcome = match status["state"].as_str() {
+            Some("success") => Outcome::Passed,
+            Some("pending") => Outcome::Running,
+            _ => Outcome::Failed,
+        };
+        list.push(Check {
+            name: text(status, "context"),
+            outcome,
+            url: text(status, "target_url"),
+        });
+    }
+    for c in &list {
+        match c.outcome {
+            Outcome::Passed => counts.passed += 1,
+            Outcome::Failed => counts.failed += 1,
+            Outcome::Running => counts.pending += 1,
         }
     }
+    Ok((counts, list))
+}
+
+pub fn details(s: &Session, number: u64) -> Result<Request, String> {
+    let v = get(s, &format!("/pulls/{number}"))?;
+    let mut r = request(&v);
+    let reviews = get(s, &format!("/pulls/{number}/reviews?per_page=100"))?;
+    (r.reviews, r.review) = verdicts(&reviews);
+    (r.checks, _) = checks(s, &text(&v["head"], "sha"))?;
     Ok(r)
+}
+
+/// GitHub's GraphQL address.
+fn graphql(s: &Session) -> String {
+    if s.project.base == "https://github.com" {
+        "https://api.github.com/graphql".into()
+    } else {
+        format!("{}/api/graphql", s.project.base)
+    }
+}
+
+fn query(s: &Session, query: &str, variables: Value) -> Result<Value, String> {
+    let v = http::post(
+        FORGE,
+        &graphql(s),
+        &Auth::Bearer(&s.token),
+        &json!({"query": query, "variables": variables}),
+    )?;
+    if let Some(e) = v["errors"].as_array().and_then(|e| e.first()) {
+        return Err(format!("{FORGE} said: {}", text(e, "message")));
+    }
+    Ok(v)
+}
+
+const THREADS: &str = "query($owner: String!, $name: String!, $n: Int!) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $n) {
+    reviewThreads(first: 100) { nodes {
+      id isResolved isOutdated path line startLine originalLine originalStartLine
+      diffSide startDiffSide
+      comments(first: 100) { nodes {
+        databaseId body createdAt diffHunk author { login }
+      } }
+    } }
+  } }
+}";
+
+fn owner_name(s: &Session) -> (String, String) {
+    let (owner, name) = s
+        .project
+        .path
+        .split_once('/')
+        .unwrap_or(("", &s.project.path));
+    (owner.to_string(), name.to_string())
+}
+
+fn line_on(side: Option<&str>, n: Option<u64>) -> Option<Line> {
+    let n = u32::try_from(n?).ok()?;
+    Some(if side == Some("LEFT") {
+        Line {
+            old: Some(n),
+            new: None,
+        }
+    } else {
+        Line {
+            old: None,
+            new: Some(n),
+        }
+    })
+}
+
+fn thread(v: &Value) -> Thread {
+    let comments: Vec<Comment> = v["comments"]["nodes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|c| Comment {
+            id: c["databaseId"].as_u64().unwrap_or_default().to_string(),
+            author: text(&c["author"], "login"),
+            body: text(c, "body"),
+            created: timestamp(c["createdAt"].as_str().unwrap_or_default()),
+        })
+        .collect();
+    let outdated = v["isOutdated"].as_bool().unwrap_or(false) || v["line"].is_null();
+    let (line, start) = if v["line"].is_null() {
+        (v["originalLine"].as_u64(), v["originalStartLine"].as_u64())
+    } else {
+        (v["line"].as_u64(), v["startLine"].as_u64())
+    };
+    let side = v["diffSide"].as_str();
+    let start_side = v["startDiffSide"].as_str().or(side);
+    let at = line_on(side, line).map(|line| Anchor {
+        path: text(v, "path"),
+        old_path: None,
+        line,
+        start: line_on(start_side, start).filter(|s| *s != line),
+    });
+    Thread {
+        id: text(v, "id"),
+        at,
+        resolved: v["isResolved"].as_bool().unwrap_or(false),
+        resolvable: true,
+        outdated,
+        hunk: v["comments"]["nodes"][0]["diffHunk"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        reply: comments.first().map(|c| c.id.clone()).unwrap_or_default(),
+        comments,
+    }
+}
+
+/// Everything for a request's view.
+pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
+    let v = get(s, &format!("/pulls/{number}"))?;
+    let mut r = request(&v);
+    let reviews = get(s, &format!("/pulls/{number}/reviews?per_page=100"))?;
+    (r.reviews, r.review) = verdicts(&reviews);
+    let mut o = Overview {
+        state: if v["merged"].as_bool().unwrap_or(false) || !v["merged_at"].is_null() {
+            State::Merged
+        } else if v["state"].as_str() == Some("closed") {
+            State::Closed
+        } else {
+            State::Open
+        },
+        refs: DiffRefs {
+            base: text(&v["base"], "sha"),
+            start: text(&v["base"], "sha"),
+            head: text(&v["head"], "sha"),
+        },
+        ..Overview::default()
+    };
+    (r.checks, o.checks) = checks(s, &o.refs.head)?;
+    let files = get(s, &format!("/pulls/{number}/files?per_page=100"))?;
+    o.files = files
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|f| File {
+            path: text(f, "filename"),
+            old_path: f["previous_filename"].as_str().map(str::to_string),
+            change: match f["status"].as_str() {
+                Some("added") => Change::Added,
+                Some("removed") => Change::Deleted,
+                Some("renamed") => Change::Renamed,
+                _ => Change::Modified,
+            },
+            patch: text(f, "patch"),
+        })
+        .collect();
+    let commits = get(s, &format!("/pulls/{number}/commits?per_page=100"))?;
+    o.commits = commits
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|c| Commit {
+            sha: text(c, "sha"),
+            summary: c["commit"]["message"]
+                .as_str()
+                .unwrap_or_default()
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .to_string(),
+            author: c["author"]["login"]
+                .as_str()
+                .or(c["commit"]["author"]["name"].as_str())
+                .unwrap_or_default()
+                .to_string(),
+            created: timestamp(c["commit"]["author"]["date"].as_str().unwrap_or_default()),
+        })
+        .collect();
+    let comments = get(s, &format!("/issues/{number}/comments?per_page=100"))?;
+    for c in comments.as_array().into_iter().flatten() {
+        o.events.push(Event::Comment(Comment {
+            id: c["id"].as_u64().unwrap_or_default().to_string(),
+            author: text(&c["user"], "login"),
+            body: text(c, "body"),
+            created: timestamp(c["created_at"].as_str().unwrap_or_default()),
+        }));
+    }
+    for review in reviews.as_array().into_iter().flatten() {
+        let verdict = match review["state"].as_str() {
+            Some("APPROVED") => Verdict::Approved,
+            Some("CHANGES_REQUESTED") => Verdict::ChangesRequested,
+            Some("COMMENTED") => Verdict::Commented,
+            _ => continue,
+        };
+        let body = text(review, "body");
+        // A review that's only line comments shows as its threads.
+        if verdict == Verdict::Commented && body.trim().is_empty() {
+            continue;
+        }
+        o.events.push(Event::Review {
+            author: text(&review["user"], "login"),
+            verdict,
+            body,
+            created: timestamp(review["submitted_at"].as_str().unwrap_or_default()),
+        });
+    }
+    let (owner, name) = owner_name(s);
+    let threads = query(
+        s,
+        THREADS,
+        json!({"owner": owner, "name": name, "n": number}),
+    )?;
+    o.threads = threads["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(thread)
+        .collect();
+    o.events.extend((0..o.threads.len()).map(Event::Thread));
+    o.sort();
+    let repo = get(s, "")?;
+    let allowed = |key: &str| repo[key].as_bool().unwrap_or(true);
+    o.merge.methods = [
+        ("allow_merge_commit", Method::Merge),
+        ("allow_squash_merge", Method::Squash),
+        ("allow_rebase_merge", Method::Rebase),
+    ]
+    .into_iter()
+    .filter(|(key, _)| allowed(key))
+    .map(|(_, m)| m)
+    .collect();
+    o.merge.can_delete_branch = !r.from_fork;
+    o.merge.blocked = match (o.state, v["mergeable_state"].as_str()) {
+        (State::Merged, _) => Some("It's merged already".into()),
+        (State::Closed, _) => Some("It's closed".into()),
+        (_, Some("dirty")) => Some(format!("It has conflicts with {}", r.target)),
+        (_, Some("draft")) => Some("It's a draft: mark it ready for review first".into()),
+        (_, Some("behind")) => Some(format!(
+            "It's behind {}: bring it up to date first",
+            r.target
+        )),
+        (_, Some("blocked")) => {
+            Some("The repository's rules block it for now (approvals or required checks)".into())
+        }
+        _ => None,
+    };
+    if o.merge.methods.is_empty() {
+        o.merge.blocked = Some("The repository allows no way of merging".into());
+    }
+    Ok((r, o))
+}
+
+fn review_comment(d: &Draft) -> Option<Value> {
+    let at = d.at.as_ref()?;
+    let place = |l: &Line| match (l.new, l.old) {
+        (Some(n), _) => ("RIGHT", n),
+        (None, Some(n)) => ("LEFT", n),
+        (None, None) => ("RIGHT", 0),
+    };
+    let (side, line) = place(&at.line);
+    let mut c = json!({"path": at.path, "body": d.body, "line": line, "side": side});
+    if let Some(start) = &at.start {
+        let (start_side, start_line) = place(start);
+        c["start_line"] = json!(start_line);
+        c["start_side"] = json!(start_side);
+    }
+    Some(c)
+}
+
+/// Sends a review: replies, comments on the request, then the review with
+/// its line comments and verdict.
+pub fn submit(
+    s: &Session,
+    number: u64,
+    head: &str,
+    drafts: &[Draft],
+    summary: &str,
+    finish: Finish,
+) -> Result<(), String> {
+    let auth = Auth::Bearer(&s.token);
+    for d in drafts {
+        if let Some(to) = &d.reply_to {
+            http::post(
+                FORGE,
+                &format!("{}/pulls/{number}/comments/{to}/replies", api(s)),
+                &auth,
+                &json!({"body": d.body}),
+            )?;
+        } else if d.at.is_none() {
+            comment(s, number, &d.body)?;
+        }
+    }
+    let comments: Vec<Value> = drafts
+        .iter()
+        .filter(|d| d.reply_to.is_none())
+        .filter_map(review_comment)
+        .collect();
+    if finish == Finish::Comment && comments.is_empty() && summary.trim().is_empty() {
+        return Ok(());
+    }
+    let event = match finish {
+        Finish::Comment => "COMMENT",
+        Finish::Approve => "APPROVE",
+        Finish::RequestChanges => "REQUEST_CHANGES",
+    };
+    http::post(
+        FORGE,
+        &format!("{}/pulls/{number}/reviews", api(s)),
+        &auth,
+        &json!({"commit_id": head, "body": summary, "event": event, "comments": comments}),
+    )?;
+    Ok(())
+}
+
+/// A comment on the whole request.
+pub fn comment(s: &Session, number: u64, body: &str) -> Result<(), String> {
+    http::post(
+        FORGE,
+        &format!("{}/issues/{number}/comments", api(s)),
+        &Auth::Bearer(&s.token),
+        &json!({"body": body}),
+    )?;
+    Ok(())
+}
+
+pub fn resolve(s: &Session, thread: &str, resolved: bool) -> Result<(), String> {
+    let mutation = if resolved {
+        "mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { id } } }"
+    } else {
+        "mutation($id: ID!) { unresolveReviewThread(input: {threadId: $id}) { thread { id } } }"
+    };
+    query(s, mutation, json!({"id": thread}))?;
+    Ok(())
+}
+
+pub fn merge(s: &Session, r: &Request, how: &Merge) -> Result<(), String> {
+    let (title, message) = how
+        .message
+        .split_once('\n')
+        .map_or((how.message.as_str(), ""), |(t, m)| (t, m));
+    let method = match how.method {
+        Method::Merge => "merge",
+        Method::Squash => "squash",
+        Method::Rebase => "rebase",
+    };
+    let mut body = json!({"merge_method": method});
+    if how.method != Method::Rebase && !title.trim().is_empty() {
+        body["commit_title"] = json!(title.trim());
+        body["commit_message"] = json!(message.trim());
+    }
+    http::put(
+        FORGE,
+        &format!("{}/pulls/{}/merge", api(s), r.number),
+        &Auth::Bearer(&s.token),
+        &body,
+    )?;
+    if how.delete_branch && !r.from_fork {
+        http::delete(
+            FORGE,
+            &format!("{}/git/refs/heads/{}", api(s), r.source),
+            &Auth::Bearer(&s.token),
+        )
+        .map_err(|e| format!("it's merged, but its branch wasn't deleted: {e}"))?;
+    }
+    Ok(())
 }
 
 pub fn issues(s: &Session) -> Result<Vec<Issue>, String> {
@@ -280,6 +659,162 @@ mod tests {
                 sent["draft"].as_bool()
             ),
             (Some("index"), Some("main"), Some(true))
+        );
+    }
+
+    #[test]
+    fn views_a_pull_request_and_sends_a_review() {
+        let pr = PR.replace(
+            r#""draft": true"#,
+            r#""draft": false, "state": "open", "merged": false, "mergeable_state": "dirty""#,
+        );
+        let (base, seen) = mock::serve(vec![
+            (200, pr),
+            (
+                200,
+                r#"[{"user":{"login":"rocky"},"state":"APPROVED","body":"Nice","submitted_at":"2026-11-03T00:00:00Z"},
+                    {"user":{"login":"milo"},"state":"COMMENTED","body":"","submitted_at":"2026-11-04T00:00:00Z"}]"#
+                    .into(),
+            ),
+            (200, r#"{"check_runs":[{"name":"build","status":"completed","conclusion":"failure","html_url":"c"}]}"#.into()),
+            (200, r#"{"statuses":[]}"#.into()),
+            (
+                200,
+                r#"[{"filename":"src/map.rs","status":"modified","patch":"@@ -1,2 +1,2 @@\n-a\n+b\n c"},
+                    {"filename":"new.rs","previous_filename":"old.rs","status":"renamed"}]"#
+                    .into(),
+            ),
+            (
+                200,
+                r#"[{"sha":"c1","commit":{"message":"Add the map\n\nbody","author":{"name":"Ada","date":"2026-11-01T00:00:00Z"}},"author":{"login":"ada"}}]"#
+                    .into(),
+            ),
+            (
+                200,
+                r#"[{"id":5,"user":{"login":"milo"},"body":"**Looks** good","created_at":"2026-11-02T00:00:00Z"}]"#
+                    .into(),
+            ),
+            (
+                200,
+                r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[
+                    {"id":"T1","isResolved":false,"isOutdated":false,"path":"src/map.rs","line":2,"startLine":1,
+                     "originalLine":2,"originalStartLine":1,"diffSide":"RIGHT","startDiffSide":"RIGHT",
+                     "comments":{"nodes":[{"databaseId":42,"body":"Why b?","createdAt":"2026-11-05T00:00:00Z","diffHunk":"@@","author":{"login":"milo"}}]}}
+                ]}}}}}"#
+                    .into(),
+            ),
+            (200, r#"{"allow_merge_commit":true,"allow_squash_merge":true,"allow_rebase_merge":false}"#.into()),
+            // The review.
+            (201, "{}".into()),
+            (201, "{}".into()),
+            (200, "{}".into()),
+            // Merging, and deleting the branch.
+            (200, r#"{"merged":true}"#.into()),
+            (204, String::new()),
+        ]);
+        let s = session(&base);
+        let (r, o) = s.view(7).unwrap();
+        assert_eq!(r.review, Review::Approved);
+        assert_eq!(r.checks.failed, 1);
+        assert_eq!(o.state, State::Open);
+        assert_eq!(o.files.len(), 2);
+        assert_eq!(o.files[1].change, Change::Renamed);
+        assert_eq!(o.files[1].old_path.as_deref(), Some("old.rs"));
+        assert_eq!(o.commits[0].summary, "Add the map");
+        assert_eq!(o.checks[0].name, "build");
+        assert_eq!(o.threads.len(), 1);
+        let t = &o.threads[0];
+        let at = t.at.as_ref().unwrap();
+        assert_eq!(
+            (at.line.new, at.start.and_then(|l| l.new)),
+            (Some(2), Some(1))
+        );
+        assert_eq!(t.reply, "42");
+        assert_eq!(o.unresolved(), 1);
+        // The comment, the approval, then the thread; the empty review isn't there.
+        assert!(matches!(&o.events[0], Event::Comment(c) if c.author == "milo"));
+        assert!(matches!(
+            &o.events[1],
+            Event::Review {
+                verdict: Verdict::Approved,
+                ..
+            }
+        ));
+        assert!(matches!(&o.events[2], Event::Thread(0)));
+        assert_eq!(o.merge.methods, [Method::Merge, Method::Squash]);
+        assert_eq!(
+            o.merge.blocked.as_deref(),
+            Some("It has conflicts with main")
+        );
+
+        let drafts = [
+            Draft {
+                at: Some(Anchor {
+                    path: "src/map.rs".into(),
+                    old_path: None,
+                    line: Line {
+                        old: Some(1),
+                        new: None,
+                    },
+                    start: None,
+                }),
+                reply_to: None,
+                body: "Gone?".into(),
+            },
+            Draft {
+                at: None,
+                reply_to: Some("42".into()),
+                body: "Because.".into(),
+            },
+        ];
+        s.submit(7, &o.refs, &drafts, "Close", Finish::RequestChanges)
+            .unwrap();
+        s.resolve(7, "T1", true).unwrap();
+        // Its branch is deleted after (it's not from a fork, now).
+        let own = Request {
+            from_fork: false,
+            ..r.clone()
+        };
+        s.merge(
+            &own,
+            &Merge {
+                method: Method::Squash,
+                message: "Faster lookups (#7)\n\nUses a hash map.".into(),
+                delete_branch: true,
+            },
+        )
+        .unwrap();
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen[7].0, "POST /api/graphql");
+        assert_eq!(
+            seen[9].0,
+            "POST /api/v3/repos/rocky/stash-box/pulls/7/comments/42/replies"
+        );
+        assert_eq!(
+            seen[10].0,
+            "POST /api/v3/repos/rocky/stash-box/pulls/7/reviews"
+        );
+        let review: Value = serde_json::from_str(&seen[10].2).unwrap();
+        assert_eq!(review["event"], "REQUEST_CHANGES");
+        assert_eq!(review["commit_id"], "abc");
+        assert_eq!(
+            review["comments"],
+            json!([{"path": "src/map.rs", "body": "Gone?", "line": 1, "side": "LEFT"}])
+        );
+        assert!(seen[11].2.contains("resolveReviewThread"));
+        assert_eq!(
+            seen[12].0,
+            "PUT /api/v3/repos/rocky/stash-box/pulls/7/merge"
+        );
+        let merge: Value = serde_json::from_str(&seen[12].2).unwrap();
+        assert_eq!(
+            merge,
+            json!({"merge_method": "squash", "commit_title": "Faster lookups (#7)", "commit_message": "Uses a hash map."})
+        );
+        assert_eq!(
+            seen[13].0,
+            "DELETE /api/v3/repos/rocky/stash-box/git/refs/heads/index"
         );
     }
 }

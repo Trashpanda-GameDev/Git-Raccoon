@@ -1614,6 +1614,7 @@ dependencies = [
  "ron",
  "serde",
  "serde_json",
+ "sha1 0.10.7",
  "syntect",
  "two-face",
  "ureq",

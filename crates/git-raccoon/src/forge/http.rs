@@ -56,6 +56,10 @@ fn read(
         .into_body()
         .read_to_string()
         .map_err(|e| e.to_string())?;
+    // Some answers have no body ("204 No Content").
+    if text.trim().is_empty() {
+        return Ok(Value::Null);
+    }
     serde_json::from_str(&text).map_err(|e| format!("{forge} answered something unexpected: {e}"))
 }
 
@@ -71,6 +75,20 @@ pub fn post(forge: &str, url: &str, auth: &Auth<'_>, body: &Value) -> Result<Val
         .header("X-GitHub-Api-Version", "2022-11-28")
         .header("Content-Type", "application/json");
     read(forge, req.send(body.to_string()))
+}
+
+/// PUT some JSON, and get JSON back.
+pub fn put(forge: &str, url: &str, auth: &Auth<'_>, body: &Value) -> Result<Value, String> {
+    let req = with_auth(agent_for().put(url), auth)
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .header("Content-Type", "application/json");
+    read(forge, req.send(body.to_string()))
+}
+
+/// DELETE something.
+pub fn delete(forge: &str, url: &str, auth: &Auth<'_>) -> Result<Value, String> {
+    let req = with_auth(agent_for().delete(url), auth).header("X-GitHub-Api-Version", "2022-11-28");
+    read(forge, req.call())
 }
 
 /// POST a form (OAuth), and get JSON back. Error statuses are answers

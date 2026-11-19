@@ -9,6 +9,7 @@ mod github;
 mod gitlab;
 mod http;
 pub mod oauth;
+pub mod review;
 pub mod templates;
 
 use serde::{Deserialize, Serialize};
@@ -23,6 +24,11 @@ pub enum Kind {
 }
 
 impl Kind {
+    /// Whether a review can ask for changes (GitLab's API can't).
+    pub fn can_request_changes(self) -> bool {
+        self == Kind::GitHub
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             Kind::GitHub => "GitHub",
@@ -342,6 +348,54 @@ impl Session {
         match self.project.kind {
             Kind::GitHub => github::create(self, new),
             Kind::GitLab => gitlab::create(self, new),
+        }
+    }
+
+    /// Everything for a request's view: the request with its reviews and
+    /// checks, and its files, commits, conversation and threads.
+    pub fn view(&self, number: u64) -> Result<(Request, review::Overview), String> {
+        match self.project.kind {
+            Kind::GitHub => github::view(self, number),
+            Kind::GitLab => gitlab::view(self, number),
+        }
+    }
+
+    /// Sends a review: its drafts, a summary, and how it ends.
+    pub fn submit(
+        &self,
+        number: u64,
+        refs: &review::DiffRefs,
+        drafts: &[review::Draft],
+        summary: &str,
+        finish: review::Finish,
+    ) -> Result<(), String> {
+        match self.project.kind {
+            Kind::GitHub => github::submit(self, number, &refs.head, drafts, summary, finish),
+            Kind::GitLab => gitlab::submit(self, number, refs, drafts, summary, finish),
+        }
+    }
+
+    /// Posts a comment on the whole request, now.
+    pub fn comment(&self, number: u64, body: &str) -> Result<(), String> {
+        match self.project.kind {
+            Kind::GitHub => github::comment(self, number, body),
+            Kind::GitLab => gitlab::comment(self, number, body),
+        }
+    }
+
+    /// Resolves a thread, or opens it again.
+    pub fn resolve(&self, number: u64, thread: &str, resolved: bool) -> Result<(), String> {
+        match self.project.kind {
+            Kind::GitHub => github::resolve(self, thread, resolved),
+            Kind::GitLab => gitlab::resolve(self, number, thread, resolved),
+        }
+    }
+
+    /// Merges a request.
+    pub fn merge(&self, request: &Request, how: &review::Merge) -> Result<(), String> {
+        match self.project.kind {
+            Kind::GitHub => github::merge(self, request, how),
+            Kind::GitLab => gitlab::merge(self, request, how),
         }
     }
 
