@@ -17,8 +17,8 @@ use crate::ui::file_view::{self, GUTTER};
 use crate::ui::widgets;
 use git_raccoon_core::file_history::{Blame, Change};
 
-const LINE: f32 = 20.0;
-const NUMBER: f32 = 52.0;
+pub(crate) const LINE: f32 = 20.0;
+pub(crate) const NUMBER: f32 = 52.0;
 const MARKER: f32 = 18.0;
 const IMAGE_BOX: f32 = 220.0;
 
@@ -646,7 +646,7 @@ fn marker(kind: LineKind) -> &'static str {
     }
 }
 
-fn header(painter: &egui::Painter, rect: Rect, text: &str) {
+pub(crate) fn header(painter: &egui::Painter, rect: Rect, text: &str) {
     painter.rect_filled(rect, 0, theme::hunk_bg());
     painter.hline(
         rect.x_range(),
@@ -712,7 +712,7 @@ fn picked_mark(painter: &egui::Painter, rect: Rect, gutter: f32) {
     );
 }
 
-fn unified_line(
+pub(crate) fn unified_line(
     painter: &egui::Painter,
     rect: Rect,
     line: &DiffLine,

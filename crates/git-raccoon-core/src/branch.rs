@@ -191,6 +191,52 @@ pub fn kept_elsewhere(path: &str, name: &str, except: &[String]) -> Result<bool>
     Ok(false)
 }
 
+/// What a branch has for another (a pull/merge request from it, before
+/// it's opened).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Comparison {
+    /// Its commits the target doesn't have, oldest first: (id, message).
+    pub commits: Vec<(String, String)>,
+    /// How many of the target's commits it doesn't have.
+    pub behind: usize,
+    /// Merging it into the target would conflict.
+    pub conflicts: bool,
+}
+
+/// Compares `source` with `target` (each a branch, local or remote, or any
+/// revision).
+pub fn compare(path: &str, source: &str, target: &str) -> Result<Comparison> {
+    let repo = Repository::discover(path)?;
+    let commit = |name: &str| -> Result<git2::Commit<'_>> {
+        Ok(repo.revparse_single(name)?.peel_to_commit()?)
+    };
+    let (ours, theirs) = (commit(source)?, commit(target)?);
+    let mut walk = repo.revwalk()?;
+    walk.push(ours.id())?;
+    walk.hide(theirs.id())?;
+    walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::REVERSE)?;
+    let mut commits = Vec::new();
+    for id in walk.take(500) {
+        let c = repo.find_commit(id?)?;
+        commits.push((
+            c.id().to_string(),
+            c.message().unwrap_or_default().to_string(),
+        ));
+    }
+    let (_, behind) = repo.graph_ahead_behind(ours.id(), theirs.id())?;
+    let conflicts = behind > 0
+        && !commits.is_empty()
+        && repo
+            .merge_commits(&theirs, &ours, None)
+            .map(|index| index.has_conflicts())
+            .unwrap_or(false);
+    Ok(Comparison {
+        commits,
+        behind,
+        conflicts,
+    })
+}
+
 /// Deletes several local branches: none of them, unless `force`, if any
 /// has unmerged work (the error names them).
 pub fn delete_many(path: &str, names: &[String], force: bool) -> Result<()> {
@@ -455,5 +501,40 @@ mod tests {
         delete_tag(t.path(), "v1").unwrap();
         assert_eq!(crate::refs::load_refs(t.path()).unwrap().tags.len(), 1);
         assert!(create_tag(t.path(), "bad~tag", "HEAD", "").is_err());
+    }
+
+    #[test]
+    fn compares_a_branch_with_its_target() {
+        let (t, first, second) = repo();
+        t.repo
+            .branch("topic", &t.repo.find_commit(first).unwrap(), false)
+            .unwrap();
+        // topic changes the same line main did: they conflict.
+        t.write("f.txt", "three\n");
+        let mut index = t.repo.index().unwrap();
+        index.add_path(std::path::Path::new("f.txt")).unwrap();
+        let tree = t.repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let sig = t.repo.signature().unwrap();
+        let parent = t.repo.find_commit(first).unwrap();
+        t.repo
+            .commit(
+                Some("refs/heads/topic"),
+                &sig,
+                &sig,
+                "Topic work\n\nWhy.",
+                &tree,
+                &[&parent],
+            )
+            .unwrap();
+        let c = compare(t.path(), "topic", &second.to_string()).unwrap();
+        assert_eq!(c.commits.len(), 1);
+        assert_eq!(c.commits[0].1, "Topic work\n\nWhy.");
+        assert_eq!(c.behind, 1);
+        assert!(c.conflicts);
+        let same = compare(t.path(), &second.to_string(), &first.to_string()).unwrap();
+        assert_eq!(
+            (same.commits.len(), same.behind, same.conflicts),
+            (1, 0, false)
+        );
     }
 }

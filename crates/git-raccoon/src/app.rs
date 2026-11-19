@@ -1176,6 +1176,14 @@ impl App {
         }
         if let Some(f) = &mut repo.forge {
             f.poll();
+            if std::mem::take(&mut f.state.reviewed)
+                && let Some(crate::forge_view::Opened::Request(n)) = f.open
+            {
+                self.settings.review_drafts.remove(&f.drafts_key(n));
+            }
+            if std::mem::take(&mut f.reloading) {
+                f.load(ctx);
+            }
         }
     }
 
@@ -1493,8 +1501,17 @@ impl App {
             // as typing by now).
             if repo.search.open {
                 repo.search.close();
-            } else if repo.forge.as_ref().is_some_and(|f| f.open.is_some()) {
-                repo.close_forge_item();
+            } else if let Some(f) = repo.forge.as_mut().filter(|f| f.open.is_some()) {
+                let state = &mut f.state;
+                if state.finishing.is_some() || state.merging.is_some() {
+                    // Its window closes on its own.
+                } else if state.composer.is_some() {
+                    state.composer = None;
+                } else if !state.picked.is_empty() {
+                    state.picked.clear();
+                } else {
+                    f.open = None;
+                }
             } else if repo.active_file.is_some() && !repo.picked.is_empty() {
                 repo.picked.clear();
             } else if repo.planner.is_some() {
@@ -1883,7 +1900,11 @@ impl App {
             bottom: 8,
         });
         // A pull/merge request or issue from the forge.
-        if let Some(forge) = repo.forge.as_ref().filter(|f| f.open.is_some()) {
+        if let Some(forge) = repo
+            .forge
+            .as_ref()
+            .filter(|f| matches!(f.open, Some(crate::forge_view::Opened::Issue(_))))
+        {
             let action = Panel::right("forge-details")
                 .resizable(true)
                 .default_size(380.0)
@@ -1896,11 +1917,6 @@ impl App {
                     ctx.open_url(egui::OpenUrl::new_tab(url))
                 }
                 Some(crate::ui::forge::Action::Close) => repo.close_forge_item(),
-                Some(crate::ui::forge::Action::CheckOut(n)) => {
-                    if let Some(op) = repo.forge.as_ref().and_then(|f| check_out_op(f, n)) {
-                        repo.run(&ctx, op);
-                    }
-                }
                 None => {}
             }
         } else if let Some(sel) = &repo.selected {
@@ -2021,6 +2037,22 @@ impl App {
         egui::CentralPanel::no_frame()
             .frame(Frame::new().fill(theme::bg()))
             .show(ui, |ui| {
+                // A pull/merge request, in place of the graph.
+                if let Some(action) = request_view(ui, repo, &self.settings.review_drafts, now) {
+                    let pull = self.settings.pull;
+                    if let Err(e) =
+                        request_action(repo, &mut self.settings.review_drafts, &ctx, action, pull)
+                    {
+                        self.error = Some(e);
+                    }
+                }
+                if repo
+                    .forge
+                    .as_ref()
+                    .is_some_and(|f| matches!(f.open, Some(crate::forge_view::Opened::Request(_))))
+                {
+                    return;
+                }
                 let busy = repo.op_running();
                 if let Some((planner, original)) = &mut repo.planner {
                     match rebase::show(ui, planner, original, busy) {
@@ -2626,6 +2658,180 @@ fn check_out_op(forge: &crate::forge_view::ForgeView, number: u64) -> Option<Op>
             Op::CheckoutRemote(format!("{remote}/{}", r.source)),
         ]))
     }
+}
+
+/// Shows the open pull/merge request's view, if one is open.
+fn request_view(
+    ui: &mut egui::Ui,
+    repo: &mut RepoView,
+    drafts: &std::collections::BTreeMap<String, Vec<crate::forge::review::Draft>>,
+    now: i64,
+) -> Option<crate::ui::request::Action> {
+    let branch = repo.head_branch().map(str::to_string);
+    let f = repo.forge.as_mut()?;
+    let Some(crate::forge_view::Opened::Request(n)) = f.open else {
+        return None;
+    };
+    let mine = drafts.get(&f.drafts_key(n)).map_or(&[][..], Vec::as_slice);
+    let here = crate::ui::request::Here {
+        branch: branch.as_deref(),
+        now,
+        drafts: mine,
+    };
+    crate::ui::request::show(ui, f, &here)
+}
+
+/// Does what the request view asked. An error to show, if it went wrong
+/// straight away.
+fn request_action(
+    repo: &mut RepoView,
+    drafts: &mut std::collections::BTreeMap<String, Vec<crate::forge::review::Draft>>,
+    ctx: &egui::Context,
+    action: crate::ui::request::Action,
+    pull: crate::settings::PullOptions,
+) -> Result<(), String> {
+    use crate::forge_view::Sent;
+    use crate::ui::request::Action;
+    let head = repo.head_branch().map(str::to_string);
+    let Some(f) = repo.forge.as_mut() else {
+        return Ok(());
+    };
+    let Some(crate::forge_view::Opened::Request(n)) = f.open else {
+        return Ok(());
+    };
+    let key = f.drafts_key(n);
+    let viewed = f.viewed().cloned();
+    match action {
+        Action::Close => f.open = None,
+        Action::Open(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
+        Action::Reload => f.reloading = true,
+        Action::SaveDraft(draft, at) => {
+            let list = drafts.entry(key).or_default();
+            match at.and_then(|i| list.get_mut(i)) {
+                Some(old) => *old = draft,
+                None => list.push(draft),
+            }
+        }
+        Action::DeleteDraft(i) => {
+            if let Some(list) = drafts.get_mut(&key) {
+                if i < list.len() {
+                    list.remove(i);
+                }
+                if list.is_empty() {
+                    drafts.remove(&key);
+                }
+            }
+        }
+        Action::Submit { summary, finish } => {
+            let Some((_, o)) = viewed else { return Ok(()) };
+            let mine = drafts.get(&key).cloned().unwrap_or_default();
+            f.send(ctx, Sent::Review, move |s| {
+                s.submit(n, &o.refs, &mine, &summary, finish)
+            });
+        }
+        Action::Resolve(thread, to) => {
+            f.send(ctx, Sent::Resolve, move |s| s.resolve(n, &thread, to));
+        }
+        Action::Merge(how) => {
+            let Some((r, _)) = viewed else { return Ok(()) };
+            f.send(ctx, Sent::Merge, move |s| s.merge(&r, &how));
+        }
+        Action::CheckOut => {
+            if let Some(op) = check_out_op(f, n) {
+                repo.run(ctx, op);
+            }
+        }
+        Action::CheckOutWorktree => {
+            let Some((r, _)) = viewed else { return Ok(()) };
+            let kind = f.project.kind;
+            let remote = f.remote.clone();
+            let (branch, source) = if r.from_fork {
+                (
+                    crate::ui::request::fork_branch(kind, n),
+                    f.session_head_ref(n),
+                )
+            } else {
+                (r.source.clone(), r.source.clone())
+            };
+            let root = std::path::Path::new(repo.path().trim_end_matches(['/', '\\']));
+            let name = root
+                .file_name()
+                .map_or_else(|| "repo".into(), |n| n.to_string_lossy().into_owned());
+            let folder = root
+                .parent()
+                .unwrap_or(root)
+                .join(format!("{name}-{}", branch.replace('/', "-")))
+                .to_string_lossy()
+                .into_owned();
+            let mut steps = vec![Op::FetchInto {
+                remote: remote.clone(),
+                source,
+                branch: branch.clone(),
+            }];
+            if !r.from_fork {
+                steps.push(Op::SetUpstream {
+                    branch: branch.clone(),
+                    upstream: Some(format!("{remote}/{branch}")),
+                });
+            }
+            steps.push(Op::AddWorktree {
+                folder: folder.clone(),
+                branch,
+                new: false,
+            });
+            if let Some(f) = repo.forge.as_mut() {
+                f.state.sent = Some(Ok(format!(
+                    "Checking it out in {folder}: open it from Worktrees in the sidebar."
+                )));
+            }
+            repo.run(ctx, Op::Then(steps));
+        }
+        Action::PullLatest => repo.pull(ctx, None, pull),
+        Action::BackTo(target) => {
+            let remote = f.remote.clone();
+            let op = if repo.refs.local.iter().any(|b| b.name == target) {
+                Op::Checkout(target)
+            } else {
+                Op::CheckoutRemote(format!("{remote}/{target}"))
+            };
+            repo.run(ctx, op);
+        }
+        Action::PullMerged => {
+            let Some((r, _)) = viewed else { return Ok(()) };
+            if head.as_deref() == Some(r.target.as_str()) {
+                repo.pull(ctx, None, pull);
+            } else {
+                let remote = f.remote.clone();
+                let checkout = if repo.refs.local.iter().any(|b| b.name == r.target) {
+                    Op::Checkout(r.target.clone())
+                } else {
+                    Op::CheckoutRemote(format!("{remote}/{}", r.target))
+                };
+                repo.run(
+                    ctx,
+                    Op::Then(vec![
+                        checkout,
+                        Op::Pull {
+                            from: None,
+                            mode: pull.strategy.mode(),
+                            stash: pull.changes == crate::settings::PullChanges::Stash,
+                        },
+                    ]),
+                );
+            }
+        }
+        Action::GoToCommit(id) => {
+            if repo.history.locate(&id).is_some() {
+                repo.select(&id);
+            } else {
+                return Err(format!(
+                    "Commit {} isn't in this repository yet: fetch (or check the request out) first.",
+                    crate::format::short_sha(&id)
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Signing in, in the background: getting the code to show, then the

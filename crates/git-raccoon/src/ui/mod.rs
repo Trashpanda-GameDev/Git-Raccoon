@@ -19,6 +19,7 @@ pub mod palette;
 pub mod push_to;
 pub mod rebase;
 pub mod repo_form;
+pub mod request;
 pub mod search_bar;
 pub mod settings;
 pub mod sidebar;

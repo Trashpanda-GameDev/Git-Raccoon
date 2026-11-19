@@ -4,14 +4,12 @@
 use eframe::egui::{self, RichText};
 use egui_phosphor::regular as icon;
 
-use crate::forge::{Kind, Review};
+use crate::forge::Kind;
 use crate::forge_view::{ForgeView, Opened};
 use crate::theme;
 use crate::ui::widgets;
 
 pub enum Action {
-    /// Check out a request's branch.
-    CheckOut(u64),
     Open(String),
     Close,
 }
@@ -43,148 +41,6 @@ pub fn show(ui: &mut egui::Ui, forge: &ForgeView, now: i64) -> Option<Action> {
     let kind = forge.project.kind;
     let site = kind.name();
     match forge.open {
-        Some(Opened::Request(n)) => {
-            heading(
-                ui,
-                &format!("{} {}", kind.request(), kind.number(n)),
-                &mut action,
-            );
-            let Some(r) = forge.detailed(n).or_else(|| forge.request(n)) else {
-                ui.label(RichText::new("It isn't open any more.").color(theme::muted()));
-                return action;
-            };
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new(&r.title).strong().size(15.0));
-                        if r.draft {
-                            ui.label(RichText::new("Draft").size(11.0).color(theme::muted()));
-                        }
-                    });
-                    ui.add_space(4.0);
-                    let fork = if r.from_fork { " (from a fork)" } else { "" };
-                    ui.label(
-                        RichText::new(format!(
-                            "{} wants to merge {} into {}{fork} · {}",
-                            r.author,
-                            r.source,
-                            r.target,
-                            crate::format::age(r.created, now)
-                        ))
-                        .color(theme::muted()),
-                    );
-                    ui.add_space(8.0);
-                    match forge.detailed(n) {
-                        Some(d) => {
-                            // Reviews.
-                            let (glyph, colour, text) = match d.review {
-                                Review::Approved => {
-                                    (icon::CHECK_CIRCLE, theme::add(), "Approved".to_string())
-                                }
-                                Review::ChangesRequested => (
-                                    icon::WARNING_CIRCLE,
-                                    theme::modified(),
-                                    "Changes requested".to_string(),
-                                ),
-                                Review::None => {
-                                    (icon::CIRCLE, theme::muted(), "No reviews yet".to_string())
-                                }
-                            };
-                            let who: Vec<&str> =
-                                d.reviews.iter().map(|(w, _)| w.as_str()).collect();
-                            let text = if who.is_empty() {
-                                text
-                            } else {
-                                format!("{text}: {}", who.join(", "))
-                            };
-                            ui.label(RichText::new(format!("{glyph}  {text}")).color(colour));
-                            // Checks.
-                            let c = d.checks;
-                            if c.is_empty() {
-                                ui.label(
-                                    RichText::new(format!("{}  No checks", icon::CIRCLE))
-                                        .color(theme::muted()),
-                                );
-                            } else {
-                                ui.horizontal(|ui| {
-                                    if c.failed > 0 {
-                                        ui.label(
-                                            RichText::new(format!(
-                                                "{}  {} failed",
-                                                icon::X_CIRCLE,
-                                                c.failed
-                                            ))
-                                            .color(theme::danger()),
-                                        );
-                                    }
-                                    if c.pending > 0 {
-                                        ui.label(
-                                            RichText::new(format!(
-                                                "{}  {} running",
-                                                icon::CLOCK,
-                                                c.pending
-                                            ))
-                                            .color(theme::modified()),
-                                        );
-                                    }
-                                    if c.passed > 0 {
-                                        ui.label(
-                                            RichText::new(format!(
-                                                "{}  {} passed",
-                                                icon::CHECK_CIRCLE,
-                                                c.passed
-                                            ))
-                                            .color(theme::add()),
-                                        );
-                                    }
-                                });
-                            }
-                            ui.label(
-                                RichText::new(format!(
-                                    "{}  {} comments",
-                                    icon::CHAT_CIRCLE,
-                                    d.comments
-                                ))
-                                .color(theme::muted()),
-                            );
-                        }
-                        None => match &forge.details {
-                            Some((m, Err(e))) if *m == n => {
-                                ui.label(RichText::new(e).color(theme::danger()));
-                            }
-                            _ => {
-                                ui.horizontal(|ui| {
-                                    ui.spinner();
-                                    ui.label(
-                                        RichText::new("Reviews and checks…").color(theme::muted()),
-                                    );
-                                });
-                            }
-                        },
-                    }
-                    ui.add_space(10.0);
-                    ui.horizontal(|ui| {
-                        let out = ui.button(format!("{}  Check out", icon::SIGN_OUT));
-                        let tip = if r.from_fork {
-                            "Fetch it into a branch of its own, and check that out".to_string()
-                        } else {
-                            format!("Check out {} (and bring it up to the remote's)", r.source)
-                        };
-                        if out.on_hover_text(tip).clicked() {
-                            action = Some(Action::CheckOut(n));
-                        }
-                        if ui
-                            .button(format!("{}  Open on {site}", icon::ARROW_SQUARE_OUT))
-                            .clicked()
-                        {
-                            action = Some(Action::Open(r.url.clone()));
-                        }
-                    });
-                    ui.separator();
-                    body(ui, &r.body);
-                });
-        }
         Some(Opened::Issue(n)) => {
             heading(ui, &format!("Issue #{n}"), &mut action);
             let Some(i) = forge.issue(n) else {
@@ -224,7 +80,8 @@ pub fn show(ui: &mut egui::Ui, forge: &ForgeView, now: i64) -> Option<Action> {
                     body(ui, &i.body);
                 });
         }
-        None => {}
+        // Requests have a view of their own, in place of the graph.
+        Some(Opened::Request(_)) | None => {}
     }
     action
 }

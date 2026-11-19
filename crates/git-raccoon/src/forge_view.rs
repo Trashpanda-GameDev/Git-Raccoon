@@ -3,7 +3,12 @@
 
 use eframe::egui;
 
+use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
+
+use crate::forge::review::{Anchor, Finish, Method, Overview};
 use crate::forge::{self, Account, Issue, Project, Request};
+use crate::highlight::RenderedDiff;
 use crate::task::Task;
 
 /// What's open in the details pane.
@@ -11,6 +16,75 @@ use crate::task::Task;
 pub enum Opened {
     Request(u64),
     Issue(u64),
+}
+
+/// A request with everything its view shows.
+pub type Viewed = (Request, Overview);
+
+/// The tabs of a request's view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Tab {
+    #[default]
+    Conversation,
+    Commits,
+    Changes,
+}
+
+/// A comment being written: on a line or range, a reply, or (both `None`)
+/// on the whole request; `editing` is the draft it changes.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Composer {
+    pub at: Option<Anchor>,
+    pub reply_to: Option<String>,
+    pub body: String,
+    pub editing: Option<usize>,
+}
+
+/// The Finish review window.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Finishing {
+    pub summary: String,
+    pub finish: Finish,
+}
+
+/// The Merge window.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Merging {
+    pub method: Method,
+    pub message: String,
+    pub delete_branch: bool,
+}
+
+/// Something sent to the forge for the open request.
+pub enum Sent {
+    Review,
+    Resolve,
+    Merge,
+}
+
+/// How the open request's view stands: what's picked and being written.
+#[derive(Default)]
+pub struct RequestState {
+    pub tab: Tab,
+    /// The file open in Changes.
+    pub file: Option<String>,
+    /// Lines picked in its diff: (hunk, line), and where Shift picks from.
+    pub picked: BTreeSet<(usize, usize)>,
+    pub pick_from: Option<(usize, usize)>,
+    pub composer: Option<Composer>,
+    /// The comment box at the bottom of the conversation.
+    pub comment: String,
+    pub finishing: Option<Finishing>,
+    pub merging: Option<Merging>,
+    /// Files' diffs, laid out (by path).
+    pub rendered: HashMap<String, Arc<RenderedDiff>>,
+    /// What's being sent, and how the last one went.
+    pub sending: Option<(Sent, Task<Result<(), String>>)>,
+    pub sent: Option<Result<String, String>>,
+    /// A review went: its drafts can go.
+    pub reviewed: bool,
+    /// Laid-out Markdown.
+    pub markdown: egui_commonmark::CommonMarkCache,
 }
 
 type Lists = (Result<Vec<Request>, String>, Result<Vec<Issue>, String>);
@@ -27,9 +101,12 @@ pub struct ForgeView {
     pub issues: Option<Result<Vec<Issue>, String>>,
     loading: Option<Task<Lists>>,
     pub open: Option<Opened>,
-    /// The open request's details (reviews, checks), once loaded.
-    pub details: Option<(u64, Result<Request, String>)>,
-    details_task: Option<(u64, Task<Result<Request, String>>)>,
+    /// The open request's view (with its reviews and checks), once loaded.
+    pub details: Option<(u64, Result<Viewed, String>)>,
+    details_task: Option<(u64, Task<Result<Viewed, String>>)>,
+    pub state: RequestState,
+    /// Something was sent: reload the view (and the list) next.
+    pub reloading: bool,
 }
 
 impl ForgeView {
@@ -59,6 +136,8 @@ impl ForgeView {
             open: None,
             details: None,
             details_task: None,
+            state: RequestState::default(),
+            reloading: false,
         })
     }
 
@@ -94,6 +173,9 @@ impl ForgeView {
 
     /// Opens a request in the details pane, loading its details.
     pub fn open_request(&mut self, ctx: &egui::Context, number: u64) {
+        if self.open != Some(Opened::Request(number)) {
+            self.state = RequestState::default();
+        }
         self.open = Some(Opened::Request(number));
         if self.details.as_ref().is_none_or(|(n, _)| *n != number) {
             self.details = None;
@@ -109,9 +191,67 @@ impl ForgeView {
         self.details_task = Some((
             number,
             Task::spawn(ctx, move || {
-                forge::accounts::session(&account, &project)?.details(number)
+                forge::accounts::session(&account, &project)?.view(number)
             }),
         ));
+    }
+
+    /// Reloads the open request's view (after sending something).
+    pub fn reload_view(&mut self, ctx: &egui::Context) {
+        if let Some(Opened::Request(n)) = self.open {
+            self.load_details(ctx, n);
+        }
+    }
+
+    /// Whether the open request's view is loading.
+    pub fn view_loading(&self) -> bool {
+        self.details_task.is_some()
+    }
+
+    /// Sends something about the open request, in the background.
+    pub fn send(
+        &mut self,
+        ctx: &egui::Context,
+        what: Sent,
+        work: impl FnOnce(&forge::Session) -> Result<(), String> + Send + 'static,
+    ) {
+        let Some(account) = self.account.clone() else {
+            return;
+        };
+        let project = self.project.clone();
+        self.state.sent = None;
+        self.state.sending = Some((
+            what,
+            Task::spawn(ctx, move || {
+                work(&forge::accounts::session(&account, &project)?)
+            }),
+        ));
+    }
+
+    /// The ref a request's changes can be fetched from.
+    pub fn session_head_ref(&self, number: u64) -> String {
+        match self.project.kind {
+            forge::Kind::GitHub => format!("pull/{number}/head"),
+            forge::Kind::GitLab => format!("merge-requests/{number}/head"),
+        }
+    }
+
+    /// The key a request's drafts are kept under.
+    pub fn drafts_key(&self, number: u64) -> String {
+        format!(
+            "{}/{}{}",
+            self.project.base,
+            self.project.path,
+            self.project.kind.number(number)
+        )
+    }
+
+    /// The open request with everything its view shows, once loaded.
+    pub fn viewed(&self) -> Option<&Viewed> {
+        match (&self.details, self.open) {
+            (Some((n, Ok(v))), Some(Opened::Request(m))) if *n == m => Some(v),
+            _ => None,
+        }
     }
 
     /// Takes in what's finished loading.
@@ -124,8 +264,37 @@ impl ForgeView {
         if let Some((n, task)) = &self.details_task
             && let Some(result) = task.poll()
         {
-            self.details = Some((*n, result));
+            if result.is_ok() {
+                self.state.rendered.clear();
+            }
+            // A reload that failed keeps what was shown.
+            if result.is_ok() || self.details.as_ref().is_none_or(|(m, _)| m != n) {
+                self.details = Some((*n, result));
+            }
             self.details_task = None;
+        }
+        // What was sent: say how it went.
+        if let Some((what, task)) = &self.state.sending
+            && let Some(result) = task.poll()
+        {
+            let done = match what {
+                Sent::Review => "Review sent.",
+                Sent::Resolve => "Thread updated.",
+                Sent::Merge => "Merged.",
+            };
+            let merged = matches!(what, Sent::Merge) && result.is_ok();
+            if result.is_ok() {
+                if matches!(what, Sent::Review) {
+                    self.state.finishing = None;
+                    self.state.reviewed = true;
+                }
+                if merged {
+                    self.state.merging = None;
+                }
+            }
+            self.state.sent = Some(result.map(|()| done.to_string()));
+            self.state.sending = None;
+            self.reloading = true;
         }
     }
 
@@ -151,7 +320,7 @@ impl ForgeView {
     /// A request with its details, once loaded.
     pub fn detailed(&self, number: u64) -> Option<&Request> {
         match &self.details {
-            Some((n, Ok(r))) if *n == number => Some(r),
+            Some((n, Ok((r, _)))) if *n == number => Some(r),
             _ => None,
         }
     }

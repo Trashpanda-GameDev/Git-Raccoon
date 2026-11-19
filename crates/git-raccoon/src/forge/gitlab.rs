@@ -200,6 +200,15 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
             Outcome::Running => r.checks.pending += 1,
         }
     }
+    // No jobs listed: the pipeline is the one check.
+    if o.checks.is_empty() {
+        match v["head_pipeline"]["status"].as_str() {
+            Some("success") => r.checks.passed = 1,
+            Some("failed" | "canceled") => r.checks.failed = 1,
+            Some(_) => r.checks.pending = 1,
+            None => {}
+        }
+    }
     let diffs = get(s, &format!("/merge_requests/{number}/diffs?per_page=100"))?;
     o.files = diffs
         .as_array()

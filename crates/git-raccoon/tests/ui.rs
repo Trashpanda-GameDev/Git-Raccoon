@@ -3505,8 +3505,25 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
         // Details.
         ("GET /api/v4/projects/team%2Fapp/merge_requests/12", mr(12, "Pipeline cache", "cache")),
         ("GET /api/v4/projects/team%2Fapp/merge_requests/12/approvals", r#"{"approved_by": [{"user": {"username": "rocky"}}]}"#.into()),
+        ("GET /api/v4/projects/team%2Fapp/merge_requests/12/diffs", r#"[{"old_path": "README.md", "new_path": "README.md",
+            "diff": "@@ -1,2 +1,3 @@\n # Sample\n-Old line\n+New line\n+Another\n"}]"#.into()),
+        ("GET /api/v4/projects/team%2Fapp/merge_requests/12/commits", r#"[{"id": "abc1234", "title": "Cache the pipeline",
+            "author_name": "Ada", "created_at": "2026-11-01T00:00:00Z"}]"#.into()),
+        ("GET /api/v4/projects/team%2Fapp/merge_requests/12/discussions", r#"[
+            {"id": "d1", "individual_note": true, "notes": [{"id": 1, "body": "Looks **good**", "author": {"username": "milo"},
+                "created_at": "2026-11-02T00:00:00Z", "system": false}]},
+            {"id": "d2", "individual_note": false, "notes": [{"id": 2, "body": "Why another?", "author": {"username": "milo"},
+                "created_at": "2026-11-03T00:00:00Z", "system": false, "resolvable": true, "resolved": false,
+                "position": {"old_path": "README.md", "new_path": "README.md", "old_line": null, "new_line": 3}}]}]"#.into()),
         ("GET /api/v4/projects/team%2Fapp/merge_requests/13", mr(13, "Faster start", "cache")),
         ("GET /api/v4/projects/team%2Fapp/merge_requests/13/approvals", r#"{"approved_by": []}"#.into()),
+        ("GET /api/v4/projects/team%2Fapp/merge_requests/13/diffs", "[]".into()),
+        ("GET /api/v4/projects/team%2Fapp/merge_requests/13/commits", "[]".into()),
+        ("GET /api/v4/projects/team%2Fapp/merge_requests/13/discussions", "[]".into()),
+        ("GET /api/v4/projects/team%2Fapp", r#"{"default_branch": "main", "squash_option": "default_off"}"#.into()),
+        // Reviewing and merging.
+        ("POST /api/v4/projects/team%2Fapp/merge_requests/12/draft_notes", "{}".into()),
+        ("PUT /api/v4/projects/team%2Fapp/merge_requests/12", "{}".into()),
         // Opening one.
         ("POST /api/v4/projects/team%2Fapp/merge_requests", mr(13, "Faster start", "cache")),
         // Signing in with the browser.
@@ -3557,9 +3574,103 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
             .is_some_and(|f| f.detailed(12).is_some())
     });
     h.run_ok();
-    h.get_by_label_contains("Approved: rocky");
-    h.get_by_label_contains("1 running");
+    // Its view, in place of the graph.
+    h.get_by_label_contains("Approved by rocky");
+    h.get_by_label_contains("1 check running");
+    h.get_by_label_contains("1 unresolved thread");
+    h.get_by_label_contains("Caches the pipeline.");
+    // The conversation: comments in Markdown, and the thread with its code.
+    h.get_by_label("good");
+    h.get_by_label("Why another?");
+    h.get_by_label_contains("README.md, line 3");
     screenshot(&mut h, "50-merge-request");
+
+    // Changes: the diff, with the thread under its line.
+    h.get_by_label("Changes").click();
+    h.run_ok();
+    h.get_by_label("Select line: Another");
+    h.get_by_label("Why another?");
+    // Resolve it.
+    h.get_by_label("Resolve").click();
+    let sent = |app: &App| {
+        app.repo()
+            .unwrap()
+            .forge
+            .as_ref()
+            .is_some_and(|f| f.state.sending.is_none() && f.state.sent.is_some())
+    };
+    wait_for(&mut h, "resolving", sent);
+    assert!(
+        seen.lock()
+            .unwrap()
+            .iter()
+            .any(|(r, _)| r == &format!("PUT {api}/merge_requests/12/discussions/d2?resolved=true"))
+    );
+    // A comment on a line: a draft, until the review is finished.
+    h.get_by_label("Select line: Old line").click_secondary();
+    h.run_ok();
+    // The menu's (the line's + is labelled the same).
+    h.get_all_by_label("Comment on this line")
+        .last()
+        .unwrap()
+        .click();
+    h.run_ok();
+    h.get_by_label("Comment").type_text("Why drop it?");
+    h.run_ok();
+    screenshot(&mut h, "55-draft-comment");
+    h.get_by_label("Add to review").click();
+    h.run_ok();
+    let drafts = |app: &App| {
+        app.settings()
+            .review_drafts
+            .values()
+            .map(Vec::len)
+            .sum::<usize>()
+    };
+    assert_eq!(drafts(h.state()), 1);
+    h.get_by_label("Why drop it?");
+    h.get_by_label("Finish review (1)").click();
+    h.run_ok();
+    h.get_by_label("Approve").click();
+    h.run_ok();
+    screenshot(&mut h, "56-finish-review");
+    h.get_by_label("Submit review and send 1").click();
+    wait_for(&mut h, "the review", |app| sent(app) && drafts(app) == 0);
+    {
+        let seen = seen.lock().unwrap();
+        let note = seen
+            .iter()
+            .find(|(r, _)| r == &format!("POST {api}/merge_requests/12/draft_notes"))
+            .expect("a draft note");
+        assert!(
+            note.1.contains("Why drop it?") && note.1.contains(r#""old_line":2"#),
+            "{}",
+            note.1
+        );
+        for end in ["draft_notes/bulk_publish", "approve"] {
+            assert!(
+                seen.iter()
+                    .any(|(r, _)| r == &format!("POST {api}/merge_requests/12/{end}")),
+                "{end}"
+            );
+        }
+    }
+    // Merging.
+    h.get_by_label("Merge…").click();
+    h.run_ok();
+    h.get_by_label("Delete cache after merging");
+    screenshot(&mut h, "57-merge");
+    h.get_all_by_label("Merge commit").last().unwrap().click();
+    wait_for(&mut h, "the merge", sent);
+    assert!(
+        seen.lock()
+            .unwrap()
+            .iter()
+            .any(|(r, b)| r == &format!("PUT {api}/merge_requests/12/merge")
+                && b.contains(r#""should_remove_source_branch":true"#))
+    );
+    h.get_by_label("Conversation").click();
+    h.run_ok();
 
     // Right-click to open things on the forge.
     let opened = |h: &mut Harness<'_, App>, row: &str| -> String {
@@ -3597,6 +3708,14 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
         opened(&mut h, "cache"),
         format!("{base}/team/app/-/tree/cache")
     );
+    // The graph is back once the request's view is closed (the first Esc
+    // lets go of the line still picked).
+    h.key_press(Key::Escape);
+    h.run_ok();
+    assert!(h.query_by_label("Conversation").is_some());
+    h.key_press(Key::Escape);
+    h.run_ok();
+    assert!(h.query_by_label("Conversation").is_none(), "Esc closes it");
     let commit = opened(&mut h, "Add icon");
     assert!(
         commit.starts_with(&format!("{base}/team/app/-/commit/")),
@@ -3610,7 +3729,11 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     );
 
     // Check it out: its branch, from the remote.
+    h.get_by_label("!12 Pipeline cache").click();
+    h.run_ok();
     h.get_by_label_contains("Check out").click();
+    h.run_ok();
+    h.get_by_label("Check out cache").click();
     wait_for(&mut h, "the checkout", |app| {
         head_branch(app).as_deref() == Some("cache")
     });
