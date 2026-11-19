@@ -31,6 +31,8 @@ pub enum Action {
     Feedback,
     /// Choose the folder clones go in.
     BrowseCloneDir,
+    /// Look for a new version now.
+    CheckForUpdates,
 }
 
 /// A part of the settings.
@@ -247,7 +249,7 @@ const ROWS: &[Row] = &[
         section: Section::Updates,
         name: "Updates",
         hint: "",
-        words: "update automatic check version",
+        words: "update automatic check now version new",
     },
     Row {
         section: Section::Updates,
@@ -302,6 +304,22 @@ struct View {
 }
 
 const LABEL: f32 = 190.0;
+
+/// Opens the settings window on the Updates page next time it's shown.
+pub fn open_on_updates(ctx: &egui::Context) {
+    let id = egui::Id::new("settings-window");
+    let mut view: View = ctx.data(|d| d.get_temp(id)).unwrap_or_default();
+    view.section = Section::Updates;
+    view.search.clear();
+    view.editing = None;
+    ctx.data_mut(|d| d.insert_temp(id, view));
+}
+
+/// Where the app leaves how updates stand, for the Updates row: what to
+/// say, whether a check is running, and whether this copy can update.
+pub fn updates_id() -> egui::Id {
+    egui::Id::new("settings-updates")
+}
 
 pub fn show(ctx: &egui::Context, settings: &mut Settings) -> Option<Action> {
     let mut action = None;
@@ -1435,6 +1453,28 @@ fn control(
                 ui,
                 "When it starts, and every half hour while it's open; they download in the background.",
             );
+            ui.add_space(6.0);
+            let updates = ui
+                .ctx()
+                .data(|d| d.get_temp::<(String, bool, bool)>(updates_id()));
+            let (status, checking, installed) = updates.unwrap_or_default();
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(
+                        installed && !checking,
+                        egui::Button::new("Check for updates now"),
+                    )
+                    .clicked()
+                {
+                    *action = Some(Action::CheckForUpdates);
+                }
+                if checking {
+                    ui.spinner();
+                }
+            });
+            if !status.is_empty() {
+                hint(ui, &status);
+            }
         }
         "Recent repositories" => {
             let n = settings.recent.len();

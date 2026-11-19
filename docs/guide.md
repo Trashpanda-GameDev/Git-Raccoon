@@ -179,12 +179,12 @@ After most actions, the toolbar shows exactly what **Undo** would do ("Undo comm
 - **Git:** what Pull does when both sides have new commits (ask each time, merge, or rebase your commits on top) and with uncommitted changes; whether Fetch removes remote branches deleted on the remote, and lets fetched branches and tags replace local ones; how often to fetch in the background; diffs unified or side by side, and whether they show the whole file; changed files by path or in folders.
 - **Accounts:** the GitHub and GitLab accounts you're signed in to, and adding one.
 - **Tools:** the terminal "Open a terminal here" runs (if not the system's own; `{path}` stands for the repository's folder, as in `alacritty --working-directory "{path}"`), and the folder new clones go in.
-- **Updates and privacy:** whether to check for updates, and clearing the list of recent repositories.
+- **Updates and privacy:** whether to check for updates automatically, **Check for updates now**, and clearing the list of recent repositories.
 - **About:** the version and what's new in it, sending feedback, and the licenses.
 
 ## Updates and crash reports
 
-**Updates.** An installed Git Raccoon checks for a new version when it starts and every half hour while it's open, and downloads it in the background. When it's ready, the toolbar shows **Restart to update**; your tabs and settings are kept.
+**Updates.** An installed Git Raccoon checks for a new version when it starts and every half hour while it's open, and downloads it in the background. When it's ready, the toolbar shows **Restart to update**; your tabs and settings are kept. To look right away, use **Check for updates now** in Settings › Updates and privacy, or *Check for updates* in the command palette; it says whether you're up to date, or that the new version is downloaded.
 
 **What's new.** After an update, Git Raccoon shows what changed since the version you had (and "What's new in this version" in the command palette shows it again).
 

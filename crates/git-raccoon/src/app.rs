@@ -867,6 +867,7 @@ impl App {
             | Command::Feedback
             | Command::Terminal
             | Command::WhatsNew
+            | Command::CheckForUpdates
             | Command::ShowWorking
             | Command::WriteCommit
             | Command::AddRemote
@@ -952,6 +953,9 @@ impl App {
         add(Command::Terminal, "Open a terminal here".into());
         add(Command::Feedback, "Send feedback, a bug or an idea…".into());
         add(Command::WhatsNew, "What's new in this version".into());
+        if self.updater.is_installed() {
+            add(Command::CheckForUpdates, "Check for updates".into());
+        }
         add(
             Command::ToggleSplitDiff,
             "Switch diffs between unified and side by side".into(),
@@ -1050,6 +1054,12 @@ impl App {
                 if let Some(path) = self.repo.as_ref().map(|r| r.path().to_string()) {
                     self.open_terminal(&path);
                 }
+            }
+            Command::CheckForUpdates => {
+                self.updater.check_now(ctx);
+                // Settings › Updates says how it went.
+                crate::ui::settings::open_on_updates(ctx);
+                self.settings_open = true;
             }
             Command::WhatsNew => {
                 self.whats_new = crate::changelog::of(env!("CARGO_PKG_VERSION"))
@@ -2235,7 +2245,16 @@ impl App {
         self.clone_dialog(&ctx);
         self.new_repo_dialog(&ctx);
         if self.settings_open {
+            let updates = (
+                self.updater.status(),
+                self.updater.is_checking(),
+                self.updater.is_installed(),
+            );
+            ctx.data_mut(|d| d.insert_temp(crate::ui::settings::updates_id(), updates));
             match crate::ui::settings::show(&ctx, &mut self.settings) {
+                Some(crate::ui::settings::Action::CheckForUpdates) => {
+                    self.updater.check_now(&ctx);
+                }
                 Some(crate::ui::settings::Action::Close) => self.settings_open = false,
                 Some(crate::ui::settings::Action::ClearRecent) => self.settings.recent.clear(),
                 Some(crate::ui::settings::Action::AddAccount) => {

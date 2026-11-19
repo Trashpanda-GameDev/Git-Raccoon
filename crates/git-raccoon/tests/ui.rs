@@ -2211,6 +2211,24 @@ fn fetches_in_the_background_when_its_time() {
 }
 
 #[test]
+fn checks_for_updates_from_settings() {
+    use egui::accesskit::Role;
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    h.get_by_role_and_label(Role::Button, "Updates and privacy")
+        .click();
+    h.run_ok();
+    // A copy run from the build (not installed) can't update itself: the
+    // button is there, but off, and says why.
+    let button = h.get_by_role_and_label(Role::Button, "Check for updates now");
+    assert!(button.accesskit_node().is_disabled(), "not installed");
+    h.get_by_label_contains("wasn't installed");
+    screenshot(&mut h, "86-check-for-updates");
+}
+
+#[test]
 fn the_fetch_interval_is_a_setting() {
     let sample = Sample::build();
     let mut h = harness(Settings::default());

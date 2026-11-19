@@ -29,6 +29,17 @@ pub struct Updater {
     /// Downloaded and ready to apply on restart.
     ready: Option<UpdateInfo>,
     last_check: Option<Instant>,
+    /// How the last check went, for "Check for updates" to show.
+    outcome: Option<Outcome>,
+}
+
+/// How the last check went.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Outcome {
+    UpToDate,
+    /// A newer version, downloaded and waiting for a restart.
+    Ready(String),
+    Failed(String),
 }
 
 impl Updater {
@@ -39,6 +50,46 @@ impl Updater {
             task: None,
             ready: None,
             last_check: None,
+            outcome: None,
+        }
+    }
+
+    /// Checks now, whatever the schedule (and even with automatic checks
+    /// off): "Check for updates".
+    pub fn check_now(&mut self, ctx: &egui::Context) {
+        if self.task.is_none() {
+            self.last_check = None;
+            self.outcome = None;
+            self.start(ctx);
+        }
+    }
+
+    /// A check (or its download) is running.
+    pub fn is_checking(&self) -> bool {
+        self.task.is_some()
+    }
+
+    /// What to say about updates: what a check found, or that one is
+    /// running, or why this copy can't.
+    pub fn status(&self) -> String {
+        if !self.is_installed() {
+            return "This copy wasn't installed, so it can't update itself.".into();
+        }
+        if self.is_checking() {
+            return "Checking…".into();
+        }
+        match &self.outcome {
+            _ if self.ready_version().is_some() => format!(
+                "Version {} is downloaded: restart to use it (the button in the toolbar).",
+                self.ready_version().unwrap_or_default()
+            ),
+            Some(Outcome::UpToDate) => {
+                format!("You're up to date ({}).", env!("CARGO_PKG_VERSION"))
+            }
+            Some(Outcome::Failed(why)) => format!("Couldn't check: {why}."),
+            Some(Outcome::Ready(_)) | None => {
+                format!("This is version {}.", env!("CARGO_PKG_VERSION"))
+            }
         }
     }
 
@@ -54,9 +105,15 @@ impl Updater {
         if let Some(result) = self.task.as_ref().and_then(Task::poll) {
             self.task = None;
             // A failed check (offline, say) just waits for the next one.
-            if let Ok(Some(info)) = result {
-                self.ready = Some(info);
-            }
+            self.outcome = Some(match result {
+                Ok(Some(info)) => {
+                    let version = info.TargetFullRelease.Version.clone();
+                    self.ready = Some(info);
+                    Outcome::Ready(version)
+                }
+                Ok(None) => Outcome::UpToDate,
+                Err(why) => Outcome::Failed(why),
+            });
         }
         let Some(manager) = self.manager.clone().filter(|_| enabled) else {
             return;
@@ -69,6 +126,15 @@ impl Updater {
             ctx.request_repaint_after(wait);
             return;
         }
+        let _ = manager;
+        self.start(ctx);
+    }
+
+    /// Starts a check (and download), in the background.
+    fn start(&mut self, ctx: &egui::Context) {
+        let Some(manager) = self.manager.clone() else {
+            return;
+        };
         self.last_check = Some(Instant::now());
         // A newer release than the one already downloaded replaces it.
         let have = self
