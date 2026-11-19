@@ -56,6 +56,8 @@ pub struct App {
     applied: Option<(theme::Palette, f32)>,
     /// The title bar's colours need setting (the look changed).
     title_bar_stale: bool,
+    /// A menu was open when the last frame was drawn (Esc then only closes it).
+    menu_was_open: bool,
     updater: crate::updates::Updater,
     /// Restart into the downloaded update once settings are saved.
     restart_to_update: bool,
@@ -198,6 +200,7 @@ impl App {
             settings_open: false,
             applied: None,
             title_bar_stale: true,
+            menu_was_open: false,
             updater: crate::updates::Updater::new(),
             restart_to_update: false,
             crash_reports: Vec::new(),
@@ -1470,6 +1473,10 @@ impl App {
             return;
         }
         let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+        // Esc with a menu open only closes the menu.
+        if escape && self.menu_was_open {
+            return;
+        }
         if escape {
             // The innermost thing first: an open search bar closes on its
             // own (Esc also takes the focus from it, so it doesn't count
@@ -2098,7 +2105,6 @@ impl App {
                             repo.select(&id);
                         }
                         Some(diff::Action::StagePicked) => repo.stage_picked(&ctx),
-                        Some(diff::Action::ClearPicked) => repo.picked.clear(),
                         None => {}
                     }
                     return;
@@ -2183,6 +2189,23 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        self.draw(ui, frame);
+        // Shortcuts (next frame) run before menus are drawn again.
+        self.menu_was_open = ui.ctx().any_popup_open();
+    }
+
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        theme::bg().to_normalized_gamma_f32()
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        self.remember_tabs();
+        eframe::set_value(storage, Settings::KEY, &self.settings);
+    }
+}
+
+impl App {
+    fn draw(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         // The title bar matches the tab bar beneath it.
         if std::mem::take(&mut self.title_bar_stale) {
             crate::title_bar::colour(frame, theme::bg(), theme::text(), theme::border());
@@ -2330,15 +2353,6 @@ impl eframe::App for App {
         self.new_request_window(&ctx);
         self.crash_dialog(&ctx);
         self.questions(&ctx);
-    }
-
-    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        theme::bg().to_normalized_gamma_f32()
-    }
-
-    fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        self.remember_tabs();
-        eframe::set_value(storage, Settings::KEY, &self.settings);
     }
 }
 

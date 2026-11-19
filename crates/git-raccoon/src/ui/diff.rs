@@ -40,7 +40,6 @@ pub enum Action {
     SelectAll,
     CopyPicked,
     StagePicked,
-    ClearPicked,
     /// From the history: show this commit's change to the file (at `path`,
     /// its name then).
     Pick {
@@ -188,56 +187,6 @@ pub fn show(
         Stroke::new(1.0, theme::border()),
     );
 
-    // What to do with the picked lines.
-    if !lines.picked.is_empty() {
-        egui::Frame::new()
-            .fill(theme::bg_raised())
-            .inner_margin(egui::Margin::symmetric(12, 0))
-            .show(ui, |ui| {
-                ui.set_height(32.0);
-                ui.set_width(ui.available_width());
-                ui.horizontal_centered(|ui| {
-                    let n = lines.picked.len();
-                    let s = if n == 1 { "" } else { "s" };
-                    ui.label(
-                        RichText::new(format!("{n} line{s} picked"))
-                            .size(12.0)
-                            .color(theme::muted()),
-                    );
-                    ui.add_space(8.0);
-                    let copy = ui
-                        .button(format!("{}  Copy {n} line{s}", icon::COPY))
-                        .on_hover_text("Ctrl+C");
-                    if copy.clicked() {
-                        action = Some(Action::CopyPicked);
-                    }
-                    let changes = ready.map_or(0, |d| changed(d, lines.picked));
-                    if let Some(verb) = lines.verb()
-                        && changes > 0
-                    {
-                        let label = format!(
-                            "{verb} {changes} {}",
-                            if changes == 1 { "line" } else { "lines" }
-                        );
-                        let stage = egui::Button::new(
-                            RichText::new(label).color(theme::on_accent()).strong(),
-                        )
-                        .fill(theme::accent_fill());
-                        if ui.add_enabled(!lines.busy(), stage).clicked() {
-                            action = Some(Action::StagePicked);
-                        }
-                    }
-                    if ui.button("Clear").on_hover_text("Esc").clicked() {
-                        action = Some(Action::ClearPicked);
-                    }
-                });
-            });
-        ui.painter().hline(
-            ui.max_rect().x_range(),
-            ui.cursor().top(),
-            Stroke::new(1.0, theme::border()),
-        );
-    }
     // The history, down the left.
     if let Some(past) = past
         && let Some(list) = past.history
@@ -358,7 +307,7 @@ fn line_input(
                 .add_enabled(
                     !lines.busy(),
                     egui::Button::new(format!(
-                        "{verb} {changes} changed line{}",
+                        "{verb} {changes} line{}",
                         if changes == 1 { "" } else { "s" }
                     )),
                 )

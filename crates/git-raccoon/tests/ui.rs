@@ -954,8 +954,11 @@ fn stages_files_hunks_and_lines() {
     h.run_ok();
     assert_eq!(h.state().repo().unwrap().picked.len(), 1);
     screenshot(&mut h, "10-pick-line");
-    // Clicked through accessibility rather than the pointer: under heavy
-    // load with screenshots on, a pointer click here was sometimes lost.
+    // From its right-click menu.
+    h.get_by_label("Select line: line 2 edited")
+        .click_secondary();
+    h.run_ok();
+    screenshot(&mut h, "10b-line-menu");
     h.get_by_label("Stage 1 line").click_accesskit();
     wait_for(&mut h, "the line staged", |app| {
         app.repo().unwrap().picked.is_empty() && !app.is_busy()
@@ -4519,7 +4522,12 @@ fn lines_of_a_diff_can_be_picked_and_copied() {
         .click_modifiers(egui::Modifiers::SHIFT);
     h.run_ok();
     assert_eq!(lines(&h), 3);
-    assert!(h.get_by_label_contains("Copy 3 lines").rect().width() > 0.0);
+    // Right-click one of them for what to do with them.
+    h.get_by_label(&all[2]).click_secondary();
+    h.run_ok();
+    assert!(h.query_by_label("Copy 3 lines").is_some());
+    h.key_press(Key::Escape);
+    h.run_ok();
     // Ctrl+click takes one out.
     h.get_by_label(&all[2])
         .click_modifiers(egui::Modifiers::COMMAND);
