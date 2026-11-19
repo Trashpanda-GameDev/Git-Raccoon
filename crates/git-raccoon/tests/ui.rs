@@ -2195,6 +2195,72 @@ fn the_side_panels_are_as_wide_as_you_drag_them() {
 }
 
 #[test]
+fn deletes_a_tag_here_on_the_remote_or_both() {
+    use egui::accesskit::Role;
+    let sample = Sample::build();
+    let bare = sample.dir.with_extension("tags.git");
+    git(&sample, &["init", "-q", "--bare", bare.to_str().unwrap()]);
+    git(
+        &sample,
+        &["remote", "set-url", "origin", bare.to_str().unwrap()],
+    );
+    git(&sample, &["push", "-q", "origin", "main", "v0.1.0"]);
+    let there = || {
+        let out = std::process::Command::new("git")
+            .args(["ls-remote", "--tags", bare.to_str().unwrap(), "v0.1.0"])
+            .output()
+            .unwrap();
+        !String::from_utf8_lossy(&out.stdout).trim().is_empty()
+    };
+    let here = |app: &App| {
+        app.repo()
+            .unwrap()
+            .refs
+            .tags
+            .iter()
+            .any(|t| t.name == "v0.1.0")
+    };
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    settle(&mut h);
+    let delete = |h: &mut Harness<'_, App>, choice: &str, button: &str| {
+        menu_item(h, "v0.1.0", "Delete tag");
+        h.get_by_role_and_label(Role::RadioButton, choice).click();
+        h.run_ok();
+        h.get_by_role_and_label(Role::Button, button).click();
+        settle(h);
+    };
+
+    // Only on the remote: kept here.
+    menu_item(&mut h, "v0.1.0", "Delete tag");
+    h.get_by_role_and_label(Role::RadioButton, "Only on origin")
+        .click();
+    h.run_ok();
+    screenshot(&mut h, "81-delete-tag");
+    h.get_by_role_and_label(Role::Button, "Delete on remote")
+        .click();
+    settle(&mut h);
+    assert!(!there(), "gone from origin");
+    assert!(here(h.state()), "still here");
+    // Undo puts it back there.
+    h.get_by_label("Undo").click();
+    settle(&mut h);
+    assert!(there(), "back on origin");
+
+    // Here and on the remote; undo brings both back.
+    delete(&mut h, "Here and on origin", "Delete everywhere");
+    assert!(!there() && !here(h.state()), "gone from both");
+    h.get_by_label("Undo").click();
+    settle(&mut h);
+    assert!(there() && here(h.state()), "back in both");
+
+    // Only here, as before.
+    delete(&mut h, "Only here", "Delete tag");
+    assert!(there() && !here(h.state()));
+    let _ = std::fs::remove_dir_all(&bare);
+}
+
+#[test]
 fn a_dragged_branch_is_held_in_a_hand() {
     let sample = Sample::build();
     let mut h = harness(Settings::default());

@@ -64,7 +64,7 @@ Your hooks run as usual. If one refuses the commit, its message is shown and you
 
 ## Branches and tags
 
-Right-click a branch in the sidebar to **check it out**, **create a branch** from it, **rename** it, **set its upstream** (the remote branch it pulls from and pushes to, or none) or **delete** it (double-click also checks out). The **+** next to *Local* creates a branch. Right-click a commit in the graph to create a branch or tag there, or check out that commit.
+Right-click a branch in the sidebar to **check it out**, **create a branch** from it, **rename** it, **set its upstream** (the remote branch it pulls from and pushes to, or none) or **delete** it (double-click also checks out). The **+** next to *Local* creates a branch. Right-click a commit in the graph to create a branch or tag there, or check out that commit. Right-click a tag to delete it: **only here**, **here and on the remote**, or **only on the remote** (kept here, to fix and push again); with several remotes, pick which. Undo puts it back where it was deleted, the remote included.
 
 Git Raccoon protects your work: if uncommitted changes are in the way of a checkout, it offers to stash them first; deleting a branch with commits that aren't anywhere else asks twice and tells you how to get them back.
 

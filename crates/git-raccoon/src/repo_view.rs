@@ -234,6 +234,18 @@ pub enum Op {
         message: String,
     },
     DeleteTag(String),
+    /// Delete a tag on a remote, and here too when `local`.
+    DeleteTagOn {
+        name: String,
+        remote: String,
+        local: bool,
+    },
+    /// Put a tag deleted on a remote back there (undoing the delete).
+    RestoreRemoteTag {
+        remote: String,
+        name: String,
+        id: String,
+    },
     /// Stash everything (untracked files too), then run the operation:
     /// for a checkout that local changes were in the way of.
     StashThen(Box<Op>),
@@ -447,6 +459,20 @@ impl Op {
                 message,
             } => branch::create_tag(path, &name, &target, &message),
             Op::DeleteTag(name) => branch::delete_tag(path, &name),
+            Op::DeleteTagOn {
+                name,
+                remote,
+                local,
+            } => {
+                sync::delete_remote_tag(path, &remote, &name, report, &ctl.cancel)?;
+                if local {
+                    branch::delete_tag(path, &name)?;
+                }
+                Ok(())
+            }
+            Op::RestoreRemoteTag { remote, name, id } => {
+                sync::restore_remote_tag(path, &remote, &name, &id, report, &ctl.cancel)
+            }
             Op::StashThen(op) => {
                 let what = op.verb();
                 stash::save(
@@ -559,7 +585,8 @@ impl Op {
             Op::DeleteBranch { .. } => "delete the branch",
             Op::DeleteBranches { .. } => "delete the branches",
             Op::CreateTag { .. } => "create the tag",
-            Op::DeleteTag(_) => "delete the tag",
+            Op::DeleteTag(_) | Op::DeleteTagOn { .. } => "delete the tag",
+            Op::RestoreRemoteTag { .. } => "undo",
             Op::StashThen(op) => op.verb(),
             Op::UndoCommit { .. }
             | Op::DeleteBranchAt { .. }
@@ -685,7 +712,7 @@ impl Before {
                 b.tip = branch::tip(path, name).ok();
                 b.upstream = undo::upstream_of(path, name).ok().flatten();
             }
-            Op::DeleteTag(name) => {
+            Op::DeleteTag(name) | Op::DeleteTagOn { name, .. } => {
                 b.tag = undo::ref_target(path, &format!("refs/tags/{name}")).ok()
             }
             Op::StashDrop(id) => {
@@ -876,6 +903,26 @@ fn undo_for(op: &Op, before: Before, path: &str) -> Option<Undoable> {
                 id: before.tag?,
             }],
         ),
+        Op::DeleteTagOn {
+            name,
+            remote,
+            local,
+        } => {
+            let id = before.tag?;
+            let mut ops = Vec::new();
+            if *local {
+                ops.push(Op::RestoreTag {
+                    name: name.clone(),
+                    id: id.clone(),
+                });
+            }
+            ops.push(Op::RestoreRemoteTag {
+                remote: remote.clone(),
+                name: name.clone(),
+                id,
+            });
+            (format!("Undo delete tag {name} on {remote}"), ops)
+        }
         Op::Stash { staged, .. } => {
             let top = stash::top(path).ok()??;
             if before.stash_top.as_ref() == Some(&top) {
@@ -1156,6 +1203,17 @@ pub struct PushTarget {
 }
 
 /// A question to answer before something happens.
+/// Where a tag is deleted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TagScope {
+    /// Only in this repository.
+    Here,
+    /// Here and on the remote.
+    Both,
+    /// Only on the remote; kept here.
+    Remote,
+}
+
 pub enum Dialog {
     /// "Are you sure?" before an operation. `danger` colours the button red.
     Confirm {
@@ -1187,6 +1245,13 @@ pub enum Dialog {
     RenameBranch {
         old: String,
         name: String,
+    },
+    /// Delete a tag: here, on a remote, or both.
+    DeleteTag {
+        name: String,
+        remotes: Vec<String>,
+        remote: String,
+        scope: TagScope,
     },
     /// Choose `branch`'s upstream ("origin/main"), or none.
     SetUpstream {
@@ -1672,6 +1737,8 @@ impl RepoView {
                 | Op::DeleteRemoteBranch(_)
                 | Op::DeleteRemoteBranches(_)
                 | Op::RestoreRemoteBranch { .. }
+                | Op::DeleteTagOn { .. }
+                | Op::RestoreRemoteTag { .. }
                 | Op::FetchInto { .. }
         ) {
             return None;
@@ -2350,6 +2417,22 @@ impl RepoView {
     }
 
     pub fn confirm_delete_tag(&mut self, name: String) {
+        // With remotes: here, there, or both.
+        let remotes: Vec<String> = self.refs.remotes.iter().map(|r| r.name.clone()).collect();
+        if let Some(first) = remotes.first() {
+            let remote = if remotes.iter().any(|r| r == "origin") {
+                "origin".to_string()
+            } else {
+                first.clone()
+            };
+            self.dialog = Some(Dialog::DeleteTag {
+                name,
+                remotes,
+                remote,
+                scope: TagScope::Here,
+            });
+            return;
+        }
         self.dialog = Some(Dialog::Confirm {
             title: format!("Delete tag {name}?"),
             body: "Only the tag is removed; the commit stays. If the tag was pushed, it stays on the remote until deleted there too.".into(),

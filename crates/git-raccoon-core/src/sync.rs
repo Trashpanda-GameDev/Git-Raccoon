@@ -180,6 +180,39 @@ pub fn delete_remote_branch(
     .map(drop)
 }
 
+/// Deletes tag `name` on `remote`, for everyone (like
+/// `git push origin --delete refs/tags/v1.0`). The tag here is untouched.
+pub fn delete_remote_tag(
+    path: &str,
+    remote: &str,
+    name: &str,
+    on: &mut dyn FnMut(Progress),
+    cancel: &AtomicBool,
+) -> Result<()> {
+    let tag = format!("refs/tags/{name}");
+    run(
+        path,
+        &["push", "--progress", remote, "--delete", &tag],
+        on,
+        cancel,
+    )
+    .map(drop)
+}
+
+/// Puts tag `name` back on `remote`, at `id` (a commit, or an annotated
+/// tag's object): undoing [`delete_remote_tag`].
+pub fn restore_remote_tag(
+    path: &str,
+    remote: &str,
+    name: &str,
+    id: &str,
+    on: &mut dyn FnMut(Progress),
+    cancel: &AtomicBool,
+) -> Result<()> {
+    let refspec = format!("{id}:refs/tags/{name}");
+    run(path, &["push", "--progress", remote, &refspec], on, cancel).map(drop)
+}
+
 /// Fetches `source` on `remote` (like a pull request's
 /// "pull/7/head") into the local branch `branch`, made or moved to it.
 pub fn fetch_into(
@@ -580,6 +613,35 @@ mod tests {
         assert!(has_gone(), "kept without pruning");
         fetch_remote(s.b.path(), "origin", &options(true), &mut |_| {}, &none).unwrap();
         assert!(!has_gone(), "pruned");
+    }
+
+    #[test]
+    fn deletes_a_tag_on_the_remote_and_puts_it_back() {
+        let s = setup();
+        let none = AtomicBool::new(false);
+        let on_remote = |name: &str| {
+            !cli::run(s.a.path(), &["ls-remote", "--tags", "origin", name], None)
+                .unwrap()
+                .trim()
+                .is_empty()
+        };
+        // An annotated tag, pushed.
+        cli::run(s.a.path(), &["tag", "-a", "v1", "-m", "One"], None).unwrap();
+        cli::run(s.a.path(), &["push", "-q", "origin", "v1"], None).unwrap();
+        assert!(on_remote("v1"));
+        let id = crate::undo::ref_target(s.a.path(), "refs/tags/v1").unwrap();
+
+        delete_remote_tag(s.a.path(), "origin", "v1", &mut |_| {}, &none).unwrap();
+        assert!(!on_remote("v1"), "gone there");
+        assert!(
+            crate::undo::ref_target(s.a.path(), "refs/tags/v1").is_ok(),
+            "kept here"
+        );
+
+        restore_remote_tag(s.a.path(), "origin", "v1", &id, &mut |_| {}, &none).unwrap();
+        assert!(on_remote("v1"), "back, as the same annotated tag");
+        let there = cli::run(s.a.path(), &["ls-remote", "--tags", "origin", "v1"], None).unwrap();
+        assert!(there.starts_with(&id), "{there} / {id}");
     }
 
     #[test]

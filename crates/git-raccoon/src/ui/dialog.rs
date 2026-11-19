@@ -5,7 +5,7 @@ use eframe::egui::{self, RichText};
 use git_raccoon_core::branch;
 use git_raccoon_core::refs::Refs;
 
-use crate::repo_view::{Dialog, Op};
+use crate::repo_view::{Dialog, Op, TagScope};
 use crate::theme;
 
 /// Shows the open dialog, if any. Returns the operation to run when the
@@ -170,6 +170,65 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
                     answer = Some(Some(0));
                 }
                 ("Rename".into(), false, problem.is_none() && name != old)
+            }
+            Dialog::DeleteTag {
+                name,
+                remotes,
+                remote,
+                scope,
+            } => {
+                heading(
+                    ui,
+                    &format!("Delete tag {name}?"),
+                    Some("Only the tag goes; the commit stays."),
+                );
+                let there = remote.clone();
+                for (value, label, about) in [
+                    (
+                        TagScope::Here,
+                        "Only here".to_string(),
+                        format!("If it was pushed, it stays on {there}."),
+                    ),
+                    (
+                        TagScope::Both,
+                        format!("Here and on {there}"),
+                        "Gone for everyone who fetches from there.".to_string(),
+                    ),
+                    (
+                        TagScope::Remote,
+                        format!("Only on {there}"),
+                        "Kept here, for you to fix and push again.".to_string(),
+                    ),
+                ] {
+                    ui.radio_value(scope, value, label);
+                    ui.horizontal(|ui| {
+                        ui.add_space(24.0);
+                        ui.label(RichText::new(about).size(12.0).color(theme::muted()));
+                    });
+                    ui.add_space(2.0);
+                }
+                if remotes.len() > 1 && *scope != TagScope::Here {
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Remote");
+                        let combo = egui::ComboBox::from_id_salt("delete-tag-remote")
+                            .selected_text(remote.as_str())
+                            .show_ui(ui, |ui| {
+                                for r in remotes.iter() {
+                                    ui.selectable_value(remote, r.clone(), r);
+                                }
+                            });
+                        ui.ctx().accesskit_node_builder(combo.response.id, |n| {
+                            n.set_label("Remote to delete it on");
+                        });
+                    });
+                }
+                let label = match scope {
+                    TagScope::Here => "Delete tag",
+                    TagScope::Both => "Delete everywhere",
+                    TagScope::Remote => "Delete on remote",
+                };
+                (label.into(), true, true)
             }
             Dialog::SetUpstream { branch, upstream } => {
                 heading(
@@ -342,6 +401,24 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
                 new: name.trim().to_string(),
             }),
             Dialog::SetUpstream { branch, upstream } => Some(Op::SetUpstream { branch, upstream }),
+            Dialog::DeleteTag {
+                name,
+                remote,
+                scope,
+                ..
+            } => Some(match scope {
+                TagScope::Here => Op::DeleteTag(name),
+                TagScope::Both => Op::DeleteTagOn {
+                    name,
+                    remote,
+                    local: true,
+                },
+                TagScope::Remote => Op::DeleteTagOn {
+                    name,
+                    remote,
+                    local: false,
+                },
+            }),
             Dialog::NewTag {
                 target,
                 name,
