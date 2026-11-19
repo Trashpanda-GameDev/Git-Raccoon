@@ -3170,6 +3170,21 @@ fn picks_several_branches_and_deletes_them_together() {
             .collect()
     };
 
+    // Shift+click picks everything shown between the last branch clicked
+    // and this one (folders aside).
+    h.get_by_label("graph").click();
+    h.run_ok();
+    h.get_by_label("toolbar-glitch")
+        .click_modifiers(egui::Modifiers::SHIFT);
+    h.run_ok();
+    h.get_by_label("graph").click_secondary();
+    h.run_ok();
+    h.get_by_label("Delete 2 branches…");
+    h.key_press(Key::Escape);
+    h.run_ok();
+    h.key_press(Key::Escape);
+    h.run_ok();
+
     // Ctrl+click two local branches; right-click one of them.
     h.get_by_label("graph")
         .click_modifiers(egui::Modifiers::COMMAND);
@@ -3211,12 +3226,12 @@ fn picks_several_branches_and_deletes_them_together() {
         l.contains(&"feature/graph".to_string()) && l.contains(&"fix/ui/toolbar-glitch".to_string())
     });
 
-    // Two on the remote.
-    h.get_by_label("one")
-        .click_modifiers(egui::Modifiers::COMMAND);
+    // Two on the remote, the other way: click one, Shift+click the last
+    // of the range.
+    h.get_by_label("one").click();
     h.run_ok();
     h.get_by_label("two")
-        .click_modifiers(egui::Modifiers::COMMAND);
+        .click_modifiers(egui::Modifiers::SHIFT);
     h.run_ok();
     h.get_by_label("two").click_secondary();
     h.run_ok();

@@ -530,9 +530,15 @@ struct Ctx<'s> {
     filtering: bool,
     selected: Option<&'s str>,
     action: Option<Action>,
-    /// Branches picked with Ctrl+click: "origin/x" for remote ones, which
-    /// are kept apart by `Picked`.
+    /// Branches picked with Ctrl+click or Shift+click: "origin/x" for
+    /// remote ones, which are kept apart by `Picked`.
     picked: Vec<Picked>,
+    /// Where a Shift+click range starts: the branch last clicked.
+    anchor: Option<Picked>,
+    /// The branch rows in the order they're drawn: this frame's, and the
+    /// last frame's (what a Shift+click range runs through).
+    order: Vec<Picked>,
+    shown: Vec<Picked>,
 }
 
 /// A branch picked in the sidebar.
@@ -549,20 +555,43 @@ impl Ctx<'_> {
     }
 
     /// A click on a branch's row: Ctrl (Cmd) picks it, or unpicks it;
+    /// Shift picks every branch shown from the last one clicked to it;
     /// otherwise the picking is over. Returns whether it was picked.
     fn pick(&mut self, ui: &egui::Ui, response: &egui::Response, branch: Picked) -> bool {
+        self.order.push(branch.clone());
         if !response.clicked() {
             return false;
         }
-        if ui.input(|i| i.modifiers.command) {
+        let mods = ui.input(|i| i.modifiers);
+        if mods.shift {
+            let anchor = self.anchor.clone().unwrap_or_else(|| branch.clone());
+            let at = |b: &Picked| self.shown.iter().position(|p| p == b);
+            if let (Some(a), Some(b)) = (at(&anchor), at(&branch)) {
+                // The range, added to what's picked (Ctrl too) or instead.
+                if !mods.command {
+                    self.picked.clear();
+                }
+                for p in &self.shown[a.min(b)..=a.max(b)] {
+                    if !self.picked.contains(p) {
+                        self.picked.push(p.clone());
+                    }
+                }
+            } else {
+                self.picked = vec![branch.clone()];
+            }
+            self.anchor = Some(anchor);
+            true
+        } else if mods.command {
             if let Some(at) = self.picked.iter().position(|p| *p == branch) {
                 self.picked.remove(at);
             } else {
-                self.picked.push(branch);
+                self.picked.push(branch.clone());
             }
+            self.anchor = Some(branch);
             true
         } else {
             self.picked.clear();
+            self.anchor = Some(branch);
             false
         }
     }
@@ -1247,6 +1276,15 @@ pub fn show(
         selected,
         action: None,
         picked: ui.data(|d| d.get_temp::<Vec<Picked>>(picked_id).unwrap_or_default()),
+        anchor: ui.data(|d| {
+            d.get_temp::<Option<Picked>>(picked_id.with("anchor"))
+                .flatten()
+        }),
+        order: Vec::new(),
+        shown: ui.data(|d| {
+            d.get_temp::<Vec<Picked>>(picked_id.with("order"))
+                .unwrap_or_default()
+        }),
     };
     // Not one scrolling list: each section scrolls on its own (#13).
     ui.scope(|ui| {
@@ -1735,6 +1773,8 @@ pub fn show(
     }
     ui.data_mut(|d| {
         d.insert_temp(picked_id, c.picked.clone());
+        d.insert_temp(picked_id.with("anchor"), c.anchor.clone());
+        d.insert_temp(picked_id.with("order"), std::mem::take(&mut c.order));
         d.insert_temp(measured_id, c.sizes.measured.clone());
         d.insert_persisted(shares_id, c.sizes.shares.clone());
     });
