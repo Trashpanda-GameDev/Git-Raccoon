@@ -238,8 +238,8 @@ Click a request to open it in place of the graph. **Esc** goes back.
 The header shows its state, branches, checks, approvals and unresolved threads. Below it are three tabs:
 
 - **Conversation**: the description and comments (as formatted Markdown), reviews, checks, and threads with the code they're about.
-- **Commits**: click one to see it in the graph.
-- **Changes**: each file's diff, with comment threads under their lines. **Reply**, **Resolve** or **Unresolve** them there.
+- **Commits**: **Show them in the graph** marks them there (a bar takes you back). Click one to go straight to it.
+- **Changes**: each file's diff, with comment threads under their lines. **Reply**, **Resolve** or **Unresolve** them there. Switch to **Split**, **Whole file** or **Blame**, as in any diff (Git Raccoon fetches the request's commits in the background for these, without making a branch).
 
 ### Reviewing
 
@@ -268,18 +268,21 @@ To suggest one yourself, pick lines in Changes and right-click › **Suggest a c
 
 ### Checking out
 
-**Check out ▾** puts you on the request's branch, or in a **new worktree** beside this folder. A request from a fork gets a branch of its own (`pr/12` or `mr/12`).
+**Check out ▾** puts you on the request's branch, or in a **new worktree** beside this folder, which opens in a tab. A request from a fork gets a branch of its own (`pr/12` or `mr/12`).
 
-On its branch, the header offers **Pull the latest** and **Back to main**.
+- **Uncommitted changes in the way?** It asks: put them aside and check out, use a worktree instead, or cancel.
+- **On its branch,** the header offers **Pull the latest** and **Back to…** the branch you were on. Changes put aside come back with you.
 
 ### Opening a new request
 
 Use the **+** next to *Pull requests*, or right-click any local branch › **Open a pull request…**.
 
-- Pick the branch it goes into. The window shows its commits, and warns if it won't merge cleanly.
+- Pick the branch it goes into. The window shows its commits and the files it changes (click one for its diff), and warns if it won't merge cleanly.
 - The title and description are filled in from its commits, or from the repository's template.
 - Pick **reviewers**, **assignees** and **labels** from the project's own.
-- Not pushed yet? **Push and open** does both.
+- Not pushed yet? **Push and open** does both, even for a branch that isn't checked out.
+
+After you push a new branch, a bar offers to open a request for it.
 
 ### Opening pages on the forge
 

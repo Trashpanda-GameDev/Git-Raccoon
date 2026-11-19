@@ -1809,9 +1809,71 @@ impl App {
                         if let Some(t) = repo.push_to.take() {
                             let to = Some((t.remote, t.name.trim().to_string()));
                             repo.run(&ctx, Op::Push { force: false, to });
+                            // A new branch on the remote: offer a request for it.
+                            repo.offer_request = Some((t.branch.clone(), false));
                         }
                     }
                     Some(crate::ui::push_to::Answer::Cancel) => repo.push_to = None,
+                    None => {}
+                }
+            }
+        }
+
+        // After pushing a new branch: offer to open a pull/merge request.
+        if let Some(repo) = &mut self.repo
+            && let Some((branch, shown)) = repo.offer_request.clone()
+        {
+            if !shown && !repo.op_running() {
+                let pushed = repo
+                    .refs
+                    .local
+                    .iter()
+                    .any(|b| b.name == branch && b.upstream.as_ref().is_some_and(|u| !u.gone));
+                let has_one = repo.forge.as_ref().is_some_and(|f| {
+                    f.requests
+                        .as_ref()
+                        .and_then(|r| r.as_ref().ok())
+                        .is_some_and(|list| list.iter().any(|r| r.source == branch))
+                });
+                let signed_in = repo.forge.as_ref().is_some_and(|f| f.account.is_some());
+                let moved_on = repo.head_branch() != Some(branch.as_str());
+                if pushed {
+                    repo.offer_request = (signed_in && !has_one).then(|| (branch.clone(), true));
+                } else if self.error.is_some() || moved_on {
+                    // The push didn't work (or it's moot now).
+                    repo.offer_request = None;
+                }
+                // Otherwise its branches are still being reloaded.
+            }
+            if let Some((branch, true)) = repo.offer_request.clone() {
+                let noun = repo.forge.as_ref().map_or("pull request".to_string(), |f| {
+                    f.project.kind.request().to_lowercase()
+                });
+                let mut chosen = None;
+                Panel::top("offer-request")
+                    .frame(
+                        Frame::new()
+                            .fill(theme::bg_raised())
+                            .stroke(egui::Stroke::new(1.0, theme::accent()))
+                            .inner_margin(Margin::symmetric(12, 8)),
+                    )
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(format!("{branch} is on the remote now."));
+                            if widgets::primary_button(ui, &format!("Open a {noun}…")).clicked() {
+                                chosen = Some(true);
+                            }
+                            if ui.button("Not now").clicked() {
+                                chosen = Some(false);
+                            }
+                        });
+                    });
+                match chosen {
+                    Some(true) => {
+                        repo.offer_request = None;
+                        self.new_request = new_form(repo, Some(&branch));
+                    }
+                    Some(false) => repo.offer_request = None,
                     None => {}
                 }
             }

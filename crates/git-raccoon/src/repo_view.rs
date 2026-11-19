@@ -1380,6 +1380,9 @@ pub struct RepoView {
     /// A folder to open in a tab once the operation running is done (a
     /// worktree being made).
     pub open_when_done: Option<String>,
+    /// A branch just pushed to the remote for the first time, to offer a
+    /// pull/merge request for (once the push is done: then `true`).
+    pub offer_request: Option<(String, bool)>,
     committing: Option<Task<Result<Option<Undoable>, String>>>,
     /// How to undo the last action, if it can be.
     pub undo: Option<Undoable>,
@@ -1491,6 +1494,7 @@ impl RepoView {
             forge_stale: true,
             highlight: None,
             open_when_done: None,
+            offer_request: None,
             committing: None,
             undo: None,
             conflict: None,

@@ -4091,13 +4091,46 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     assert_eq!(h.state().new_request_form().unwrap().open_file, Some(0));
     // Not pushed, and not checked out: it's pushed by name.
     assert!(
-        h.get_by_label("Push 1 commit and open")
+        !h.get_by_label("Push 1 commit and open")
             .accesskit_node()
-            .is_disabled()
-            == false,
+            .is_disabled(),
         "pushing doesn't need it checked out"
     );
     screenshot(&mut h, "79c-request-files");
+    h.get_by_label("Cancel").click();
+    h.run_ok();
+
+    // Pushing a new branch offers to open a request for it. (Pushes go
+    // straight to the remote's folder; the stand-in forge can't take them.)
+    git(
+        &sample,
+        &[
+            "remote",
+            "set-url",
+            "--push",
+            "origin",
+            bare.to_str().unwrap(),
+        ],
+    );
+    git(&sample, &["checkout", "-q", "-b", "fresh"]);
+    h.key_press(Key::Escape);
+    h.key_press(Key::F5);
+    wait_for(&mut h, "the new branch", |app| {
+        head_branch(app).as_deref() == Some("fresh")
+    });
+    h.get_by_label("Push").click();
+    h.run_ok();
+    h.get_by_label("Push to origin/fresh").click();
+    wait_for(&mut h, "the offer", |app| {
+        app.repo().unwrap().offer_request == Some(("fresh".to_string(), true))
+    });
+    h.run_ok();
+    h.get_by_label("fresh is on the remote now.");
+    screenshot(&mut h, "79d-offer-request");
+    h.get_by_label("Open a merge request…").click();
+    h.run_ok();
+    assert_eq!(h.state().new_request_form().unwrap().source, "fresh");
+    assert!(h.state().repo().unwrap().offer_request.is_none());
     h.get_by_label("Cancel").click();
     h.run_ok();
 
