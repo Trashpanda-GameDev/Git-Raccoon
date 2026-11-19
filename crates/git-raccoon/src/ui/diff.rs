@@ -744,7 +744,7 @@ pub(crate) fn unified_line(
 }
 
 /// One half of a side-by-side row; its code is `shift` scrolled sideways.
-fn side(
+pub(crate) fn side(
     painter: &egui::Painter,
     rect: Rect,
     d: &RenderedDiff,

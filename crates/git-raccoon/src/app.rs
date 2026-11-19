@@ -1199,6 +1199,10 @@ impl App {
             if std::mem::take(&mut f.reloading) {
                 f.load(ctx);
             }
+            let root = repo.path().to_string();
+            if let Some(f) = &mut repo.forge {
+                f.keep_local(ctx, &root);
+            }
         }
     }
 

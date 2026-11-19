@@ -21,6 +21,7 @@ pub mod modules;
 pub mod refs;
 pub mod remote;
 pub mod repo;
+pub mod request;
 pub mod rewrite;
 pub mod search;
 pub mod stage;

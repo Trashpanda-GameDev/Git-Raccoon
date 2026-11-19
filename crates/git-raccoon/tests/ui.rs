@@ -3482,6 +3482,13 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
         )
     };
     let api = "/api/v4/projects/team%2Fapp";
+    // Its head is main's commit (here already, so nothing to fetch).
+    let main = Repository::open(&sample.dir)
+        .unwrap()
+        .revparse_single("main")
+        .unwrap()
+        .id()
+        .to_string();
     // The repository on the stand-in forge.
     let bare = sample.dir.with_extension("remote.git");
     git(&sample, &["init", "-q", "--bare", bare.to_str().unwrap()]);
@@ -3503,7 +3510,10 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
             "labels": ["perf"], "web_url": "u", "description": "It takes ages.", "created_at": "2026-11-01T00:00:00Z",
             "user_notes_count": 1}]"#.into()),
         // Details.
-        ("GET /api/v4/projects/team%2Fapp/merge_requests/12", mr(12, "Pipeline cache", "cache")),
+        ("GET /api/v4/projects/team%2Fapp/merge_requests/12", mr(12, "Pipeline cache", "cache").replace(
+            r#""head_pipeline""#,
+            &format!(r#""diff_refs": {{"base_sha": "{main}", "start_sha": "{main}", "head_sha": "{main}"}}, "head_pipeline""#),
+        )),
         ("GET /api/v4/projects/team%2Fapp/merge_requests/12/approvals", r#"{"approved_by": [{"user": {"username": "rocky"}}]}"#.into()),
         ("GET /api/v4/projects/team%2Fapp/merge_requests/12/diffs", r#"[{"old_path": "README.md", "new_path": "README.md",
             "diff": "@@ -1,2 +1,3 @@\n # Sample\n-Old line\n+New line\n+Another\n"}]"#.into()),
@@ -3638,10 +3648,43 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     }));
 
     // Changes: the diff, with the thread under its line.
-    h.get_by_label("Changes").click();
+    h.get_by_label("Changes tab").click();
     h.run_ok();
     h.get_by_label("Select line: Another");
     h.get_by_label("Why another?");
+    // The whole file, side by side, with blame: from its commits, here.
+    wait_for(&mut h, "its commits", |app| {
+        app.repo()
+            .unwrap()
+            .forge
+            .as_ref()
+            .unwrap()
+            .state
+            .local
+            .is_some()
+    });
+    fn state(app: &App) -> &git_raccoon::forge_view::RequestState {
+        &app.repo().unwrap().forge.as_ref().unwrap().state
+    }
+    assert_eq!(state(h.state()).local, Some(Ok(())));
+    for switch in ["Whole file", "Split", "Blame"] {
+        h.get_by_label(switch).click();
+        h.run_ok();
+    }
+    assert!(state(h.state()).split);
+    wait_for(&mut h, "the whole file and its blame", |app| {
+        let s = state(app);
+        matches!(s.wholes.get("README.md"), Some(Ok(_)))
+            && matches!(s.blames.get("README.md"), Some(Ok(_)))
+    });
+    h.run_ok();
+    screenshot(&mut h, "59-request-whole-split-blame");
+    // The thread is still under its line.
+    h.get_by_label("Why another?");
+    for switch in ["Changes", "Unified", "Blame"] {
+        h.get_by_label(switch).click();
+        h.run_ok();
+    }
     // Resolve it.
     h.get_by_label("Resolve").click();
     let sent = |app: &App| {
@@ -3741,7 +3784,7 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
             .any(|(r, b)| r == &format!("PUT {api}/merge_requests/12/merge")
                 && b.contains(r#""should_remove_source_branch":true"#))
     );
-    h.get_by_label("Conversation").click();
+    h.get_by_label("Conversation tab").click();
     h.run_ok();
 
     // Right-click to open things on the forge.
@@ -3784,10 +3827,13 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     // lets go of the line still picked).
     h.key_press(Key::Escape);
     h.run_ok();
-    assert!(h.query_by_label("Conversation").is_some());
+    assert!(h.query_by_label("Conversation tab").is_some());
     h.key_press(Key::Escape);
     h.run_ok();
-    assert!(h.query_by_label("Conversation").is_none(), "Esc closes it");
+    assert!(
+        h.query_by_label("Conversation tab").is_none(),
+        "Esc closes it"
+    );
     let commit = opened(&mut h, "Add icon");
     assert!(
         commit.starts_with(&format!("{base}/team/app/-/commit/")),

@@ -16,10 +16,12 @@ use crate::forge::review::{
 };
 use crate::forge::{Request, Review};
 use crate::forge_view::{Composer, Finishing, ForgeView, Merging, RequestState, Tab};
-use crate::highlight::{RenderedDiff, Row};
+use crate::highlight::{RenderedDiff, Row, SplitRow};
 use crate::theme;
 use crate::ui::diff::{LINE, NUMBER};
+use crate::ui::file_view::{self, GUTTER};
 use crate::ui::widgets;
+use git_raccoon_core::file_history::Blame;
 
 pub enum Action {
     Close,
@@ -474,7 +476,8 @@ fn tabs(ui: &mut egui::Ui, o: &Overview, state: &mut RequestState) {
                         .color(if on { theme::text() } else { theme::muted() })
                         .strong();
                     let b = ui.add(egui::Button::new(label).frame(false).selected(false));
-                    ui.ctx().accesskit_node_builder(b.id, |n| n.set_label(name));
+                    ui.ctx()
+                        .accesskit_node_builder(b.id, |n| n.set_label(format!("{name} tab")));
                     if on {
                         ui.painter().hline(
                             b.rect.x_range(),
@@ -1234,7 +1237,7 @@ fn commits(ui: &mut egui::Ui, o: &Overview, now: i64, action: &mut Option<Action
 }
 
 /// A patch, as a diff the diff view can lay out.
-fn file_diff(f: &review::File) -> FileDiff {
+pub fn file_diff(f: &review::File) -> FileDiff {
     let mut hunks: Vec<Hunk> = Vec::new();
     for l in review::number(&f.patch) {
         if l.kind == '@' {
@@ -1289,6 +1292,10 @@ fn line_of(d: &DiffLine) -> Line {
 /// Where a comment on the picked lines goes (the range ends at the last).
 fn picked_anchor(d: &RenderedDiff, state: &RequestState) -> Option<Anchor> {
     let last = *state.picked.last()?;
+    // Lines shown only by the whole file can't take comments.
+    if state.picked.iter().any(|(h, _)| *h >= d.changes) {
+        return None;
+    }
     let first = state
         .picked
         .iter()
@@ -1440,18 +1447,32 @@ fn changes(
     else {
         return;
     };
-    let d = Arc::clone(
-        state
-            .rendered
-            .entry(f.path.clone())
-            .or_insert_with(|| Arc::new(RenderedDiff::new(file_diff(f)))),
-    );
-    // The file's name.
+    // The whole file and blame need the request's commits here.
+    let local = state.local.clone();
+    let why_not = match &local {
+        None => Some("Fetching its commits…".to_string()),
+        Some(Err(e)) => Some(format!("Needs its commits here, but {e}")),
+        Some(Ok(())) => None,
+    };
+    let whole = state
+        .whole
+        .then(|| state.wholes.get(&f.path).cloned())
+        .flatten();
+    let d = match &whole {
+        Some(Ok(d)) => Arc::clone(d),
+        _ => Arc::clone(
+            state
+                .rendered
+                .entry(f.path.clone())
+                .or_insert_with(|| Arc::new(RenderedDiff::new(file_diff(f)))),
+        ),
+    };
+    // The file's name, and how it's shown.
     egui::Frame::new()
         .fill(theme::bg_raised())
         .inner_margin(egui::Margin::symmetric(12, 0))
         .show(ui, |ui| {
-            ui.set_height(32.0);
+            ui.set_height(36.0);
             ui.set_width(ui.available_width());
             ui.horizontal_centered(|ui| {
                 let title = match &f.old_path {
@@ -1459,13 +1480,62 @@ fn changes(
                     None => f.path.clone(),
                 };
                 ui.label(RichText::new(title).strong());
-                ui.label(
-                    RichText::new("Click lines to pick them (Shift for a range), then right-click to comment, or use the + by a line.")
-                        .size(11.0)
-                        .color(theme::muted()),
-                );
+                let loading = (state.whole && whole.is_none() && why_not.is_none())
+                    || (state.blame && !state.blames.contains_key(&f.path) && why_not.is_none())
+                    || (why_not.is_some() && local.is_none() && (state.whole || state.blame));
+                if loading {
+                    ui.spinner();
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let blame = ui.add_enabled(
+                        why_not.is_none(),
+                        egui::Button::new(
+                            RichText::new(format!("{}  Blame", icon::USER_LIST)).size(12.0),
+                        )
+                        .selected(state.blame),
+                    );
+                    ui.ctx()
+                        .accesskit_node_builder(blame.id, |n| n.set_label("Blame"));
+                    let blame = blame
+                        .on_hover_text("Who last changed each line")
+                        .on_disabled_hover_text(why_not.clone().unwrap_or_default());
+                    if blame.clicked() {
+                        state.blame = !state.blame;
+                    }
+                    let chosen =
+                        widgets::segmented(ui, state.split, &[(true, "Split"), (false, "Unified")]);
+                    if chosen != state.split {
+                        state.split = chosen;
+                        state.picked.clear();
+                    }
+                    let chosen = widgets::segmented(
+                        ui,
+                        state.whole,
+                        &[(true, "Whole file"), (false, "Changes")],
+                    );
+                    if chosen != state.whole {
+                        state.whole = chosen;
+                        state.picked.clear();
+                    }
+                });
             });
         });
+    if state.whole
+        && let Some(why) = why_not.as_ref().filter(|_| local.is_some())
+    {
+        ui.label(
+            RichText::new(format!("  Whole file: {why}."))
+                .size(12.0)
+                .color(theme::muted()),
+        );
+    }
+    if let Some(Err(e)) = &whole {
+        ui.label(
+            RichText::new(format!("  The whole file couldn't be shown: {e}."))
+                .size(12.0)
+                .color(theme::muted()),
+        );
+    }
     if d.diff.binary {
         ui.add_space(24.0);
         ui.vertical_centered(|ui| {
@@ -1476,17 +1546,40 @@ fn changes(
         });
         return;
     }
-    diff_with_threads(ui, &d, o, state, here, action);
+    let blame = state.blame.then(|| {
+        state
+            .blames
+            .get(&f.path)
+            .and_then(|b| b.as_ref().ok())
+            .cloned()
+    });
+    diff_with_threads(
+        ui,
+        &d,
+        o,
+        state,
+        (here, blame.as_ref().map(|b| b.as_deref())),
+        action,
+    );
 }
 
-/// The diff, with each line's threads, drafts and the comment being
-/// written under it.
+/// A row of a request's diff.
+#[derive(Clone, Copy)]
+enum Shown {
+    Header(usize),
+    One((usize, usize)),
+    /// Side by side: the old line and the new.
+    Pair(Option<(usize, usize)>, Option<(usize, usize)>),
+}
+
+/// The diff, unified or side by side, with blame down its left if shown,
+/// and each line's threads, drafts and the comment being written under it.
 fn diff_with_threads(
     ui: &mut egui::Ui,
     d: &RenderedDiff,
     o: &Overview,
     state: &mut RequestState,
-    here: &Here<'_>,
+    (here, blame): (&Here<'_>, Option<Option<&Blame>>),
     action: &mut Option<Action>,
 ) {
     let char_width = ui
@@ -1499,222 +1592,116 @@ fn diff_with_threads(
     let code_width = d.widest as f32 * char_width + 24.0;
     let path = d.diff.path.clone();
     let threads: Vec<(usize, &Thread)> = o.threads_on(&path).collect();
+    let split = state.split;
+    let rows: Vec<Shown> = if split {
+        d.split
+            .iter()
+            .map(|r| match *r {
+                SplitRow::Header(h) => Shown::Header(h),
+                SplitRow::Pair(a, b) => Shown::Pair(a, b),
+            })
+            .collect()
+    } else {
+        d.unified
+            .iter()
+            .map(|r| match *r {
+                Row::Header(h) => Shown::Header(h),
+                Row::Line(h, l) => Shown::One((h, l)),
+            })
+            .collect()
+    };
+    let lead = if blame.is_some() { GUTTER } else { 0.0 };
+    let blamed = blame.flatten().map(|b| (b, file_view::ages(b)));
     egui::ScrollArea::both()
-        .id_salt(("request-diff", &path))
+        .id_salt(("request-diff", &path, split))
         .auto_shrink([false, false])
         .show(ui, |ui| {
             let view_width = ui.available_width();
-            let width = (2.0 * NUMBER + 18.0 + code_width).max(view_width);
+            let half = ((view_width - lead) / 2.0).max(NUMBER + 18.0 + code_width);
+            let width = if split {
+                lead + 2.0 * half
+            } else {
+                (lead + 2.0 * NUMBER + 18.0 + code_width).max(view_width)
+            };
             ui.spacing_mut().item_spacing.y = 0.0;
-            for row in &d.unified {
-                match *row {
-                    Row::Header(h) => {
-                        let (rect, _) =
-                            ui.allocate_exact_size(egui::vec2(width, LINE), Sense::hover());
-                        crate::ui::diff::header(ui.painter(), rect, &d.diff.hunks[h].header);
-                    }
-                    Row::Line(h, l) => {
-                        let line = &d.diff.hunks[h].lines[l];
-                        let (rect, response) = ui
-                            .allocate_exact_size(egui::vec2(width, LINE), Sense::click_and_drag());
-                        let picked = state.picked.contains(&(h, l));
-                        crate::ui::diff::unified_line(
-                            ui.painter(),
-                            rect,
-                            line,
-                            &d.jobs[h][l],
-                            picked,
-                        );
-                        response.widget_info(|| {
-                            egui::WidgetInfo::selected(
-                                egui::WidgetType::Checkbox,
-                                true,
-                                picked,
-                                format!("Select line: {}", line.content.trim()),
-                            )
-                        });
-                        pick(ui, &response, (d, (h, l)), state);
-                        // The + to comment on it (or on the lines picked, if it's one).
-                        if response.hovered() || ui.rect_contains_pointer(rect) {
-                            let plus = Rect::from_center_size(
-                                Pos2::new(rect.left() + 2.0 * NUMBER + 9.0, rect.center().y),
-                                egui::vec2(16.0, 16.0),
-                            );
-                            let b = ui.put(
-                                plus,
-                                egui::Button::new(
-                                    RichText::new("+").strong().color(theme::on_accent()),
-                                )
-                                .fill(theme::accent_fill())
-                                .corner_radius(3),
-                            );
-                            ui.ctx().accesskit_node_builder(b.id, |n| {
-                                n.set_label("Comment on this line")
-                            });
-                            if b.on_hover_text("Comment on this line").clicked() {
-                                if !picked {
-                                    state.picked.clear();
-                                    state.picked.insert((h, l));
-                                }
-                                state.composer = picked_anchor(d, state).map(|at| Composer {
-                                    at: Some(at),
-                                    ..Composer::default()
-                                });
+            // The blame's commit on the row above, for where a run starts.
+            let mut above: Option<usize> = None;
+            for row in rows {
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(width, LINE), Sense::hover());
+                let body = Rect::from_min_max(Pos2::new(rect.left() + lead, rect.top()), rect.max);
+                if let Shown::Header(h) = row {
+                    crate::ui::diff::header(ui.painter(), rect, &d.diff.hunks[h].header);
+                    continue;
+                }
+                // Blame, for the new side's line.
+                if blame.is_some() {
+                    let cell = Rect::from_min_size(rect.min, egui::vec2(lead, LINE));
+                    let at = match row {
+                        Shown::One(at) => Some(at),
+                        Shown::Pair(_, b) => b,
+                        Shown::Header(_) => None,
+                    };
+                    let new_line = at
+                        .and_then(|(h, l)| d.diff.hunks[h].lines[l].new_line)
+                        .and_then(|n| usize::try_from(n).ok())
+                        .and_then(|n| n.checked_sub(1));
+                    match blamed {
+                        Some((b, ages)) => {
+                            let commit = new_line.and_then(|n| b.lines.get(n)).map(|l| l.commit);
+                            let starts = commit.is_some() && commit != above;
+                            if commit.is_some() {
+                                above = commit;
                             }
-                        }
-                        response.context_menu(|ui| {
-                            let several = state.picked.len() > 1;
-                            let label = if several {
-                                "Comment on selection"
-                            } else {
-                                "Comment on this line"
-                            };
-                            if ui.button(label).clicked() {
-                                state.composer = picked_anchor(d, state).map(|at| Composer {
-                                    at: Some(at),
-                                    ..Composer::default()
-                                });
-                                ui.close();
-                            }
-                            // The picked lines, as the request has them, to change.
-                            let suggest = picked_anchor(d, state).and_then(|at| {
-                                let end = at.line.new?;
-                                let start = at.start.map_or(Some(end), |s| s.new)?;
-                                let text: Vec<&str> = state
-                                    .picked
-                                    .iter()
-                                    .map(|&(h, l)| &d.diff.hunks[h].lines[l])
-                                    .filter(|l| {
-                                        l.new_line.is_some_and(|n| (start..=end).contains(&n))
-                                    })
-                                    .map(|l| l.content.as_str())
-                                    .collect();
-                                let whole = text.len() == (end - start + 1) as usize;
-                                whole.then(|| {
-                                    (
-                                        at,
-                                        review::suggestion_block(
-                                            state.gitlab,
-                                            start,
-                                            end,
-                                            &text.join("\n"),
-                                        ),
-                                    )
-                                })
-                            });
-                            if ui
-                                .add_enabled(
-                                    suggest.is_some(),
-                                    egui::Button::new("Suggest a change"),
-                                )
-                                .on_disabled_hover_text(
-                                    "Pick lines of the new version, one after another",
-                                )
-                                .clicked()
-                                && let Some((at, body)) = suggest
+                            if let Some(id) =
+                                file_view::blame_cell(ui, cell, b, new_line, starts, ages, here.now)
                             {
-                                state.composer = Some(Composer {
-                                    at: Some(at),
-                                    body,
-                                    ..Composer::default()
-                                });
-                                ui.close();
+                                *action = Some(Action::GoToCommit(id));
                             }
-                            if ui.button("Copy").clicked() {
-                                let text: Vec<&str> = state
-                                    .picked
-                                    .iter()
-                                    .map(|&(h, l)| d.diff.hunks[h].lines[l].content.as_str())
-                                    .collect();
-                                ui.ctx().copy_text(text.join("\n"));
-                                ui.close();
-                            }
-                            if ui.button("Select all lines").clicked() {
-                                state.picked = d
-                                    .unified
-                                    .iter()
-                                    .filter_map(|r| match r {
-                                        Row::Line(h, l) => Some((*h, *l)),
-                                        Row::Header(_) => None,
-                                    })
-                                    .collect();
-                                ui.close();
-                            }
-                        });
-                        // What's under it: threads, drafts, the comment being written.
-                        let here_line = line_of(line);
-                        let under: Vec<&(usize, &Thread)> = threads
-                            .iter()
-                            .filter(|(_, t)| {
-                                t.at.as_ref().is_some_and(|a| {
-                                    a.line.same(&here_line) && line_side_matches(&a.line, line)
-                                })
-                            })
-                            .collect();
-                        let drafts: Vec<(usize, &Draft)> = here
-                            .drafts
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, dr)| {
-                                dr.reply_to.is_none()
-                                    && dr.at.as_ref().is_some_and(|a| {
-                                        a.path == path
-                                            && a.line.same(&here_line)
-                                            && line_side_matches(&a.line, line)
-                                    })
-                            })
-                            .collect();
-                        let writing = state.composer.as_ref().is_some_and(|c| {
-                            c.editing.is_none()
-                                && c.reply_to.is_none()
-                                && c.at.as_ref().is_some_and(|a| {
-                                    a.path == path
-                                        && a.line.same(&here_line)
-                                        && line_side_matches(&a.line, line)
-                                })
-                        });
-                        if under.is_empty() && drafts.is_empty() && !writing {
-                            continue;
                         }
-                        egui::Frame::new()
-                            .fill(theme::bg())
-                            .inner_margin(egui::Margin {
-                                // Past the line numbers (2 × NUMBER).
-                                left: 104,
-                                right: 12,
-                                top: 6,
-                                bottom: 6,
-                            })
-                            .show(ui, |ui| {
-                                ui.set_max_width(view_width - 2.0 * NUMBER - 24.0);
-                                ui.spacing_mut().item_spacing.y = 6.0;
-                                for (_, t) in under {
-                                    thread_card(
-                                        ui,
-                                        t,
-                                        None,
-                                        true,
-                                        state,
-                                        here.drafts,
-                                        here.now,
-                                        action,
-                                    );
-                                }
-                                for (i, dr) in drafts {
-                                    draft_card(
-                                        ui,
-                                        &mut state.markdown,
-                                        (i, dr),
-                                        &mut state.composer,
-                                        action,
-                                    );
-                                }
-                                if writing && let Some(a) = composer_box(ui, &mut state.composer) {
-                                    *action = Some(a);
-                                }
-                            });
+                        None => {
+                            ui.painter().rect_filled(cell, 0, theme::bg_raised());
+                        }
                     }
                 }
+                let lines: Vec<(usize, usize)> = match row {
+                    Shown::One(at) => {
+                        let line = &d.diff.hunks[at.0].lines[at.1];
+                        let picked = state.picked.contains(&at);
+                        crate::ui::diff::unified_line(
+                            ui.painter(),
+                            body,
+                            line,
+                            &d.jobs[at.0][at.1],
+                            picked,
+                        );
+                        line_input(ui, (body, 2.0 * NUMBER), d, (at, 0), state);
+                        vec![at]
+                    }
+                    Shown::Pair(a, b) => {
+                        let l = Rect::from_min_size(body.min, egui::vec2(half, LINE));
+                        let r = Rect::from_min_size(
+                            Pos2::new(body.left() + half, body.top()),
+                            egui::vec2(half, LINE),
+                        );
+                        crate::ui::diff::side(ui.painter(), l, d, a, (false, 0.0), &state.picked);
+                        crate::ui::diff::side(ui.painter(), r, d, b, (true, 0.0), &state.picked);
+                        ui.painter().vline(
+                            l.right(),
+                            l.y_range(),
+                            Stroke::new(1.0, theme::border()),
+                        );
+                        for (at, half_rect, salt) in [(a, l, 0u8), (b, r, 1)] {
+                            if let Some(at) = at {
+                                line_input(ui, (half_rect, NUMBER), d, (at, salt), state);
+                            }
+                        }
+                        let mut lines: Vec<(usize, usize)> = b.into_iter().chain(a).collect();
+                        lines.dedup();
+                        lines
+                    }
+                    Shown::Header(_) => Vec::new(),
+                };
+                under_row(ui, (d, &lines), &threads, state, (here, view_width), action);
             }
         });
     // Dragging over lines picks them all, from where it started.
@@ -1722,6 +1709,201 @@ fn diff_with_threads(
     if !ui.input(|i| i.pointer.primary_down()) {
         ui.data_mut(|m| m.remove::<bool>(drag));
     }
+}
+
+/// A line's own space (`rect`, with its code `code` from the left): a click
+/// picks it, the + by it comments on it, and right-click has its menu.
+/// Lines the whole file adds around the changes can only be copied.
+fn line_input(
+    ui: &mut egui::Ui,
+    (rect, code): (Rect, f32),
+    d: &RenderedDiff,
+    (at, salt): ((usize, usize), u8),
+    state: &mut RequestState,
+) {
+    let line = &d.diff.hunks[at.0].lines[at.1];
+    let response = ui.interact(
+        rect,
+        ui.id().with(("request-line", at, salt)),
+        Sense::click_and_drag(),
+    );
+    let picked = state.picked.contains(&at);
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::Checkbox,
+            true,
+            picked,
+            format!("Select line: {}", line.content.trim()),
+        )
+    });
+    pick(ui, &response, (d, at), state);
+    // Only the changes' own lines can be commented on.
+    let commentable = at.0 < d.changes;
+    if commentable && ui.rect_contains_pointer(rect) {
+        let plus = Rect::from_center_size(
+            Pos2::new(rect.left() + code + 9.0, rect.center().y),
+            egui::vec2(16.0, 16.0),
+        );
+        let b = ui.put(
+            plus,
+            egui::Button::new(RichText::new("+").strong().color(theme::on_accent()))
+                .fill(theme::accent_fill())
+                .corner_radius(3),
+        );
+        ui.ctx()
+            .accesskit_node_builder(b.id, |n| n.set_label("Comment on this line"));
+        if b.on_hover_text("Comment on this line").clicked() {
+            if !picked {
+                state.picked.clear();
+                state.picked.insert(at);
+            }
+            state.composer = picked_anchor(d, state).map(|at| Composer {
+                at: Some(at),
+                ..Composer::default()
+            });
+        }
+    }
+    response.context_menu(|ui| {
+        let anchor = picked_anchor(d, state);
+        let label = if state.picked.len() > 1 {
+            "Comment on selection"
+        } else {
+            "Comment on this line"
+        };
+        if ui
+            .add_enabled(anchor.is_some(), egui::Button::new(label))
+            .on_disabled_hover_text(
+                "Only the lines the request changes, and those around them, take comments",
+            )
+            .clicked()
+        {
+            state.composer = anchor.clone().map(|at| Composer {
+                at: Some(at),
+                ..Composer::default()
+            });
+            ui.close();
+        }
+        // The picked lines, as the request has them, to change.
+        let suggest = anchor.and_then(|at| {
+            let end = at.line.new?;
+            let start = at.start.map_or(Some(end), |s| s.new)?;
+            let text: Vec<&str> = state
+                .picked
+                .iter()
+                .map(|&(h, l)| &d.diff.hunks[h].lines[l])
+                .filter(|l| l.new_line.is_some_and(|n| (start..=end).contains(&n)))
+                .map(|l| l.content.as_str())
+                .collect();
+            let whole = text.len() == (end - start + 1) as usize;
+            whole.then(|| {
+                (
+                    at,
+                    review::suggestion_block(state.gitlab, start, end, &text.join("\n")),
+                )
+            })
+        });
+        if ui
+            .add_enabled(suggest.is_some(), egui::Button::new("Suggest a change"))
+            .on_disabled_hover_text("Pick lines of the new version, one after another")
+            .clicked()
+            && let Some((at, body)) = suggest
+        {
+            state.composer = Some(Composer {
+                at: Some(at),
+                body,
+                ..Composer::default()
+            });
+            ui.close();
+        }
+        if ui.button("Copy").clicked() {
+            let text: Vec<&str> = state
+                .picked
+                .iter()
+                .map(|&(h, l)| d.diff.hunks[h].lines[l].content.as_str())
+                .collect();
+            ui.ctx().copy_text(text.join("\n"));
+            ui.close();
+        }
+        if ui.button("Select all lines").clicked() {
+            state.picked = d
+                .unified
+                .iter()
+                .filter_map(|r| match r {
+                    Row::Line(h, l) => Some((*h, *l)),
+                    Row::Header(_) => None,
+                })
+                .collect();
+            ui.close();
+        }
+    });
+}
+
+/// What's under a row's lines: their threads, drafts, and the comment
+/// being written.
+fn under_row(
+    ui: &mut egui::Ui,
+    (d, lines): (&RenderedDiff, &[(usize, usize)]),
+    threads: &[(usize, &Thread)],
+    state: &mut RequestState,
+    (here, view_width): (&Here<'_>, f32),
+    action: &mut Option<Action>,
+) {
+    let path = &d.diff.path;
+    let on = |a: &Anchor| {
+        lines.iter().any(|&(h, l)| {
+            let line = &d.diff.hunks[h].lines[l];
+            h < d.changes && a.line.same(&line_of(line)) && line_side_matches(&a.line, line)
+        })
+    };
+    let under: Vec<&Thread> = threads
+        .iter()
+        .filter(|(_, t)| t.at.as_ref().is_some_and(on))
+        .map(|(_, t)| *t)
+        .collect();
+    let drafts: Vec<(usize, &Draft)> = here
+        .drafts
+        .iter()
+        .enumerate()
+        .filter(|(_, dr)| {
+            dr.reply_to.is_none() && dr.at.as_ref().is_some_and(|a| &a.path == path && on(a))
+        })
+        .collect();
+    let writing = state.composer.as_ref().is_some_and(|c| {
+        c.editing.is_none()
+            && c.reply_to.is_none()
+            && c.at.as_ref().is_some_and(|a| &a.path == path && on(a))
+    });
+    if under.is_empty() && drafts.is_empty() && !writing {
+        return;
+    }
+    egui::Frame::new()
+        .fill(theme::bg())
+        .inner_margin(egui::Margin {
+            // Past the line numbers (2 × NUMBER).
+            left: 104,
+            right: 12,
+            top: 6,
+            bottom: 6,
+        })
+        .show(ui, |ui| {
+            ui.set_max_width(view_width - 2.0 * NUMBER - 24.0);
+            ui.spacing_mut().item_spacing.y = 6.0;
+            for t in under {
+                thread_card(ui, t, None, true, state, here.drafts, here.now, action);
+            }
+            for (i, dr) in drafts {
+                draft_card(
+                    ui,
+                    &mut state.markdown,
+                    (i, dr),
+                    &mut state.composer,
+                    action,
+                );
+            }
+            if writing && let Some(a) = composer_box(ui, &mut state.composer) {
+                *action = Some(a);
+            }
+        });
 }
 
 /// A thread on one side of a line shows under it only once: an unchanged
