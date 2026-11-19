@@ -47,13 +47,30 @@ pub enum LineStyle {
 }
 
 /// How the graph's lines between lanes look, each kind its own way.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BranchLines {
     /// From a branch's first commit into the commit it started from.
     pub starts: LineStyle,
     /// From a merge commit out to the branch it merges.
     pub merges: LineStyle,
+    /// How round the corners of Rounded lines are, in points (0: square).
+    pub corner: f32,
+}
+
+impl BranchLines {
+    /// The roundness the corners can be set to.
+    pub const CORNERS: std::ops::RangeInclusive<f32> = 0.0..=16.0;
+}
+
+impl Default for BranchLines {
+    fn default() -> Self {
+        BranchLines {
+            starts: LineStyle::default(),
+            merges: LineStyle::default(),
+            corner: 7.0,
+        }
+    }
 }
 
 impl LineStyle {

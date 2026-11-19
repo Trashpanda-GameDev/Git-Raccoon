@@ -565,7 +565,8 @@ pub enum Click {
 }
 
 /// A line from `a` down to `b` in the graph, bending between lanes as
-/// `style` says (dotted for a stash's). Rounded, it runs along `a`'s row
+/// `style` says (dotted for a stash's). Rounded, with corners of radius
+/// `corner`, it runs along `a`'s row
 /// for a merge leaving its commit (`merge`), or along `b`'s for a branch
 /// coming into its parent, and turns into the other lane with a rounded
 /// corner.
@@ -573,7 +574,7 @@ pub fn branch_line(
     painter: &egui::Painter,
     a: Pos2,
     b: Pos2,
-    style: LineStyle,
+    (style, corner): (LineStyle, f32),
     stroke: Stroke,
     dotted: bool,
     merge: bool,
@@ -597,12 +598,12 @@ pub fn branch_line(
                 curve.flatten(Some(0.5))
             }
             LineStyle::Rounded => {
-                let corner = if merge {
+                let turn = if merge {
                     Pos2::new(b.x, a.y)
                 } else {
                     Pos2::new(a.x, b.y)
                 };
-                rounded(a, corner, b, 7.0)
+                rounded(a, turn, b, corner)
             }
         }
     };
@@ -614,7 +615,7 @@ pub fn branch_line(
 }
 
 /// The path `a` → `corner` → `b`, its corner rounded with radius `r` (or
-/// less, where the sides are shorter).
+/// less, where the sides are shorter; 0 for a square corner).
 fn rounded(a: Pos2, corner: Pos2, b: Pos2, r: f32) -> Vec<Pos2> {
     let into = corner - a;
     let out = b - corner;
@@ -911,7 +912,7 @@ pub fn show(
                 // commit below (for the rounded style).
                 let merge = usize::from(e.from) == c.column && e.lane != e.from;
                 let style = if merge { lines.merges } else { lines.starts };
-                branch_line(&graph, a, b, style, stroke, dotted, merge);
+                branch_line(&graph, a, b, (style, lines.corner), stroke, dotted, merge);
             }
         }
         if wip

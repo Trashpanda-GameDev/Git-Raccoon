@@ -4994,7 +4994,8 @@ fn draws_branch_lines_the_chosen_way() {
         h.state().settings().branch_lines,
         BranchLines {
             starts: LineStyle::Curved,
-            merges: LineStyle::Rounded
+            merges: LineStyle::Rounded,
+            corner: 7.0,
         }
     );
     screenshot(&mut h, "67-branch-lines-setting");
@@ -5007,6 +5008,24 @@ fn draws_branch_lines_the_chosen_way() {
     h.get_by_label("Close settings").click();
     settle(&mut h);
     screenshot(&mut h, "68-branch-lines-rounded-both");
+    // Square corners: the roundness set to 0.
+    press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    h.get_by_role_and_label(Role::Slider, "Corner roundness")
+        .scroll_to_me();
+    h.run_ok();
+    h.get_by_role_and_label(Role::Slider, "Corner roundness")
+        .focus();
+    h.run_ok();
+    // Step by step with the arrow key, past the bottom.
+    for _ in 0..10 {
+        h.key_press(Key::ArrowLeft);
+        h.run_ok();
+    }
+    assert_eq!(h.state().settings().branch_lines.corner, 0.0);
+    screenshot(&mut h, "69-square-corners-setting");
+    h.get_by_label("Close settings").click();
+    settle(&mut h);
+    screenshot(&mut h, "69-square-corners");
     // Found by what people call them, too.
     press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
     type_into(&mut h, "Search settings", "curves");

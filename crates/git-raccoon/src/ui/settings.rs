@@ -162,6 +162,15 @@ const ROWS: &[Row] = &[
     },
     Row {
         section: Section::Appearance,
+
+        name: "Corner roundness",
+
+        hint: "For Rounded lines: 0 makes square corners.",
+
+        words: "graph branch lines corners round radius square curves",
+    },
+    Row {
+        section: Section::Appearance,
         name: "Interface size",
         hint: "",
         words: "zoom scale bigger smaller text font",
@@ -878,7 +887,13 @@ fn preview(ui: &mut egui::Ui, c: &crate::themes::Colours) {
 
 /// A choice of how a line looks: a branch starting (or, for `merge`, a
 /// merge) drawn that way, with its name.
-fn line_tile(ui: &mut egui::Ui, style: LineStyle, merge: bool, chosen: bool) -> egui::Response {
+fn line_tile(
+    ui: &mut egui::Ui,
+    style: LineStyle,
+    merge: bool,
+    chosen: bool,
+    corner: f32,
+) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(96.0, 76.0), egui::Sense::click());
     let kind = if merge { "merges" } else { "branch starts" };
     let name = format!("{} {kind}", style.name());
@@ -904,7 +919,7 @@ fn line_tile(ui: &mut egui::Ui, style: LineStyle, merge: bool, chosen: bool) -> 
             &painter,
             egui::pos2(left, upper),
             egui::pos2(right, lower),
-            style,
+            (style, corner),
             side,
             false,
             true,
@@ -917,7 +932,7 @@ fn line_tile(ui: &mut egui::Ui, style: LineStyle, merge: bool, chosen: bool) -> 
             &painter,
             egui::pos2(right, upper),
             egui::pos2(left, lower),
-            style,
+            (style, corner),
             side,
             false,
             false,
@@ -1138,7 +1153,7 @@ fn control(
             ui.horizontal(|ui| {
                 for style in LineStyle::ALL {
                     let chosen = settings.branch_lines.starts == style;
-                    if line_tile(ui, style, false, chosen).clicked() {
+                    if line_tile(ui, style, false, chosen, settings.branch_lines.corner).clicked() {
                         settings.branch_lines.starts = style;
                     }
                 }
@@ -1148,11 +1163,30 @@ fn control(
             ui.horizontal(|ui| {
                 for style in LineStyle::ALL {
                     let chosen = settings.branch_lines.merges == style;
-                    if line_tile(ui, style, true, chosen).clicked() {
+                    if line_tile(ui, style, true, chosen, settings.branch_lines.corner).clicked() {
                         settings.branch_lines.merges = style;
                     }
                 }
             });
+        }
+        "Corner roundness" => {
+            let rounded = settings.branch_lines.starts == LineStyle::Rounded
+                || settings.branch_lines.merges == LineStyle::Rounded;
+            let slider = ui.add_enabled(
+                rounded,
+                egui::Slider::new(
+                    &mut settings.branch_lines.corner,
+                    crate::settings::BranchLines::CORNERS,
+                )
+                .step_by(1.0)
+                .fixed_decimals(0)
+                .suffix(" px"),
+            );
+            ui.ctx()
+                .accesskit_node_builder(slider.id, |n| n.set_label("Corner roundness"));
+            if !rounded {
+                hint(ui, "Choose Rounded above to use it.");
+            }
         }
         "Interface size" => {
             let current = settings.zoom.unwrap_or(1.0);
