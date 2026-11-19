@@ -4946,6 +4946,59 @@ fn shows_a_files_history_and_blame_beside_its_diff() {
     );
 }
 
+/// Issue #29: picking another file of a commit picked in the history
+/// shows that file's history, with the commit still picked in it.
+#[test]
+fn the_history_follows_another_file_picked_in_the_commit() {
+    let sample = Sample::build();
+    let mut h = harness(Settings {
+        diff_history: true,
+        ..Settings::default()
+    });
+    open(&mut h, sample.path());
+    h.get_by_label("Redraw icon and rename loader").click();
+    settle(&mut h);
+    h.get_by_label_contains("src/repo_loader.rs").click();
+    wait_for(&mut h, "the history", |app| {
+        app.repo().unwrap().open_history().is_some()
+    });
+    // Back to the loader's first commit, from the list.
+    h.get_all_by_role_and_label(egui::accesskit::Role::Button, "Add repository loader")
+        .next()
+        .unwrap()
+        .click();
+    settle(&mut h);
+    // That commit's other file: the list is README.md's now.
+    h.get_by_label("README.md").click();
+    wait_for(&mut h, "README's history", |app| {
+        let r = app.repo().unwrap();
+        r.history_file.as_deref() == Some("README.md") && r.open_history().is_some()
+    });
+    let list: Vec<String> = h
+        .state()
+        .repo()
+        .unwrap()
+        .open_history()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .iter()
+        .map(|c| c.summary.clone())
+        .collect();
+    assert!(
+        list.contains(&"Add repository loader".to_string()),
+        "{list:?}"
+    );
+    assert!(
+        !list.contains(&"Redraw icon and rename loader".to_string()),
+        "{list:?}"
+    );
+    assert_eq!(
+        selected_summary(&h).as_deref(),
+        Some("Add repository loader")
+    );
+}
+
 #[test]
 fn lines_of_a_diff_can_be_picked_and_copied() {
     let sample = Sample::build();
