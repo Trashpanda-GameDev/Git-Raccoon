@@ -7,7 +7,7 @@ use super::review::{
     Anchor, Change, Check, Comment, Commit, DiffRefs, Draft, Event, File, Finish, Line, Merge,
     Method, Outcome, Overview, State, Suggestion, Thread, Verdict,
 };
-use super::{Checks, Issue, NewRequest, Request, Review, Session, timestamp};
+use super::{Checks, Choices, Issue, NewRequest, Request, Review, Session, timestamp};
 
 const FORGE: &str = "GitLab";
 
@@ -511,6 +511,30 @@ pub fn default_branch(s: &Session) -> Result<String, String> {
     Ok(text(&get(s, "")?, "default_branch"))
 }
 
+pub fn choices(s: &Session) -> Result<Choices, String> {
+    // Members, with those inherited from the project's groups.
+    let people = get(s, "/members/all?per_page=100")?;
+    let labels = get(s, "/labels?per_page=100")?;
+    let mut logins: Vec<String> = people
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|p| p["state"].as_str().is_none_or(|st| st == "active"))
+        .map(|p| text(p, "username"))
+        .collect();
+    logins.sort();
+    logins.dedup();
+    Ok(Choices {
+        people: logins,
+        labels: labels
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|l| (text(l, "name"), text(l, "color")))
+            .collect(),
+    })
+}
+
 pub fn create(s: &Session, new: &NewRequest) -> Result<Request, String> {
     let title = if new.draft {
         format!("Draft: {}", new.title)
@@ -760,6 +784,27 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<Value>(&seen[12].2).unwrap(),
             json!({"ids": [77], "commit_message": "Use z"})
+        );
+    }
+
+    #[test]
+    fn lists_who_and_which_labels() {
+        let (base, seen) = mock::serve(vec![
+            (
+                200,
+                r#"[{"username":"milo","state":"active"},{"username":"ada","state":"active"},
+                    {"username":"gone","state":"blocked"},{"username":"ada","state":"active"}]"#
+                    .into(),
+            ),
+            (200, r##"[{"name":"perf","color":"#d73a4a"}]"##.into()),
+        ]);
+        let c = session(&base).choices().unwrap();
+        assert_eq!(c.people, ["ada", "milo"]);
+        assert_eq!(c.labels, [("perf".to_string(), "#d73a4a".to_string())]);
+        let seen = seen.lock().unwrap();
+        assert_eq!(
+            seen[0].0,
+            "GET /api/v4/projects/team%2Fsub%2Fapp/members/all?per_page=100"
         );
     }
 }

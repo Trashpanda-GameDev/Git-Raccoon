@@ -112,10 +112,14 @@ pub struct NewForm {
     /// The repository's templates (name, text), and the one picked.
     pub templates: Vec<(String, String)>,
     pub template: Option<usize>,
-    /// Logins, and labels, separated by commas.
-    pub reviewers: String,
-    pub assignees: String,
-    pub labels: String,
+    /// Who it asks to review it, who it's assigned to, and its labels:
+    /// picked from `choices`, once they're listed (`None` while they load).
+    pub reviewers: Vec<String>,
+    pub assignees: Vec<String>,
+    pub labels: Vec<String>,
+    pub choices: Option<Result<crate::forge::Choices, String>>,
+    /// What the open picker's list is narrowed to.
+    pub filter: String,
     /// GitLab: delete the branch, and squash, when it's merged.
     pub remove_source: bool,
     pub squash: bool,
@@ -126,14 +130,6 @@ pub struct NewForm {
 }
 
 impl NewForm {
-    /// Splits a comma-separated list.
-    pub fn list(text: &str) -> Vec<String> {
-        text.split(',')
-            .map(|t| t.trim().trim_start_matches('@').to_string())
-            .filter(|t| !t.is_empty())
-            .collect()
-    }
-
     /// Fills in the title and description from its commits (one: its
     /// message; several: the branch's name, and the commits listed), or
     /// the template.
@@ -213,6 +209,76 @@ pub fn templates(root: &std::path::Path, kind: Kind) -> Vec<(String, String)> {
         }
     }
     found
+}
+
+/// "#d73a4a" as a colour.
+fn hex(colour: &str) -> Option<egui::Color32> {
+    let c = colour.strip_prefix('#')?;
+    let byte = |i: usize| u8::from_str_radix(c.get(i..i + 2)?, 16).ok();
+    Some(egui::Color32::from_rgb(byte(0)?, byte(2)?, byte(4)?))
+}
+
+/// Picks some of `options` (name, colour): a dropdown of checkboxes, with
+/// a box to narrow it down.
+fn picker(
+    ui: &mut egui::Ui,
+    name: &str,
+    chosen: &mut Vec<String>,
+    options: &[(String, String)],
+    filter: &mut String,
+) {
+    if options.is_empty() {
+        ui.label(RichText::new("None to pick from").color(theme::muted()));
+        return;
+    }
+    let shown = if chosen.is_empty() {
+        "None".to_string()
+    } else {
+        chosen.join(", ")
+    };
+    let combo = egui::ComboBox::from_id_salt(("request-pick", name))
+        .selected_text(shown)
+        .width(400.0)
+        .height(260.0)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show_ui(ui, |ui| {
+            if options.len() > 8 {
+                let edit = ui.add(
+                    egui::TextEdit::singleline(filter)
+                        .hint_text("Filter")
+                        .desired_width(f32::INFINITY),
+                );
+                ui.ctx()
+                    .accesskit_node_builder(edit.id, |n| n.set_label(format!("Filter {name}")));
+            }
+            let needle = filter.to_lowercase();
+            for (option, colour) in options {
+                if !needle.is_empty() && !option.to_lowercase().contains(&needle) {
+                    continue;
+                }
+                let mut on = chosen.contains(option);
+                ui.horizontal(|ui| {
+                    if ui.checkbox(&mut on, option.as_str()).changed() {
+                        if on {
+                            chosen.push(option.clone());
+                        } else {
+                            chosen.retain(|c| c != option);
+                        }
+                    }
+                    if let Some(c) = hex(colour) {
+                        let (dot, _) =
+                            ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                        ui.painter().circle_filled(dot.center(), 5.0, c);
+                    }
+                });
+            }
+        });
+    ui.ctx().accesskit_node_builder(combo.response.id, |n| {
+        n.set_label(format!("Request {}", name.to_lowercase()))
+    });
+    if combo.inner.is_none() && !filter.is_empty() && !egui::Popup::is_any_open(ui.ctx()) {
+        filter.clear();
+    }
 }
 
 pub enum NewAction {
@@ -344,26 +410,45 @@ pub fn new_request(ctx: &egui::Context, f: &mut NewForm) -> Option<NewAction> {
         ui.ctx()
             .accesskit_node_builder(body.id, |n| n.set_label("Request description"));
         ui.add_space(4.0);
-        egui::Grid::new("request-people")
-            .num_columns(2)
-            .show(ui, |ui| {
-                for (name, text, hint) in [
-                    ("Reviewers", &mut f.reviewers, "logins, separated by commas"),
-                    ("Assignees", &mut f.assignees, "logins, separated by commas"),
-                    ("Labels", &mut f.labels, "separated by commas"),
-                ] {
-                    ui.label(RichText::new(name).color(theme::muted()));
-                    let edit = ui.add(
-                        egui::TextEdit::singleline(text)
-                            .hint_text(hint)
-                            .desired_width(400.0),
+        match &f.choices {
+            None => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(
+                        RichText::new("Listing who can review it, and the labels…")
+                            .color(theme::muted()),
                     );
-                    let label = format!("Request {}", name.to_lowercase());
-                    ui.ctx()
-                        .accesskit_node_builder(edit.id, |n| n.set_label(label));
-                    ui.end_row();
-                }
-            });
+                });
+            }
+            Some(Err(e)) => {
+                ui.label(
+                    RichText::new(format!(
+                        "Reviewers, assignees and labels couldn't be listed: {e}."
+                    ))
+                    .color(theme::muted()),
+                );
+            }
+            Some(Ok(choices)) => {
+                let people: Vec<(String, String)> = choices
+                    .people
+                    .iter()
+                    .map(|p| (p.clone(), String::new()))
+                    .collect();
+                egui::Grid::new("request-people")
+                    .num_columns(2)
+                    .show(ui, |ui| {
+                        for (name, chosen, options) in [
+                            ("Reviewers", &mut f.reviewers, &people),
+                            ("Assignees", &mut f.assignees, &people),
+                            ("Labels", &mut f.labels, &choices.labels),
+                        ] {
+                            ui.label(RichText::new(name).color(theme::muted()));
+                            picker(ui, name, chosen, options, &mut f.filter);
+                            ui.end_row();
+                        }
+                    });
+            }
+        }
         ui.checkbox(&mut f.draft, "Draft (not ready for review yet)");
         if f.kind == Kind::GitLab {
             ui.checkbox(
@@ -475,9 +560,11 @@ mod tests {
             compared: "main".into(),
             templates: Vec::new(),
             template: None,
-            reviewers: String::new(),
-            assignees: String::new(),
-            labels: String::new(),
+            reviewers: Vec::new(),
+            assignees: Vec::new(),
+            labels: Vec::new(),
+            choices: None,
+            filter: String::new(),
             remove_source: false,
             squash: false,
             pushing: false,
@@ -497,6 +584,5 @@ mod tests {
         f.template = Some(0);
         f.fill();
         assert_eq!(f.body, "## Why");
-        assert_eq!(NewForm::list(" @ada, milo ,"), ["ada", "milo"]);
     }
 }

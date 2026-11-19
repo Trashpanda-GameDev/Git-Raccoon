@@ -7,7 +7,7 @@ use super::review::{
     self, Anchor, Change, Check, Comment, Commit, DiffRefs, Draft, Event, File, Finish, Line,
     Merge, Method, Outcome, Overview, State, Suggestion, Thread, Verdict,
 };
-use super::{Checks, Issue, NewRequest, Request, Review, Session, timestamp};
+use super::{Checks, Choices, Issue, NewRequest, Request, Review, Session, timestamp};
 
 const FORGE: &str = "GitHub";
 
@@ -544,6 +544,35 @@ pub fn default_branch(s: &Session) -> Result<String, String> {
     Ok(text(&get(s, "")?, "default_branch"))
 }
 
+pub fn choices(s: &Session) -> Result<Choices, String> {
+    let people = get(s, "/assignees?per_page=100")?;
+    let labels = get(s, "/labels?per_page=100")?;
+    Ok(Choices {
+        people: people
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|p| text(p, "login"))
+            .collect(),
+        labels: labels
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|l| {
+                let colour = text(l, "color");
+                (
+                    text(l, "name"),
+                    if colour.is_empty() {
+                        colour
+                    } else {
+                        format!("#{colour}")
+                    },
+                )
+            })
+            .collect(),
+    })
+}
+
 pub fn create(s: &Session, new: &NewRequest) -> Result<Request, String> {
     let body = json!({
         "title": new.title,
@@ -874,6 +903,21 @@ mod tests {
         assert_eq!(
             seen[13].0,
             "DELETE /api/v3/repos/rocky/stash-box/git/refs/heads/index"
+        );
+    }
+
+    #[test]
+    fn lists_who_and_which_labels() {
+        let (base, seen) = mock::serve(vec![
+            (200, r#"[{"login":"ada"},{"login":"milo"}]"#.into()),
+            (200, r#"[{"name":"bug","color":"d73a4a"}]"#.into()),
+        ]);
+        let c = session(&base).choices().unwrap();
+        assert_eq!(c.people, ["ada", "milo"]);
+        assert_eq!(c.labels, [("bug".to_string(), "#d73a4a".to_string())]);
+        assert_eq!(
+            seen.lock().unwrap()[0].0,
+            "GET /api/v3/repos/rocky/stash-box/assignees?per_page=100"
         );
     }
 }

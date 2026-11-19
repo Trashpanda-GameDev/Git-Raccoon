@@ -3527,6 +3527,12 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
         ("POST /api/v4/projects/team%2Fapp/merge_requests/12/draft_notes", "{}".into()),
         ("PUT /api/v4/projects/team%2Fapp/merge_requests/12", "{}".into()),
         ("PUT /api/v4/suggestions/batch_apply", "[]".into()),
+        // Who can review a new one, and the labels.
+        ("GET /api/v4/projects/team%2Fapp/members/all", r#"[{"username": "rocky", "state": "active"},
+            {"username": "milo", "state": "active"}]"#.into()),
+        ("GET /api/v4/projects/team%2Fapp/labels", r##"[{"name": "perf", "color": "#d73a4a"},
+            {"name": "ux", "color": "#0e8a16"}]"##.into()),
+        ("GET /api/v4/users?username=milo", r#"[{"id": 31}]"#.into()),
         // Opening one.
         ("POST /api/v4/projects/team%2Fapp/merge_requests", mr(13, "Faster start", "cache")),
         // Signing in with the browser.
@@ -3836,7 +3842,33 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
     h.get_by_label("Request title").type_text("Faster start");
     h.run_ok();
-    type_into(&mut h, "Request labels", "perf, ux");
+    // Reviewers and labels: picked from the forge's, not typed.
+    wait_for(&mut h, "who can review it", |app| {
+        app.new_request_form().is_some_and(|f| f.choices.is_some())
+    });
+    h.run_ok();
+    h.get_by_label("Request reviewers").click();
+    h.run_ok();
+    h.get_by_label("milo").click();
+    h.run_ok();
+    h.key_press(Key::Escape);
+    h.run_ok();
+    h.get_by_label("Request labels").click();
+    h.run_ok();
+    h.get_by_label("perf").click();
+    h.get_by_label("ux").click();
+    h.run_ok();
+    screenshot(&mut h, "79b-request-labels");
+    h.key_press(Key::Escape);
+    h.run_ok();
+    let form = h.state().new_request_form().unwrap();
+    assert_eq!(
+        (form.reviewers.clone(), form.labels.clone()),
+        (
+            vec!["milo".to_string()],
+            vec!["perf".to_string(), "ux".to_string()]
+        )
+    );
     h.get_by_label("Squash its commits when it's merged")
         .click();
     h.run_ok();
@@ -3866,6 +3898,7 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     assert_eq!(sent["title"].as_str(), Some("Faster start"));
     assert_eq!(sent["labels"].as_str(), Some("perf,ux"));
     assert_eq!(sent["squash"].as_bool(), Some(true));
+    assert_eq!(sent["reviewer_ids"], serde_json::json!([31]));
 
     // From any branch: its right-click menu. Not pushed, and not checked
     // out, so it says to do that first.

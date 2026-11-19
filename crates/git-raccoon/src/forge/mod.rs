@@ -307,6 +307,16 @@ pub struct NewRequest {
     pub squash: bool,
 }
 
+/// Who can review and be assigned a project's requests, and its labels:
+/// what a new request can be given.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Choices {
+    /// Logins.
+    pub people: Vec<String>,
+    /// Names, with their colours ("#d73a4a", or "" if none).
+    pub labels: Vec<(String, String)>,
+}
+
 /// A signed-in connection to a project.
 pub struct Session {
     pub project: Project,
@@ -347,6 +357,14 @@ impl Session {
         match self.project.kind {
             Kind::GitHub => github::default_branch(self),
             Kind::GitLab => gitlab::default_branch(self),
+        }
+    }
+
+    /// Who can be asked to review or be assigned, and the labels.
+    pub fn choices(&self) -> Result<Choices, String> {
+        match self.project.kind {
+            Kind::GitHub => github::choices(self),
+            Kind::GitLab => gitlab::choices(self),
         }
     }
 

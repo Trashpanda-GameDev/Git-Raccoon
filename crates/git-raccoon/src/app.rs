@@ -66,6 +66,8 @@ pub struct App {
     /// The new pull/merge request window, and its request on the way.
     new_request: Option<crate::ui::forge::NewForm>,
     new_request_post: Option<crate::task::Task<Result<crate::forge::Request, String>>>,
+    /// Who can review a new request, and its labels, being listed.
+    new_request_choices: Option<crate::task::Task<Result<crate::forge::Choices, String>>>,
     /// The notes shown in "What's new", while it's open.
     whats_new: Vec<crate::changelog::Notes>,
     /// The feedback form, while it's open, and its post on the way.
@@ -207,6 +209,7 @@ impl App {
             licenses: None,
             new_request: None,
             new_request_post: None,
+            new_request_choices: None,
             whats_new,
             feedback: None,
             feedback_post: None,
@@ -1201,7 +1204,7 @@ impl App {
 
     /// The new pull/merge request window, and opening it in the background.
     fn new_request_window(&mut self, ctx: &egui::Context) {
-        use crate::ui::forge::{NewAction, NewForm};
+        use crate::ui::forge::NewAction;
         let Some(form) = &mut self.new_request else {
             return;
         };
@@ -1211,6 +1214,29 @@ impl App {
         };
         // Pushed yet, and what it has for the target (once it's picked).
         compare_form(repo, form);
+        // Who can review it, and the labels: listed once, in the background.
+        if let Some(result) = self
+            .new_request_choices
+            .as_ref()
+            .and_then(crate::task::Task::poll)
+        {
+            self.new_request_choices = None;
+            form.choices = Some(result);
+        }
+        if form.choices.is_none()
+            && self.new_request_choices.is_none()
+            && let Some(f) = &repo.forge
+        {
+            match f.account.clone() {
+                Some(account) => {
+                    let project = f.project.clone();
+                    self.new_request_choices = Some(crate::task::Task::spawn(ctx, move || {
+                        crate::forge::accounts::session(&account, &project)?.choices()
+                    }));
+                }
+                None => form.choices = Some(Err("not signed in".into())),
+            }
+        }
         let mut create = false;
         if form.pushing && !repo.op_running() {
             form.pushing = false;
@@ -1250,6 +1276,7 @@ impl App {
             Some(NewAction::Close) => {
                 self.new_request = None;
                 self.new_request_post = None;
+                self.new_request_choices = None;
                 return;
             }
             None => {}
@@ -1266,9 +1293,9 @@ impl App {
                 title: form.title.trim().to_string(),
                 body: form.body.clone(),
                 draft: form.draft,
-                reviewers: NewForm::list(&form.reviewers),
-                assignees: NewForm::list(&form.assignees),
-                labels: NewForm::list(&form.labels),
+                reviewers: form.reviewers.clone(),
+                assignees: form.assignees.clone(),
+                labels: form.labels.clone(),
                 remove_source: form.remove_source,
                 squash: form.squash,
             };
@@ -2666,9 +2693,11 @@ fn new_form(repo: &RepoView, branch: Option<&str>) -> Option<crate::ui::forge::N
         compared: String::new(),
         template: (!templates.is_empty()).then_some(0),
         templates,
-        reviewers: String::new(),
-        assignees: String::new(),
-        labels: String::new(),
+        reviewers: Vec::new(),
+        assignees: Vec::new(),
+        labels: Vec::new(),
+        choices: None,
+        filter: String::new(),
         remove_source: false,
         squash: false,
         pushing: false,
