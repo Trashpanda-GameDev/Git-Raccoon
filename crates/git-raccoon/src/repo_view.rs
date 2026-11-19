@@ -117,6 +117,24 @@ pub struct Selection {
     pub row: Option<usize>,
 }
 
+/// The changed lines (of the change's own hunks) among `picked`.
+fn changed(
+    diff: &RenderedDiff,
+    picked: &std::collections::BTreeSet<(usize, usize)>,
+) -> Vec<(usize, usize)> {
+    picked
+        .iter()
+        .copied()
+        .filter(|&(h, l)| {
+            h < diff.changes
+                && matches!(
+                    diff.diff.hunks[h].lines[l].kind,
+                    LineKind::Add | LineKind::Delete
+                )
+        })
+        .collect()
+}
+
 /// Where a diff comes from: a commit, or one side of the working changes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Source {
@@ -1096,30 +1114,19 @@ impl Planner {
     }
 }
 
-/// Which view of a file's past is shown.
+/// How a click picks lines in the open diff.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FileMode {
-    History,
-    Blame,
+pub enum Select {
+    /// Just this line.
+    Only,
+    /// This line in or out, keeping the others (Ctrl+click).
+    Toggle,
+    /// Every line from the last one clicked to this one (Shift+click, drag).
+    Range,
 }
 
-/// A file's history or blame, shown instead of the graph.
-pub struct FileView {
-    pub file: String,
-    /// The commit whose version is blamed; `None` for the working copy.
-    pub at: Option<String>,
-    pub mode: FileMode,
-    pub history: Option<Result<Arc<Vec<file_history::Change>>, String>>,
-    pub blame: Option<Result<Arc<file_history::Blame>, String>>,
-    history_task: Option<Task<Result<Vec<file_history::Change>, String>>>,
-    blame_task: Option<Task<Result<file_history::Blame, String>>>,
-}
-
-impl FileView {
-    pub fn is_loading(&self) -> bool {
-        self.history_task.is_some() || self.blame_task.is_some()
-    }
-}
+/// What the blame of the open diff is of: the version on its new side.
+pub type BlameKey = (Source, String);
 
 /// A conflicted file open for resolving.
 pub struct ConflictFile {
@@ -1254,8 +1261,17 @@ pub struct RepoView {
     pub undo: Option<Undoable>,
     /// The conflicted file being resolved, if one is open.
     pub conflict: Option<ConflictFile>,
-    /// A file's history or blame, if open.
-    pub file_view: Option<FileView>,
+    /// The open file's history (beside its diff), and the file it's of:
+    /// kept while an older name of it is open from the list.
+    pub file_history: Keyed<String, Result<Arc<Vec<file_history::Change>>, String>>,
+    pub history_file: Option<String>,
+    /// Who last changed each line of the open diff's new side.
+    pub blame: Keyed<BlameKey, Result<Arc<file_history::Blame>, String>>,
+    /// Shown beside or in the diff (from the settings).
+    pub show_history: bool,
+    pub show_blame: bool,
+    /// The diff the picked lines are in.
+    picked_in: Option<DiffKey>,
     pub extras: Extras,
     /// A repository (a submodule or worktree) to open in a tab.
     pub open_request: Option<String>,
@@ -1347,7 +1363,12 @@ impl RepoView {
             undo: None,
             conflict: None,
             planner: None,
-            file_view: None,
+            file_history: Keyed::default(),
+            history_file: None,
+            blame: Keyed::default(),
+            show_history: false,
+            show_blame: false,
+            picked_in: None,
             refresh_started: std::time::Instant::now(),
             diff: Keyed::default(),
             images: Keyed::default(),
@@ -1834,67 +1855,57 @@ impl RepoView {
 
     /// Shows the history or blame of `file` (as of commit `at`, or the
     /// working copy), loading what's needed in the background.
-    pub fn show_file(
-        &mut self,
-        ctx: &egui::Context,
-        file: String,
-        at: Option<String>,
-        mode: FileMode,
-    ) {
-        let same = self
-            .file_view
-            .as_ref()
-            .is_some_and(|v| v.file == file && v.at == at);
-        if !same {
-            self.file_view = Some(FileView {
-                file,
-                at,
-                mode,
-                history: None,
-                blame: None,
-                history_task: None,
-                blame_task: None,
-            });
-        }
-        self.set_file_mode(ctx, mode);
-    }
-
-    /// Switches the open file view between history and blame.
-    pub fn set_file_mode(&mut self, ctx: &egui::Context, mode: FileMode) {
-        let path = self.path().to_string();
-        let Some(view) = &mut self.file_view else {
+    /// Loads the open file's history and blame, when they're shown.
+    fn load_file_past(&mut self, ctx: &egui::Context) {
+        self.file_history.poll();
+        self.blame.poll();
+        let Some((source, file, _)) = self.diff_key() else {
             return;
         };
-        view.mode = mode;
-        let file = view.file.clone();
-        match mode {
-            FileMode::History if view.history.is_none() && view.history_task.is_none() => {
-                view.history_task = Some(Task::spawn(ctx, move || {
-                    file_history::history(&path, &file).map_err(|e| e.to_string())
-                }));
+        if self.show_history {
+            // Keep the list while one of the names in it is open.
+            let listed = self
+                .history_file
+                .as_ref()
+                .and_then(|h| self.file_history.get(h))
+                .and_then(|r| r.as_ref().ok())
+                .is_some_and(|list| list.iter().any(|c| c.path == file));
+            if !listed && self.history_file.as_ref() != Some(&file) {
+                self.history_file = Some(file.clone());
             }
-            FileMode::Blame if view.blame.is_none() && view.blame_task.is_none() => {
-                let at = view.at.clone();
-                view.blame_task = Some(Task::spawn(ctx, move || {
-                    file_history::blame(&path, &file, at.as_deref()).map_err(|e| e.to_string())
-                }));
+            if let Some(of) = self.history_file.clone() {
+                let path = self.path().to_string();
+                self.file_history.want(ctx, &of, move |file| {
+                    file_history::history(&path, &file)
+                        .map(Arc::new)
+                        .map_err(|e| e.to_string())
+                });
             }
-            _ => {}
+        }
+        if self.show_blame {
+            let path = self.path().to_string();
+            self.blame
+                .want(ctx, &(source, file), move |(source, file)| {
+                    match source {
+                        Source::Commit(id) => file_history::blame(&path, &file, Some(&id)),
+                        Source::Working(Side::Unstaged) => file_history::blame(&path, &file, None),
+                        Source::Working(Side::Staged) => file_history::blame_staged(&path, &file),
+                    }
+                    .map(Arc::new)
+                    .map_err(|e| e.to_string())
+                });
         }
     }
 
-    fn poll_file_view(&mut self) {
-        let Some(view) = &mut self.file_view else {
-            return;
-        };
-        if let Some(r) = view.history_task.as_ref().and_then(Task::poll) {
-            view.history = Some(r.map(Arc::new));
-            view.history_task = None;
-        }
-        if let Some(r) = view.blame_task.as_ref().and_then(Task::poll) {
-            view.blame = Some(r.map(Arc::new));
-            view.blame_task = None;
-        }
+    /// The open file's history, if it's shown.
+    pub fn open_history(&self) -> Option<&Result<Arc<Vec<file_history::Change>>, String>> {
+        self.file_history.get(self.history_file.as_ref()?)
+    }
+
+    /// The open diff's blame, if it's shown and loaded.
+    pub fn open_blame(&self) -> Option<&Result<Arc<file_history::Blame>, String>> {
+        let (source, file, _) = self.diff_key()?;
+        self.blame.get(&(source, file))
     }
 
     /// Opens a conflicted file for resolving.
@@ -2483,33 +2494,81 @@ impl RepoView {
         self.diff.get(&key)?.as_ref().ok().cloned()
     }
 
-    /// Picks or unpicks a changed line of the open working diff. With
-    /// `extend`, every changed line from the last pick to this one is picked.
-    pub fn toggle_pick(&mut self, hunk: usize, line: usize, extend: bool) {
-        let Some(diff) = self.open_diff() else { return };
-        match (extend, self.pick_anchor) {
-            (true, Some(anchor)) => {
-                let (from, to) = if anchor <= (hunk, line) {
-                    (anchor, (hunk, line))
-                } else {
-                    ((hunk, line), anchor)
+    /// Picks lines of the open diff (to copy, or stage), as a click on
+    /// line (`hunk`, `line`) does.
+    pub fn select_line(&mut self, at: (usize, usize), how: Select) {
+        self.picked_in = self.diff_key();
+        match (how, self.pick_anchor) {
+            (Select::Range, Some(anchor)) => {
+                let Some(diff) = self.open_diff() else { return };
+                // In the order they're shown (the whole file's unchanged
+                // lines are numbered after the changes).
+                let order: Vec<(usize, usize)> = diff
+                    .unified
+                    .iter()
+                    .filter_map(|r| match r {
+                        crate::highlight::Row::Line(h, l) => Some((*h, *l)),
+                        crate::highlight::Row::Header(_) => None,
+                    })
+                    .collect();
+                let (Some(a), Some(b)) = (
+                    order.iter().position(|p| *p == anchor),
+                    order.iter().position(|p| *p == at),
+                ) else {
+                    return;
                 };
-                for (h, hk) in diff.diff.hunks.iter().enumerate() {
-                    for (l, ln) in hk.lines.iter().enumerate() {
-                        let changed = matches!(ln.kind, LineKind::Add | LineKind::Delete);
-                        if changed && (h, l) >= from && (h, l) <= to {
-                            self.picked.insert((h, l));
-                        }
-                    }
+                self.picked = order[a.min(b)..=a.max(b)].iter().copied().collect();
+            }
+            (Select::Toggle, _) => {
+                if !self.picked.remove(&at) {
+                    self.picked.insert(at);
                 }
+                self.pick_anchor = Some(at);
             }
             _ => {
-                if !self.picked.remove(&(hunk, line)) {
-                    self.picked.insert((hunk, line));
-                }
-                self.pick_anchor = Some((hunk, line));
+                self.picked.clear();
+                self.picked.insert(at);
+                self.pick_anchor = Some(at);
             }
         }
+    }
+
+    /// Picks every line of the open diff.
+    pub fn select_all_lines(&mut self) {
+        if let Some(diff) = self.open_diff() {
+            self.picked_in = self.diff_key();
+            self.picked = diff
+                .unified
+                .iter()
+                .filter_map(|r| match r {
+                    crate::highlight::Row::Line(h, l) => Some((*h, *l)),
+                    crate::highlight::Row::Header(_) => None,
+                })
+                .collect();
+        }
+    }
+
+    /// The picked lines' text, in the order they're shown.
+    pub fn picked_text(&self) -> Option<String> {
+        let diff = self.open_diff()?;
+        let lines: Vec<&str> = diff
+            .unified
+            .iter()
+            .filter_map(|r| match r {
+                crate::highlight::Row::Line(h, l) if self.picked.contains(&(*h, *l)) => {
+                    let line = &diff.diff.hunks[*h].lines[*l];
+                    (line.kind != LineKind::NoEol).then_some(line.content.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        (!lines.is_empty()).then(|| lines.join("\n"))
+    }
+
+    /// How many of the picked lines are changes (that staging would take).
+    pub fn picked_changes(&self) -> usize {
+        self.open_diff()
+            .map_or(0, |d| changed(&d, &self.picked).len())
     }
 
     fn lines_op(&self, pick: Pick) -> Option<Op> {
@@ -2537,7 +2596,12 @@ impl RepoView {
         if self.picked.is_empty() {
             return;
         }
-        if let Some(op) = self.lines_op(Pick::Lines(self.picked.iter().copied().collect())) {
+        let Some(diff) = self.open_diff() else { return };
+        let lines = changed(&diff, &self.picked);
+        if lines.is_empty() {
+            return;
+        }
+        if let Some(op) = self.lines_op(Pick::Lines(lines)) {
             self.run(ctx, op);
         }
     }
@@ -2569,7 +2633,12 @@ impl RepoView {
 
     /// Polls background work; call once per frame.
     pub fn poll(&mut self, ctx: &egui::Context) {
-        self.poll_file_view();
+        self.load_file_past(ctx);
+        // Picked lines belong to the diff they were picked in.
+        if !self.picked.is_empty() && self.picked_in != self.diff_key() {
+            self.picked.clear();
+            self.pick_anchor = None;
+        }
         self.details.poll();
         self.diff.poll();
         self.images.poll();
@@ -2749,6 +2818,7 @@ impl RepoView {
         if let Some(Source::Working(_)) = self.diff_key().map(|k| k.0) {
             self.diff.reload();
             self.images.reload();
+            self.blame.reload();
         }
         let still_listed = |file: &str, side| {
             self.status

@@ -1,81 +1,18 @@
-//! A file's past: its history (each commit that changed it) or its blame
-//! (who last changed each line).
+//! A file's past, shown with its diff: its history (each commit that
+//! changed it), down the side, and its blame (who last changed each line),
+//! beside the lines.
+
+use std::sync::Arc;
 
 use eframe::egui::{self, Color32, RichText, Sense, Stroke};
-use egui_phosphor::regular as icon;
+use git_raccoon_core::file_history::{Blame, Change};
 
 use crate::format;
-use crate::repo_view::{FileMode, FileView};
 use crate::theme;
 use crate::ui::widgets;
 
-pub enum Action {
-    Close,
-    Mode(FileMode),
-    /// Show this commit's change to the file (at `path`, its name then).
-    Pick {
-        id: String,
-        path: String,
-    },
-    /// Select this commit.
-    GoTo(String),
-}
-
-const ROW: f32 = 20.0;
-const GUTTER: f32 = 300.0;
-
-/// Shows the header, and the history list or the blame. In history mode,
-/// what's left of `ui` is for the picked commit's diff.
-pub fn show(
-    ui: &mut egui::Ui,
-    view: &FileView,
-    selected: Option<&str>,
-    now: i64,
-) -> Option<Action> {
-    let mut action = None;
-    egui::Frame::new()
-        .fill(theme::bg_raised())
-        .inner_margin(egui::Margin::symmetric(12, 0))
-        .show(ui, |ui| {
-            ui.set_height(36.0);
-            ui.horizontal_centered(|ui| {
-                ui.label(RichText::new(&view.file).strong());
-                let at = view.at.as_deref().map_or_else(
-                    || "working copy".to_string(),
-                    |id| format!("as of {}", format::short_sha(id)),
-                );
-                if view.mode == FileMode::Blame {
-                    ui.label(RichText::new(at).size(12.0).color(theme::muted()));
-                }
-                if view.is_loading() {
-                    ui.spinner();
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if widgets::icon_button(ui, icon::X, "Close (Esc)").clicked() {
-                        action = Some(Action::Close);
-                    }
-                    let mode = widgets::segmented(
-                        ui,
-                        view.mode,
-                        &[(FileMode::Blame, "Blame"), (FileMode::History, "History")],
-                    );
-                    if mode != view.mode {
-                        action = Some(Action::Mode(mode));
-                    }
-                });
-            });
-        });
-    ui.painter().hline(
-        ui.max_rect().x_range(),
-        ui.cursor().top(),
-        Stroke::new(1.0, theme::border()),
-    );
-    let inner = match view.mode {
-        FileMode::History => history(ui, view, selected, now),
-        FileMode::Blame => blame(ui, view, now),
-    };
-    action.or(inner)
-}
+/// The blame column's width.
+pub const GUTTER: f32 = 230.0;
 
 fn message(ui: &mut egui::Ui, text: &str, colour: Color32) {
     ui.add_space(12.0);
@@ -85,14 +22,23 @@ fn message(ui: &mut egui::Ui, text: &str, colour: Color32) {
     });
 }
 
-fn history(ui: &mut egui::Ui, view: &FileView, selected: Option<&str>, now: i64) -> Option<Action> {
+/// The file's history, as a list down the left of `ui`: each commit that
+/// changed it. Returns the one clicked (its id, and the file's path then).
+pub fn history(
+    ui: &mut egui::Ui,
+    list: Option<&Result<Arc<Vec<Change>>, String>>,
+    file: &str,
+    selected: Option<&str>,
+    now: i64,
+) -> Option<(String, String)> {
     let mut action = None;
     egui::Panel::left("file-history-list")
         .resizable(true)
-        .default_size(360.0)
+        .default_size(280.0)
+        .size_range(200.0..=520.0)
         .frame(egui::Frame::new().fill(theme::bg_raised()))
         .show(ui, |ui| {
-            let changes = match &view.history {
+            let changes = match list {
                 None => return message(ui, "Loading…", theme::muted()),
                 Some(Err(e)) => return message(ui, e, theme::danger()),
                 Some(Ok(c)) => c,
@@ -132,15 +78,12 @@ fn history(ui: &mut egui::Ui, view: &FileView, selected: Option<&str>, now: i64)
                         c.author,
                         format::age(c.time, now)
                     );
-                    if c.path != view.file {
+                    if c.path != file {
                         detail.push_str(&format!("  ·  as {}", c.path));
                     }
                     widgets::text_in(painter, bottom, &detail, theme::body(11.0), theme::muted());
                     if response.clicked() {
-                        action = Some(Action::Pick {
-                            id: c.id.clone(),
-                            path: c.path.clone(),
-                        });
+                        action = Some((c.id.clone(), c.path.clone()));
                     }
                 }
             });
@@ -148,119 +91,89 @@ fn history(ui: &mut egui::Ui, view: &FileView, selected: Option<&str>, now: i64)
     action
 }
 
-fn blame(ui: &mut egui::Ui, view: &FileView, now: i64) -> Option<Action> {
-    let mut action = None;
-    let blame = match &view.blame {
-        None => {
-            message(ui, "Loading…", theme::muted());
-            return None;
-        }
-        Some(Err(e)) => {
-            message(ui, e, theme::danger());
-            return None;
-        }
-        Some(Ok(b)) => b,
+/// The oldest and newest commit times in a blame, for its age stripes.
+pub fn ages(blame: &Blame) -> (i64, i64) {
+    let times = blame.commits.iter().map(|c| c.time).filter(|t| *t > 0);
+    (times.clone().min().unwrap_or(0), times.max().unwrap_or(1))
+}
+
+/// One line's blame in `rect`: a stripe as strong as the commit is new,
+/// and who and when where a run of lines from one commit starts. Returns
+/// the commit to go to when clicked.
+pub fn blame_cell(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    blame: &Blame,
+    line: Option<usize>,
+    starts_run: bool,
+    (oldest, newest): (i64, i64),
+    now: i64,
+) -> Option<String> {
+    let painter = ui.painter().clone();
+    painter.rect_filled(rect, 0, theme::bg_raised());
+    painter.vline(
+        rect.right(),
+        rect.y_range(),
+        Stroke::new(1.0, theme::border()),
+    );
+    let n = line?;
+    let line = blame.lines.get(n)?;
+    let commit = &blame.commits[line.commit];
+    #[expect(clippy::cast_precision_loss, reason = "a colour weight")]
+    let recency = if commit.time == 0 {
+        1.0
+    } else {
+        (commit.time - oldest) as f32 / ((newest - oldest).max(1)) as f32
     };
-    if blame.lines.is_empty() {
-        message(ui, "This file is empty.", theme::muted());
+    painter.rect_filled(
+        egui::Rect::from_min_size(rect.min, egui::vec2(3.0, rect.height())),
+        0,
+        theme::accent().gamma_multiply(0.25 + 0.75 * recency),
+    );
+    if !starts_run {
         return None;
     }
-    // Newer commits get a stronger stripe.
-    let times: Vec<i64> = blame
-        .commits
-        .iter()
-        .map(|c| c.time)
-        .filter(|t| *t > 0)
-        .collect();
-    let (oldest, newest) = (
-        times.iter().copied().min().unwrap_or(0),
-        times.iter().copied().max().unwrap_or(1),
+    let id = egui::Id::new(("blame", n));
+    let response = ui.interact(rect, id, Sense::click());
+    painter.hline(
+        rect.x_range(),
+        rect.top(),
+        Stroke::new(1.0, theme::border()),
     );
-    let digits = blame.lines.len().to_string().len();
-    let area = egui::ScrollArea::both().auto_shrink([false, false]);
-    widgets::gapless_rows(ui, area, ROW, blame.lines.len(), |ui, range| {
-        for n in range {
-            let line = &blame.lines[n];
-            let commit = &blame.commits[line.commit];
-            let width = ui.available_width().max(GUTTER + 400.0);
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(width, ROW), Sense::hover());
-            let gutter = egui::Rect::from_min_size(rect.min, egui::vec2(GUTTER, ROW));
-            let response = ui.interact(gutter, ui.id().with(("blame", n)), Sense::click());
-            let painter = ui.painter();
-            painter.rect_filled(gutter, 0, theme::bg_raised());
-            // The age stripe.
-            #[expect(clippy::cast_precision_loss, reason = "a colour weight")]
-            let recency = if commit.time == 0 {
-                1.0
-            } else {
-                (commit.time - oldest) as f32 / ((newest - oldest).max(1)) as f32
-            };
-            painter.rect_filled(
-                egui::Rect::from_min_size(gutter.min, egui::vec2(3.0, ROW)),
-                0,
-                theme::accent().gamma_multiply(0.25 + 0.75 * recency),
-            );
-            if line.starts_run {
-                painter.hline(
-                    rect.x_range(),
-                    rect.top(),
-                    Stroke::new(1.0, theme::border()),
-                );
-                let who = match &commit.id {
-                    Some(id) => format!(
-                        "{}  {}  {}",
-                        format::short_sha(id),
-                        commit.author,
-                        format::age(commit.time, now)
-                    ),
-                    None => "Not committed yet".to_string(),
-                };
-                widgets::text_in(
-                    painter,
-                    gutter.shrink2(egui::vec2(10.0, 0.0)),
-                    &who,
-                    theme::body(11.0),
-                    if response.hovered() {
-                        theme::text()
-                    } else {
-                        theme::muted()
-                    },
-                );
-                if let Some(id) = &commit.id {
-                    let label = format!(
-                        "Commit {} by {}: {}",
-                        format::short_sha(id),
-                        commit.author,
-                        commit.summary
-                    );
-                    response.widget_info(|| {
-                        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label)
-                    });
-                    if response.clicked() {
-                        action = Some(Action::GoTo(id.clone()));
-                    }
-                    let tip = format!("{}\n{}", commit.summary, format::date_time(commit.time));
-                    response.on_hover_text(tip);
-                }
-            }
-            let number = format!("{:>digits$}", n + 1);
-            painter.text(
-                egui::pos2(gutter.right() + 8.0, rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                number,
-                egui::FontId::monospace(12.0),
-                theme::muted(),
-            );
-            #[expect(clippy::cast_precision_loss, reason = "a few digits")]
-            let text_x = gutter.right() + 20.0 + digits as f32 * 8.0;
-            painter.text(
-                egui::pos2(text_x, rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                line.text.replace('\t', "    "),
-                egui::FontId::monospace(12.0),
-                theme::text(),
-            );
-        }
-    });
-    action
+    let who = match &commit.id {
+        Some(id) => format!(
+            "{}  {}  {}",
+            format::short_sha(id),
+            commit.author,
+            format::age(commit.time, now)
+        ),
+        None => "Not committed yet".to_string(),
+    };
+    widgets::text_in(
+        &painter,
+        rect.shrink2(egui::vec2(10.0, 0.0)),
+        &who,
+        theme::body(11.0),
+        if response.hovered() {
+            theme::text()
+        } else {
+            theme::muted()
+        },
+    );
+    let id = commit.id.as_ref()?;
+    let label = format!(
+        "Commit {} by {}: {}",
+        format::short_sha(id),
+        commit.author,
+        commit.summary
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
+    let response = response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(format!(
+            "{}\n{}",
+            commit.summary,
+            format::date_time(commit.time)
+        ));
+    response.clicked().then(|| id.clone())
 }

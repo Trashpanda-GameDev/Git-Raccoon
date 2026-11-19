@@ -14,8 +14,7 @@ use git_raccoon_core::create;
 use git_raccoon_core::sync::Progress;
 
 use crate::commands::{self, Command, Entry};
-use crate::repo_view::FileMode;
-use crate::ui::{clone, conflict, file_view, new_repo, palette, rebase, tabs};
+use crate::ui::{clone, conflict, new_repo, palette, rebase, tabs};
 use crate::ui::{
     details, dialog, diff, history, search_bar, sidebar, toolbar, welcome, widgets, working,
 };
@@ -869,9 +868,7 @@ impl App {
             | Command::WriteCommit
             | Command::AddRemote
             | Command::GoTo { .. } => true,
-            Command::FileHistory | Command::Blame => {
-                repo.diff_key().is_some() || repo.file_view.is_some()
-            }
+            Command::FileHistory | Command::Blame => repo.diff_key().is_some(),
             Command::GoToHead => repo.history.head_row().is_some(),
             Command::Undo => repo.undo.is_some() && !busy,
             Command::Fetch => !busy,
@@ -1040,6 +1037,8 @@ impl App {
             Command::ToggleSidebar => self.settings.hide_sidebar = !self.settings.hide_sidebar,
             Command::ToggleSplitDiff => self.settings.split_diff = !self.settings.split_diff,
             Command::ToggleWholeFile => self.settings.whole_file = !self.settings.whole_file,
+            Command::FileHistory => self.settings.diff_history = !self.settings.diff_history,
+            Command::Blame => self.settings.diff_blame = !self.settings.diff_blame,
             Command::ZoomIn => self.settings.zoom_step(true),
             Command::ZoomOut => self.settings.zoom_step(false),
             Command::ZoomReset => self.settings.zoom = None,
@@ -1103,22 +1102,6 @@ impl App {
                     Command::CheckoutRemote(name) => repo.run(ctx, Op::CheckoutRemote(name)),
                     Command::Merge(name) => repo.ask_merge(name, None),
                     Command::Rebase(name) => repo.confirm_rebase(name),
-                    Command::FileHistory | Command::Blame => {
-                        let mode = if command == Command::Blame {
-                            FileMode::Blame
-                        } else {
-                            FileMode::History
-                        };
-                        if repo.file_view.is_some() {
-                            repo.set_file_mode(ctx, mode);
-                        } else if let Some((source, file, _)) = repo.diff_key() {
-                            let at = match source {
-                                Source::Commit(id) => Some(id),
-                                Source::Working(_) => None,
-                            };
-                            repo.show_file(ctx, file, at, mode);
-                        }
-                    }
                     Command::GoTo { id, .. } => {
                         repo.planner = None;
                         repo.select(&id);
@@ -1495,8 +1478,8 @@ impl App {
                 repo.search.close();
             } else if repo.forge.as_ref().is_some_and(|f| f.open.is_some()) {
                 repo.close_forge_item();
-            } else if repo.file_view.is_some() {
-                repo.file_view = None;
+            } else if repo.active_file.is_some() && !repo.picked.is_empty() {
+                repo.picked.clear();
             } else if repo.planner.is_some() {
                 repo.planner = None;
             } else if repo.conflict.is_some() {
@@ -1508,11 +1491,7 @@ impl App {
             }
             return;
         }
-        if repo.active_file.is_some()
-            || repo.planner.is_some()
-            || repo.conflict.is_some()
-            || repo.file_view.is_some()
-        {
+        if repo.active_file.is_some() || repo.planner.is_some() || repo.conflict.is_some() {
             return;
         }
         // The arrows move a row; with Shift they follow the branch, with
@@ -2025,45 +2004,6 @@ impl App {
             .frame(Frame::new().fill(theme::bg()))
             .show(ui, |ui| {
                 let busy = repo.op_running();
-                if let Some(view) = &repo.file_view {
-                    let selected = repo.selected.as_ref().map(|s| s.id.clone());
-                    let action = file_view::show(ui, view, selected.as_deref(), now);
-                    let history = view.mode == FileMode::History;
-                    // History: the picked commit's change to the file, beside the list.
-                    if history && let Some(key) = repo.diff_key() {
-                        let shown = diff::show(
-                            ui,
-                            &key.1,
-                            None,
-                            repo.diff.get(&key),
-                            repo.diff.is_loading(),
-                            None,
-                            (self.settings.split_diff, self.settings.whole_file),
-                            None,
-                            false,
-                        );
-                        match shown {
-                            Some(diff::Action::SetSplit(s)) => self.settings.split_diff = s,
-                            Some(diff::Action::SetWhole(w)) => self.settings.whole_file = w,
-                            Some(diff::Action::Close) => repo.active_file = None,
-                            _ => {}
-                        }
-                    }
-                    match action {
-                        Some(file_view::Action::Close) => repo.file_view = None,
-                        Some(file_view::Action::Mode(m)) => repo.set_file_mode(&ctx, m),
-                        Some(file_view::Action::Pick { id, path }) => {
-                            repo.select(&id);
-                            repo.active_file = Some(path);
-                        }
-                        Some(file_view::Action::GoTo(id)) => {
-                            repo.file_view = None;
-                            repo.select(&id);
-                        }
-                        None => {}
-                    }
-                    return;
-                }
                 if let Some((planner, original)) = &mut repo.planner {
                     match rebase::show(ui, planner, original, busy) {
                         Some(rebase::Action::Start) => repo.start_planned_rebase(&ctx),
@@ -2105,13 +2045,20 @@ impl App {
                         Source::Working(Side::Unstaged) => Some("Unstaged"),
                         Source::Commit(_) => None,
                     };
-                    let staging = match key.0 {
-                        Source::Working(side) => Some(diff::Staging {
-                            side,
-                            picked: &repo.picked,
-                            busy: repo.is_staging(),
-                        }),
-                        Source::Commit(_) => None,
+                    let lines = diff::Lines {
+                        picked: &repo.picked,
+                        staging: match key.0 {
+                            Source::Working(side) => Some((side, repo.is_staging())),
+                            Source::Commit(_) => None,
+                        },
+                    };
+                    let selected = repo.selected.as_ref().map(|s| s.id.clone());
+                    let past = diff::Past {
+                        history: self.settings.diff_history.then(|| repo.open_history()),
+                        blame: self.settings.diff_blame.then(|| repo.open_blame()),
+                        history_file: repo.history_file.as_deref().unwrap_or(&file),
+                        selected: selected.as_deref().filter(|_| !repo.working_selected),
+                        now,
                     };
                     let action = diff::show(
                         ui,
@@ -2121,28 +2068,34 @@ impl App {
                         repo.diff.is_loading(),
                         images,
                         (self.settings.split_diff, self.settings.whole_file),
-                        staging.as_ref(),
-                        true,
+                        &lines,
+                        Some(&past),
                     );
                     match action {
                         Some(diff::Action::Close) => repo.active_file = None,
-                        Some(diff::Action::History | diff::Action::Blame) => {
-                            let mode = if matches!(action, Some(diff::Action::History)) {
-                                FileMode::History
-                            } else {
-                                FileMode::Blame
-                            };
-                            let at = match &key.0 {
-                                Source::Commit(id) => Some(id.clone()),
-                                Source::Working(_) => None,
-                            };
-                            repo.show_file(&ctx, file.clone(), at, mode);
+                        Some(diff::Action::ToggleHistory) => {
+                            self.settings.diff_history = !self.settings.diff_history;
+                        }
+                        Some(diff::Action::ToggleBlame) => {
+                            self.settings.diff_blame = !self.settings.diff_blame;
                         }
                         Some(diff::Action::SetSplit(s)) => self.settings.split_diff = s,
                         Some(diff::Action::SetWhole(w)) => self.settings.whole_file = w,
                         Some(diff::Action::StageHunk(h)) => repo.stage_hunk(&ctx, h),
-                        Some(diff::Action::ToggleLine { hunk, line, extend }) => {
-                            repo.toggle_pick(hunk, line, extend)
+                        Some(diff::Action::Select { at, how }) => repo.select_line(at, how),
+                        Some(diff::Action::SelectAll) => repo.select_all_lines(),
+                        Some(diff::Action::CopyPicked) => {
+                            if let Some(text) = repo.picked_text() {
+                                ctx.copy_text(text);
+                            }
+                        }
+                        Some(diff::Action::Pick { id, path }) => {
+                            repo.select(&id);
+                            repo.active_file = Some(path);
+                        }
+                        Some(diff::Action::GoTo(id)) => {
+                            repo.active_file = None;
+                            repo.select(&id);
                         }
                         Some(diff::Action::StagePicked) => repo.stage_picked(&ctx),
                         Some(diff::Action::ClearPicked) => repo.picked.clear(),
@@ -2218,6 +2171,8 @@ impl eframe::App for App {
         self.poll_clone(ctx);
         if let Some(repo) = &mut self.repo {
             repo.whole_file = self.settings.whole_file;
+            repo.show_history = self.settings.diff_history;
+            repo.show_blame = self.settings.diff_blame;
             repo.poll(ctx);
             if let Some(e) = repo.refresh_error.take() {
                 self.error = Some(e);

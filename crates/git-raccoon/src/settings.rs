@@ -145,6 +145,9 @@ pub struct Settings {
     pub split_diff: bool,
     /// Diffs show the whole file, not just the changes and a few lines around them.
     pub whole_file: bool,
+    /// Diffs show the file's history beside them, and its blame.
+    pub diff_history: bool,
+    pub diff_blame: bool,
     /// How Fetch goes: pruning remote branches deleted there, and letting
     /// fetched refs overwrite local ones.
     pub fetch_prune: bool,
@@ -343,6 +346,8 @@ impl Default for Settings {
             active_tab: 0,
             split_diff: false,
             whole_file: false,
+            diff_history: false,
+            diff_blame: false,
             fetch_prune: true,
             fetch_force: false,
             pull: PullOptions::default(),

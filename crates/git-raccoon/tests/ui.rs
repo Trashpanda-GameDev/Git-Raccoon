@@ -950,7 +950,7 @@ fn stages_files_hunks_and_lines() {
     );
 
     // A single line: pick the added "line 2 edited" without removing "line 2".
-    h.get_by_label("Pick line: line 2 edited").click();
+    h.get_by_label("Select line: line 2 edited").click();
     h.run_ok();
     assert_eq!(h.state().repo().unwrap().picked.len(), 1);
     screenshot(&mut h, "10-pick-line");
@@ -4391,7 +4391,7 @@ fn selected_summary_of(app: &App) -> Option<String> {
 }
 
 #[test]
-fn shows_a_files_history_and_blame() {
+fn shows_a_files_history_and_blame_beside_its_diff() {
     let sample = Sample::build();
     let mut h = harness(Settings::default());
     open(&mut h, sample.path());
@@ -4403,29 +4403,22 @@ fn shows_a_files_history_and_blame() {
     settle(&mut h);
     h.get_by_label("History").click();
     wait_for(&mut h, "the history", |app| {
-        app.repo()
-            .unwrap()
-            .file_view
-            .as_ref()
-            .is_some_and(|v| v.history.is_some())
+        app.repo().unwrap().open_history().is_some()
     });
-    let history: Vec<String> = h
-        .state()
-        .repo()
-        .unwrap()
-        .file_view
-        .as_ref()
-        .unwrap()
-        .history
-        .as_ref()
-        .unwrap()
-        .as_ref()
-        .unwrap()
-        .iter()
-        .map(|c| c.summary.clone())
-        .collect();
+    let history = |h: &Harness<'_, App>| -> Vec<String> {
+        h.state()
+            .repo()
+            .unwrap()
+            .open_history()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|c| c.summary.clone())
+            .collect()
+    };
     assert_eq!(
-        history,
+        history(&h),
         [
             "Redraw icon and rename loader",
             "Reject bare repositories when loading",
@@ -4433,9 +4426,37 @@ fn shows_a_files_history_and_blame() {
         ],
         "follows the rename"
     );
+    assert!(h.state().settings().diff_history, "remembered");
 
-    // An older entry shows its change to the file, by its old name.
-    h.get_by_label("Add repository loader").click();
+    // Blame as well, in the whole file: who last changed each line.
+    h.get_by_label("Whole file").click();
+    h.get_by_label("Blame").click();
+    wait_for(&mut h, "the blame", |app| {
+        app.repo().unwrap().open_blame().is_some()
+    });
+    let blame = h
+        .state()
+        .repo()
+        .unwrap()
+        .open_blame()
+        .unwrap()
+        .clone()
+        .unwrap();
+    let commits: std::collections::HashSet<&str> =
+        blame.commits.iter().map(|c| c.summary.as_str()).collect();
+    assert!(
+        commits.contains("Reject bare repositories when loading"),
+        "{commits:?}"
+    );
+    settle(&mut h);
+    screenshot(&mut h, "34-blame");
+
+    // An older entry shows its change to the file, by its old name; the
+    // list stays, and the blame follows.
+    h.get_all_by_role_and_label(egui::accesskit::Role::Button, "Add repository loader")
+        .next()
+        .unwrap()
+        .click();
     settle(&mut h);
     assert_eq!(
         selected_summary(&h).as_deref(),
@@ -4445,36 +4466,14 @@ fn shows_a_files_history_and_blame() {
         h.state().repo().unwrap().active_file.as_deref(),
         Some("src/loader.rs")
     );
-    screenshot(&mut h, "33-file-history");
-
-    // Blame: who last changed each line.
-    h.get_by_label("Blame").click();
-    wait_for(&mut h, "the blame", |app| {
-        app.repo()
-            .unwrap()
-            .file_view
-            .as_ref()
-            .is_some_and(|v| v.blame.is_some())
+    assert_eq!(history(&h).len(), 3);
+    wait_for(&mut h, "the older blame", |app| {
+        app.repo().unwrap().open_blame().is_some()
     });
-    let blame = h
-        .state()
-        .repo()
-        .unwrap()
-        .file_view
-        .as_ref()
-        .unwrap()
-        .blame
-        .clone()
-        .unwrap()
-        .unwrap();
-    let authors: std::collections::HashSet<&str> =
-        blame.commits.iter().map(|c| c.summary.as_str()).collect();
-    assert!(
-        authors.contains("Reject bare repositories when loading"),
-        "{authors:?}"
-    );
-    screenshot(&mut h, "34-blame");
-    h.get_all_by_label_contains("Reject bare repositories when loading")
+    settle(&mut h);
+    screenshot(&mut h, "33-file-history");
+    // A commit in the blame goes to it.
+    h.get_all_by_label_contains("Add repository loader")
         .find(|n| {
             n.accesskit_node()
                 .label()
@@ -4483,11 +4482,64 @@ fn shows_a_files_history_and_blame() {
         .unwrap()
         .click();
     settle(&mut h);
-    assert!(h.state().repo().unwrap().file_view.is_none());
+    assert!(h.state().repo().unwrap().active_file.is_none());
     assert_eq!(
         selected_summary(&h).as_deref(),
-        Some("Reject bare repositories when loading")
+        Some("Add repository loader")
     );
+}
+
+#[test]
+fn lines_of_a_diff_can_be_picked_and_copied() {
+    let sample = Sample::build();
+    let mut h = harness(Settings {
+        whole_file: true,
+        ..Settings::default()
+    });
+    open(&mut h, sample.path());
+    h.get_by_label("Reject bare repositories when loading")
+        .click();
+    settle(&mut h);
+    h.get_by_label("src/loader.rs").click();
+    settle(&mut h);
+    let lines = |h: &Harness<'_, App>| h.state().repo().unwrap().picked.len();
+    // A click picks a line, unchanged or not; another click, just that one.
+    let all: Vec<String> = h
+        .get_all_by_label_contains("Select line: ")
+        .map(|n| n.accesskit_node().label().unwrap().to_string())
+        .collect();
+    assert!(all.len() >= 4, "{all:?}");
+    h.get_by_label(&all[0]).click();
+    h.run_ok();
+    h.get_by_label(&all[1]).click();
+    h.run_ok();
+    assert_eq!(lines(&h), 1);
+    // Shift+click picks the range.
+    h.get_by_label(&all[3])
+        .click_modifiers(egui::Modifiers::SHIFT);
+    h.run_ok();
+    assert_eq!(lines(&h), 3);
+    assert!(h.get_by_label_contains("Copy 3 lines").rect().width() > 0.0);
+    // Ctrl+click takes one out.
+    h.get_by_label(&all[2])
+        .click_modifiers(egui::Modifiers::COMMAND);
+    h.run_ok();
+    assert_eq!(lines(&h), 2);
+    let text = h.state().repo().unwrap().picked_text().unwrap();
+    let want = |l: &str| l.trim_start_matches("Select line: ").to_string();
+    assert!(text.contains(&want(&all[1])) && text.contains(&want(&all[3])));
+    // Dragging over lines picks them all.
+    let from = h.get_by_label(&all[0]).rect().center();
+    let to = h.get_by_label(&all[3]).rect().center();
+    drag(&mut h, from, to);
+    h.run_ok();
+    assert_eq!(lines(&h), 4);
+    screenshot(&mut h, "77-picked-lines");
+    // Esc lets go of them first, then closes the diff.
+    h.key_press(Key::Escape);
+    h.run_ok();
+    assert!(h.state().repo().unwrap().picked.is_empty());
+    assert!(h.state().repo().unwrap().active_file.is_some());
 }
 
 #[test]

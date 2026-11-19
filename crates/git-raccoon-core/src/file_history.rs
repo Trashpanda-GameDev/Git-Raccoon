@@ -96,6 +96,18 @@ pub fn blame(path: &str, file: &str, at: Option<&str>) -> Result<Blame> {
     Ok(parse_porcelain(&out))
 }
 
+/// Who last changed each line of `file` as it is staged (lines changed
+/// since the last commit belong to no commit yet).
+pub fn blame_staged(path: &str, file: &str) -> Result<Blame> {
+    let staged = cli::run(path, &["show", &format!(":{file}")], None)?;
+    let out = cli::run(
+        path,
+        &["blame", "--porcelain", "--contents", "-", "--", file],
+        Some(&staged),
+    )?;
+    Ok(parse_porcelain(&out))
+}
+
 fn parse_porcelain(out: &str) -> Blame {
     let mut blame = Blame::default();
     let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
@@ -206,6 +218,13 @@ mod tests {
         t.write("b.txt", "one\nTWO\nthree\nfour\n");
         let b = blame(t.path(), "b.txt", None).unwrap();
         assert_eq!(b.lines[3].id, None);
+        // Staged, the edit on disk isn't there; staging it brings it.
+        assert_eq!(blame_staged(t.path(), "b.txt").unwrap().lines.len(), 3);
+        crate::cli::run(t.path(), &["add", "b.txt"], None).unwrap();
+        let b = blame_staged(t.path(), "b.txt").unwrap();
+        assert_eq!(b.lines.len(), 4);
+        assert_eq!(b.lines[3].id, None);
+        assert!(b.lines[0].id.is_some());
 
         // As of the first commit.
         let first = history(t.path(), "b.txt").unwrap().pop().unwrap();

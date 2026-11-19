@@ -55,7 +55,7 @@ The toolbar has the repository menu (your recent repositories, to switch to one)
 When you have uncommitted changes, a **// WIP** row sits at the top of the graph, with a dashed line down to the commit you're on. You can write the commit's summary right there: it's the same text as the summary box under Commit, and a stash starts with it as its title. Click the row to see your changes:
 
 - **Unstaged** and **staged** files, each in a list of its own (so staged files stay in view, however many unstaged ones there are; click a list's heading to fold it away), with buttons to stage, unstage or discard. Pick several files with Ctrl+click (or Shift+click for a range) and right-click them, or right-click a folder in the folder view, to stage, unstage, stash, ignore (new files: they're added to `.gitignore`) or discard them all at once. The tree button at the top shows the files in their folders instead of by path (commits and stashes too; a folder holding just one folder shares its row, like `game/assets/localisation`), and the bin discards all changes, staged or not, after asking. Discarded files go to the Recycle Bin or Trash, so they can be recovered.
-- Open a file's diff to stage **single hunks**, or pick **individual lines** in the gutter and stage just those.
+- Open a file's diff to stage **single hunks**, or pick **individual lines** and stage just those: click a line, Shift+click or drag for a range, Ctrl+click to add or take one out, then **Stage** (only the changed lines among them count). Picked lines can be copied too (**Copy**, or Ctrl+C), in any diff; right-click a line for both, or to pick every line. Esc lets go of them.
 - Write a **summary** (the counter turns amber past 50 characters and red past 72) and an optional description, then **Commit** (or Ctrl+Enter).
 - **Amend last commit** replaces the last commit instead; it warns if that commit is already pushed.
 - **Stash** puts your changes aside: all of them, or, when some are staged, just the staged ones (the rest stay as they are). The stash appears in the sidebar, and in the graph just above the commit it was made on; right-click it in either to apply, pop or delete it.
@@ -128,7 +128,7 @@ Right-click a commit in the graph:
 
 ## Looking back: file history and blame
 
-In any diff, **History** lists every commit that changed the file (following renames), with each one's change beside the list. **Blame** shows, for every line, the commit and author that last changed it; click one to go to that commit.
+In any diff, **History** and **Blame** are switches, and can be on together (they're remembered). **History** lists every commit that changed the file (following renames) down the side of the diff; click one to see its change to the file. **Blame** adds a column beside the lines showing the commit and author that last changed each one, with a stripe that's stronger the newer the change; it's most useful with **Whole file**. Click a commit in it to go to that commit.
 
 ## Undo
 
