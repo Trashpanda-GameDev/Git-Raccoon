@@ -3763,7 +3763,17 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
         .unwrap()
         .click();
     h.run_ok();
-    type_into(&mut h, "Request title", "Faster start");
+    // Nothing new on it: its title is its name, and it says so.
+    assert_eq!(h.state().new_request_form().unwrap().title, "Cache");
+    h.get_by_label_contains("has nothing main doesn't have");
+    h.get_by_label("Request title").click();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+    h.get_by_label("Request title").type_text("Faster start");
+    h.run_ok();
+    type_into(&mut h, "Request labels", "perf, ux");
+    h.get_by_label("Squash its commits when it's merged")
+        .click();
+    h.run_ok();
     h.get_by_role_and_label(Role::Button, "Open it").click();
     wait_for(&mut h, "the new one", |app| {
         app.repo()
@@ -3787,7 +3797,24 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
         ),
         (Some("cache"), Some("main"))
     );
-    assert!(sent["title"].as_str().unwrap().contains("Faster start"));
+    assert_eq!(sent["title"].as_str(), Some("Faster start"));
+    assert_eq!(sent["labels"].as_str(), Some("perf,ux"));
+    assert_eq!(sent["squash"].as_bool(), Some(true));
+
+    // From any branch: its right-click menu. Not pushed, and not checked
+    // out, so it says to do that first.
+    h.get_by_label("graph").click_secondary();
+    h.run_ok();
+    h.get_by_label("Open a merge request…").click();
+    h.run_ok();
+    let form = h.state().new_request_form().unwrap();
+    assert_eq!(form.source, "feature/graph");
+    // (Merged into main already, so it's named after the branch.)
+    assert_eq!((form.title.as_str(), form.commits.len()), ("Graph", 0));
+    h.get_by_label_contains("check it out and push it first");
+    screenshot(&mut h, "79-request-from-branch");
+    h.get_by_label("Cancel").click();
+    h.run_ok();
 
     // Signing in with a token, through the window.
     press(&mut h, egui::Modifiers::COMMAND, Key::Comma);

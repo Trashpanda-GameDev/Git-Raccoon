@@ -518,13 +518,30 @@ pub fn create(s: &Session, new: &NewRequest) -> Result<Request, String> {
         "base": new.target,
         "draft": new.draft,
     });
-    let v = http::post(
-        FORGE,
-        &format!("{}/pulls", api(s)),
-        &Auth::Bearer(&s.token),
-        &body,
-    )?;
-    Ok(request(&v))
+    let auth = Auth::Bearer(&s.token);
+    let v = http::post(FORGE, &format!("{}/pulls", api(s)), &auth, &body)?;
+    let made = request(&v);
+    // Who reviews it, who it's assigned to, and its labels: once it's there.
+    let extra = |what: &str, e: String| format!("it's open, but its {what} weren't set: {e}");
+    if !new.reviewers.is_empty() {
+        http::post(
+            FORGE,
+            &format!("{}/pulls/{}/requested_reviewers", api(s), made.number),
+            &auth,
+            &json!({"reviewers": new.reviewers}),
+        )
+        .map_err(|e| extra("reviewers", e))?;
+    }
+    if !new.assignees.is_empty() || !new.labels.is_empty() {
+        http::patch(
+            FORGE,
+            &format!("{}/issues/{}", api(s), made.number),
+            &auth,
+            &json!({"assignees": new.assignees, "labels": new.labels}),
+        )
+        .map_err(|e| extra("assignees and labels", e))?;
+    }
+    Ok(made)
 }
 
 #[cfg(test)]
@@ -646,6 +663,7 @@ mod tests {
                 title: "Faster lookups".into(),
                 body: "Uses a hash map.".into(),
                 draft: true,
+                ..NewRequest::default()
             })
             .unwrap();
         assert_eq!(made.number, 7);

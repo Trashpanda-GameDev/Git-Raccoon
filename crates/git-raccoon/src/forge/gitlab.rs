@@ -380,6 +380,23 @@ pub fn submit(
     Ok(())
 }
 
+/// The ids of users, by username.
+fn user_ids(s: &Session, names: &[String]) -> Result<Vec<u64>, String> {
+    names
+        .iter()
+        .map(|name| {
+            let found = http::get(
+                FORGE,
+                &format!("{}/api/v4/users?username={}", s.project.base, encode(name)),
+                &Auth::Bearer(&s.token),
+            )?;
+            found[0]["id"]
+                .as_u64()
+                .ok_or_else(|| format!("{FORGE} doesn't know {name}"))
+        })
+        .collect()
+}
+
 /// A comment on the whole request.
 pub fn comment(s: &Session, number: u64, body: &str) -> Result<(), String> {
     http::post(
@@ -464,13 +481,26 @@ pub fn create(s: &Session, new: &NewRequest) -> Result<Request, String> {
     } else {
         new.title.clone()
     };
-    let body = json!({
+    let mut body = json!({
         "source_branch": new.source,
         "target_branch": new.target,
         "title": title,
         "description": new.body,
-        "remove_source_branch": false,
+        "remove_source_branch": new.remove_source,
+        "squash": new.squash,
     });
+    if !new.labels.is_empty() {
+        body["labels"] = json!(new.labels.join(","));
+    }
+    // GitLab takes people by their ids.
+    for (key, names) in [
+        ("reviewer_ids", &new.reviewers),
+        ("assignee_ids", &new.assignees),
+    ] {
+        if !names.is_empty() {
+            body[key] = json!(user_ids(s, names)?);
+        }
+    }
     let v = http::post(
         FORGE,
         &format!("{}/merge_requests", api(s)),
@@ -565,6 +595,7 @@ mod tests {
             title: "Pipeline cache".into(),
             body: "Caches.".into(),
             draft: true,
+            ..NewRequest::default()
         })
         .unwrap();
         let seen = seen.lock().unwrap();

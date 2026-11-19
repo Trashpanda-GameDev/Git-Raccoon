@@ -1488,7 +1488,10 @@ fn commit_menu(
     if let Some(r) = label {
         use crate::ui::sidebar;
         let items = match r.kind {
-            RefKind::Local => sidebar::local_branch_items(&r.name, &c.id, r.is_head, head),
+            RefKind::Local => {
+                let noun = sidebar::request_noun(ui.ctx());
+                sidebar::local_branch_items(&r.name, &c.id, r.is_head, head, noun.as_deref())
+            }
             RefKind::Remote => sidebar::remote_branch_items(&r.name, &c.id, head),
             RefKind::Tag => sidebar::tag_items(&r.name, &c.id),
             RefKind::Head | RefKind::Stash => Vec::new(),

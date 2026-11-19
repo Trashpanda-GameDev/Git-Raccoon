@@ -298,6 +298,13 @@ pub struct NewRequest {
     pub title: String,
     pub body: String,
     pub draft: bool,
+    /// Logins.
+    pub reviewers: Vec<String>,
+    pub assignees: Vec<String>,
+    pub labels: Vec<String>,
+    /// GitLab: delete the source branch, and squash, when it's merged.
+    pub remove_source: bool,
+    pub squash: bool,
 }
 
 /// A signed-in connection to a project.

@@ -85,6 +85,14 @@ pub fn put(forge: &str, url: &str, auth: &Auth<'_>, body: &Value) -> Result<Valu
     read(forge, req.send(body.to_string()))
 }
 
+/// PATCH some JSON, and get JSON back.
+pub fn patch(forge: &str, url: &str, auth: &Auth<'_>, body: &Value) -> Result<Value, String> {
+    let req = with_auth(agent_for().patch(url), auth)
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .header("Content-Type", "application/json");
+    read(forge, req.send(body.to_string()))
+}
+
 /// DELETE something.
 pub fn delete(forge: &str, url: &str, auth: &Auth<'_>) -> Result<Value, String> {
     let req = with_auth(agent_for().delete(url), auth).header("X-GitHub-Api-Version", "2022-11-28");

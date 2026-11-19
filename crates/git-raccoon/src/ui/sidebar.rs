@@ -723,7 +723,7 @@ fn forge_sections(
         c.toggle("requests");
     }
     if add {
-        c.action = Some(Action::NewRequest);
+        c.action = Some(Action::NewRequest(None));
     }
     let sign_in = |ui: &mut egui::Ui, c: &mut Ctx<'_>| {
         ui.horizontal(|ui| {
@@ -877,7 +877,8 @@ pub enum Action {
     /// Sign in to the repository's forge.
     SignInToForge,
     /// Open a new pull/merge request.
-    NewRequest,
+    /// A new pull/merge request: from this branch, or the checked-out one.
+    NewRequest(Option<String>),
     /// Open a page on the forge.
     OpenWeb(String),
     /// Show or hide a section of the sidebar (by its key).
@@ -1045,9 +1046,10 @@ pub fn local_branch_items(
     target: &str,
     is_head: bool,
     head: Option<&str>,
+    request: Option<&str>,
 ) -> Vec<(String, bool, Action)> {
     let onto = head.unwrap_or("HEAD");
-    vec![
+    let mut items = vec![
         // Named, so it isn't taken for checking out just its commit.
         (
             format!("Check out {name}"),
@@ -1086,7 +1088,30 @@ pub fn local_branch_items(
             !is_head,
             Action::DeleteBranch(name.into()),
         ),
-    ]
+    ];
+    // On a forge, signed in: a pull/merge request from it.
+    if let Some(request) = request {
+        items.insert(
+            3,
+            (
+                format!("Open a {request}…"),
+                true,
+                Action::NewRequest(Some(name.into())),
+            ),
+        );
+    }
+    items
+}
+
+/// The kind of request ("pull request", "merge request") the repository's
+/// forge takes, when signed in to it (kept by the app for the menus).
+pub fn request_noun(ctx: &egui::Context) -> Option<String> {
+    ctx.data(|d| d.get_temp::<Option<String>>(egui::Id::new("request-noun")))
+        .flatten()
+}
+
+pub fn set_request_noun(ctx: &egui::Context, noun: Option<String>) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("request-noun"), noun));
 }
 
 /// What can be done with a remote branch ("origin/x") at `target`.
@@ -1417,7 +1442,14 @@ pub fn show(
                                 }
                                 copy_name(ui, &b.name);
                                 web_items(ui, &mut c.action, page.as_ref());
-                                let items = local_branch_items(&b.name, &b.target, b.is_head, head);
+                                let noun = request_noun(ui.ctx());
+                                let items = local_branch_items(
+                                    &b.name,
+                                    &b.target,
+                                    b.is_head,
+                                    head,
+                                    noun.as_deref(),
+                                );
                                 menu(ui, &mut c.action, items);
                             });
                         },

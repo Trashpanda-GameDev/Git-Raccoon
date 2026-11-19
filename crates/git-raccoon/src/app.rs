@@ -727,6 +727,11 @@ impl App {
         self.repo.as_mut()
     }
 
+    /// The new pull/merge request window's form, if it's open.
+    pub fn new_request_form(&self) -> Option<&crate::ui::forge::NewForm> {
+        self.new_request.as_ref()
+    }
+
     pub fn settings(&self) -> &Settings {
         &self.settings
     }
@@ -1174,6 +1179,13 @@ impl App {
                 (forge, None) => *forge = None,
             }
         }
+        crate::ui::sidebar::set_request_noun(
+            ctx,
+            repo.forge
+                .as_ref()
+                .filter(|f| f.account.is_some())
+                .map(|f| f.project.kind.request().to_lowercase()),
+        );
         if let Some(f) = &mut repo.forge {
             f.poll();
             if std::mem::take(&mut f.state.reviewed)
@@ -1189,7 +1201,7 @@ impl App {
 
     /// The new pull/merge request window, and opening it in the background.
     fn new_request_window(&mut self, ctx: &egui::Context) {
-        use crate::ui::forge::NewAction;
+        use crate::ui::forge::{NewAction, NewForm};
         let Some(form) = &mut self.new_request else {
             return;
         };
@@ -1197,8 +1209,17 @@ impl App {
             self.new_request = None;
             return;
         };
-        // Pushed yet (after the Push button, say)?
-        form.unpushed = repo.head_upstream().is_none_or(|u| u.ahead > 0 || u.gone);
+        // Pushed yet, and what it has for the target (once it's picked).
+        compare_form(repo, form);
+        let mut create = false;
+        if form.pushing && !repo.op_running() {
+            form.pushing = false;
+            if form.unpushed {
+                form.error = Some("pushing it didn't work".into());
+            } else {
+                create = true;
+            }
+        }
         if let Some(result) = self
             .new_request_post
             .as_ref()
@@ -1220,31 +1241,42 @@ impl App {
             }
         }
         match crate::ui::forge::new_request(ctx, form) {
-            Some(NewAction::Push) => repo.push(ctx),
-            Some(NewAction::Create) => {
-                let Some(f) = &repo.forge else { return };
-                let Some(account) = f.account.clone() else {
-                    return;
-                };
-                let project = f.project.clone();
-                let new = crate::forge::NewRequest {
-                    source: form.source.clone(),
-                    target: form.target.trim().to_string(),
-                    title: form.title.trim().to_string(),
-                    body: form.body.clone(),
-                    draft: form.draft,
-                };
-                form.sending = true;
+            Some(NewAction::PushAndCreate) => {
+                form.pushing = true;
                 form.error = None;
-                self.new_request_post = Some(crate::task::Task::spawn(ctx, move || {
-                    crate::forge::accounts::session(&account, &project)?.create(&new)
-                }));
+                repo.push(ctx);
             }
+            Some(NewAction::Create) => create = true,
             Some(NewAction::Close) => {
                 self.new_request = None;
                 self.new_request_post = None;
+                return;
             }
             None => {}
+        }
+        if create {
+            let Some(f) = &repo.forge else { return };
+            let Some(account) = f.account.clone() else {
+                return;
+            };
+            let project = f.project.clone();
+            let new = crate::forge::NewRequest {
+                source: form.source.clone(),
+                target: form.target.trim().to_string(),
+                title: form.title.trim().to_string(),
+                body: form.body.clone(),
+                draft: form.draft,
+                reviewers: NewForm::list(&form.reviewers),
+                assignees: NewForm::list(&form.assignees),
+                labels: NewForm::list(&form.labels),
+                remove_source: form.remove_source,
+                squash: form.squash,
+            };
+            form.sending = true;
+            form.error = None;
+            self.new_request_post = Some(crate::task::Task::spawn(ctx, move || {
+                crate::forge::accounts::session(&account, &project)?.create(&new)
+            }));
         }
     }
 
@@ -1872,7 +1904,9 @@ impl App {
                         ));
                     }
                 }
-                Some(sidebar::Action::NewRequest) => self.new_request = new_form(repo),
+                Some(sidebar::Action::NewRequest(from)) => {
+                    self.new_request = new_form(repo, from.as_deref());
+                }
                 Some(sidebar::Action::Terminal(dir)) => {
                     if let Err(why) = crate::terminal::open(&dir, &self.settings.terminal) {
                         self.error = Some(format!("Could not open a terminal: {why}."));
@@ -2170,6 +2204,9 @@ impl App {
                         repo.scroll_to = None;
                     }
                     Some(history::Click::Working) => repo.select_working(),
+                    Some(history::Click::Branch(sidebar::Action::NewRequest(from))) => {
+                        self.new_request = new_form(repo, from.as_deref());
+                    }
                     Some(history::Click::Branch(action)) => repo_action(repo, &ctx, action),
                     Some(history::Click::NewBranch { id, label }) => repo.new_branch(id, label),
                     Some(history::Click::NewTag { id, label }) => repo.new_tag(id, label),
@@ -2462,7 +2499,7 @@ fn repo_action(repo: &mut RepoView, ctx: &egui::Context, action: sidebar::Action
         sidebar::Action::OpenRequest(_)
         | sidebar::Action::OpenIssue(_)
         | sidebar::Action::SignInToForge
-        | sidebar::Action::NewRequest
+        | sidebar::Action::NewRequest(_)
         | sidebar::Action::ToggleSection(_)
         | sidebar::Action::ShowAllSections
         | sidebar::Action::Terminal(_) => {}
@@ -2580,9 +2617,14 @@ fn start_making(
     }
 }
 
-fn new_form(repo: &RepoView) -> Option<crate::ui::forge::NewForm> {
+fn new_form(repo: &RepoView, branch: Option<&str>) -> Option<crate::ui::forge::NewForm> {
     let forge = repo.forge.as_ref()?;
-    let source = repo.head_branch()?.to_string();
+    let source = match branch {
+        Some(b) => b.to_string(),
+        None => repo.head_branch()?.to_string(),
+    };
+    let local = repo.refs.local.iter().find(|b| b.name == source);
+    let checked_out = local.is_some_and(|b| b.is_head);
     // Into the remote's default branch: "main" or "master", whichever it has.
     let remote = repo.refs.remotes.iter().find(|r| r.name == forge.remote);
     let has = |b: &str| remote.is_some_and(|r| r.branches.iter().any(|x| x.name == b));
@@ -2605,25 +2647,77 @@ fn new_form(repo: &RepoView) -> Option<crate::ui::forge::NewForm> {
     if has(&target) {
         targets.insert(0, target.clone());
     }
-    // Titled after the branch's last commit.
-    let title = repo
-        .history
-        .head_row()
-        .and_then(|row| repo.rows.get(row))
-        .map(|c| c.summary.clone())
-        .unwrap_or_default();
-    Some(crate::ui::forge::NewForm {
+    let templates =
+        crate::ui::forge::templates(std::path::Path::new(repo.path()), forge.project.kind);
+    let mut form = crate::ui::forge::NewForm {
         kind: forge.project.kind,
         source,
         target,
         targets,
-        title,
+        title: String::new(),
         body: String::new(),
         draft: false,
         unpushed: true,
+        checked_out,
+        to_push: 0,
+        commits: Vec::new(),
+        behind: 0,
+        conflicts: false,
+        compared: String::new(),
+        template: (!templates.is_empty()).then_some(0),
+        templates,
+        reviewers: String::new(),
+        assignees: String::new(),
+        labels: String::new(),
+        remove_source: false,
+        squash: false,
+        pushing: false,
         sending: false,
         error: None,
-    })
+    };
+    compare_form(repo, &mut form);
+    form.fill();
+    Some(form)
+}
+
+/// What the new request's branch has for its target, and whether it's
+/// pushed (again whenever either changes).
+fn compare_form(repo: &RepoView, form: &mut crate::ui::forge::NewForm) {
+    let Some(forge) = repo.forge.as_ref() else {
+        return;
+    };
+    let local = repo.refs.local.iter().find(|b| b.name == form.source);
+    let upstream = local.and_then(|b| b.upstream.as_ref());
+    form.unpushed = local.is_some() && upstream.is_none_or(|u| u.ahead > 0 || u.gone);
+    if form.compared == form.target {
+        if let Some(u) = upstream.filter(|u| !u.gone) {
+            form.to_push = u.ahead;
+        }
+        return;
+    }
+    form.compared = form.target.clone();
+    let target = format!("{}/{}", forge.remote, form.target);
+    let source = if local.is_some() {
+        form.source.clone()
+    } else {
+        format!("{}/{}", forge.remote, form.source)
+    };
+    match git_raccoon_core::branch::compare(repo.path(), &source, &target) {
+        Ok(c) => {
+            form.commits = c.commits;
+            form.behind = c.behind;
+            form.conflicts = c.conflicts;
+        }
+        Err(_) => {
+            form.commits.clear();
+            form.behind = 0;
+            form.conflicts = false;
+        }
+    }
+    form.to_push = match upstream.filter(|u| !u.gone) {
+        Some(u) => u.ahead,
+        None => form.commits.len(),
+    };
 }
 
 /// How to check out a pull/merge request: its branch here (brought up to
