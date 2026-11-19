@@ -294,22 +294,16 @@ fn line_input(
         Select::Only
     };
     response.context_menu(|ui| {
-        let n = lines.picked.len().max(1);
-        let s = if n == 1 { "" } else { "s" };
-        if ui.button(format!("Copy {n} line{s}")).clicked() {
+        if ui.button("Copy").clicked() {
             *menu = Some(Action::CopyPicked);
             ui.close();
         }
-        let changes = changed(d, lines.picked);
         if let Some(verb) = lines.verb()
-            && changes > 0
+            && changed(d, lines.picked) > 0
             && ui
                 .add_enabled(
                     !lines.busy(),
-                    egui::Button::new(format!(
-                        "{verb} {changes} line{}",
-                        if changes == 1 { "" } else { "s" }
-                    )),
+                    egui::Button::new(format!("{verb} selection")),
                 )
                 .clicked()
         {

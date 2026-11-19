@@ -959,7 +959,7 @@ fn stages_files_hunks_and_lines() {
         .click_secondary();
     h.run_ok();
     screenshot(&mut h, "10b-line-menu");
-    h.get_by_label("Stage 1 line").click_accesskit();
+    h.get_by_label("Stage selection").click_accesskit();
     wait_for(&mut h, "the line staged", |app| {
         app.repo().unwrap().picked.is_empty() && !app.is_busy()
     });
@@ -4525,7 +4525,7 @@ fn lines_of_a_diff_can_be_picked_and_copied() {
     // Right-click one of them for what to do with them.
     h.get_by_label(&all[2]).click_secondary();
     h.run_ok();
-    assert!(h.query_by_label("Copy 3 lines").is_some());
+    assert!(h.query_by_label("Copy").is_some());
     h.key_press(Key::Escape);
     h.run_ok();
     // Ctrl+click takes one out.
