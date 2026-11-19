@@ -3,6 +3,10 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.17
+
+- **Feedback is posted as you, or by the feedback bot**: signed in to GitHub (Settings › Accounts), the feedback form posts the issue with your own account, so you're its author and see replies. Otherwise Git Raccoon's feedback bot posts it without your name, and you can say how to reach you. It used to be posted under the project's own account.
+
 ## 0.5.16
 
 - **A long commit description scrolls** inside its box instead of growing over the file lists, and **the commit box can be resized**: drag its top edge (remembered).

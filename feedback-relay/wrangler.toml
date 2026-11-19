@@ -1,0 +1,15 @@
+# The feedback relay, as a Cloudflare Worker (see README.md).
+name = "git-raccoon-feedback"
+main = "src/worker.js"
+compatibility_date = "2024-09-23"
+
+[vars]
+# Where issues go, and where screenshots are kept.
+ISSUES_REPO = "Trashpanda-GameDev/Git-Raccoon"
+IMAGES_REPO = "Trashpanda-GameDev/git-raccoon-feedback-images"
+# The GitHub App's id and its installation's id: fill these in.
+APP_ID = ""
+INSTALLATION_ID = ""
+
+# The App's private key is a secret, not a variable:
+#   npx wrangler@3 secret put PRIVATE_KEY < git-raccoon-feedback.private-key.pem

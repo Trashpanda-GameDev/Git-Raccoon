@@ -1,0 +1,10 @@
+{
+  "name": "git-raccoon-feedback-relay",
+  "private": true,
+  "type": "module",
+  "description": "Posts feedback from Git Raccoon as a GitHub App (a Cloudflare Worker).",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "deploy": "npx wrangler@3 deploy"
+  }
+}

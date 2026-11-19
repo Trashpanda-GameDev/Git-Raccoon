@@ -3,7 +3,7 @@
 
 use eframe::egui::{self, RichText};
 
-use crate::feedback::Kind;
+use crate::feedback::{Kind, Route};
 use crate::theme;
 use crate::ui::widgets;
 
@@ -12,6 +12,8 @@ pub struct Form {
     pub kind: Kind,
     pub title: String,
     pub details: String,
+    /// How to reach them, when it's posted without their name.
+    pub contact: String,
     pub status: Status,
     /// The window as it was when the form opened, and whether it goes too.
     pub screenshot: Option<std::sync::Arc<egui::ColorImage>>,
@@ -48,6 +50,7 @@ impl Default for Form {
             kind: Kind::Feedback,
             title: String::new(),
             details: String::new(),
+            contact: String::new(),
             status: Status::Writing,
             screenshot: None,
             attach: false,
@@ -64,9 +67,9 @@ pub enum Action {
     Close,
 }
 
-pub fn show(ctx: &egui::Context, form: &mut Form) -> Option<Action> {
+pub fn show(ctx: &egui::Context, form: &mut Form, route: &Route) -> Option<Action> {
     let mut action = None;
-    let posts = crate::feedback::posts_itself();
+    let posts = route.posts();
     let modal = egui::Modal::new(egui::Id::new("feedback")).show(ctx, |ui| {
         ui.set_width(480.0);
         ui.label(RichText::new("Send feedback").strong().size(16.0));
@@ -90,10 +93,13 @@ pub fn show(ctx: &egui::Context, form: &mut Form) -> Option<Action> {
             });
             return;
         }
-        let about = if posts {
-            "Report a bug, say what you think, or suggest an idea. It's posted as an issue on Git Raccoon's GitHub page (publicly), for the project's board; nothing else about you is sent."
-        } else {
-            "Report a bug, say what you think, or suggest an idea. It continues on GitHub, where you can check it and post it (you'll need a GitHub account); it goes on the project's board."
+        let about = match route {
+            Route::AsYou(account) => format!(
+                "Report a bug, say what you think, or suggest an idea. It's posted as an issue on Git Raccoon's GitHub page (publicly) as you, @{}, so you'll see replies there.",
+                account.login
+            ),
+            Route::Bot => "Report a bug, say what you think, or suggest an idea. It's posted as an issue on Git Raccoon's GitHub page (publicly) by its feedback bot, without your name. Sign in to GitHub under Settings › Accounts to post as yourself and get replies.".to_string(),
+            Route::OnGitHub => "Report a bug, say what you think, or suggest an idea. It continues on GitHub, where you can check it and post it (you'll need a GitHub account); it goes on the project's board.".to_string(),
         };
         ui.label(RichText::new(about).color(theme::muted()));
         ui.add_space(10.0);
@@ -125,6 +131,16 @@ pub fn show(ctx: &egui::Context, form: &mut Form) -> Option<Action> {
         );
         ui.ctx()
             .accesskit_node_builder(details.id, |n| n.set_label("Feedback details"));
+        if *route == Route::Bot {
+            ui.add_space(6.0);
+            let contact = ui.add(
+                egui::TextEdit::singleline(&mut form.contact)
+                    .hint_text("How to reach you, if you'd like a reply (optional; it's public)")
+                    .desired_width(f32::INFINITY),
+            );
+            ui.ctx()
+                .accesskit_node_builder(contact.id, |n| n.set_label("How to reach you"));
+        }
         if form.kind == Kind::Bug {
             ui.add_space(4.0);
             ui.label(
@@ -135,7 +151,7 @@ pub fn show(ctx: &egui::Context, form: &mut Form) -> Option<Action> {
         }
         // A screenshot: sent along where this build can upload it, or
         // copied for pasting into the issue on GitHub.
-        let can_send = crate::feedback::uploads_screenshots() || !posts;
+        let can_send = route.attaches() || !posts;
         if let Some(shot) = form.screenshot.clone().filter(|_| can_send) {
             ui.add_space(6.0);
             let label = if posts {

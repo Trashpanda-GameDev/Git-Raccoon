@@ -1,54 +1,69 @@
 //! Feedback: a bug report, feedback or an idea, posted as a GitHub issue,
 //! which the project's auto-add workflow puts on its board.
 //!
-//! Release builds carry a token (from the `FEEDBACK_TOKEN` secret, added
-//! by build.rs) that can only create and edit issues in this repository,
-//! and post the issue themselves. Builds without one open the issue form
-//! on GitHub instead (.github/ISSUE_TEMPLATE; its field ids are the query
-//! parameters in [`issue_url`]), for the person to post.
+//! How it's posted depends on who's asking ([`route`]):
 //!
-//! A screenshot can go with it. GitHub's API can't attach images to an
-//! issue, so it's uploaded to a separate repository of feedback images
-//! (with a second token that can only write there) and shown in the issue
-//! from there.
+//! - Signed in to GitHub in Git Raccoon: with their own account, so the
+//!   issue is theirs and replies reach them.
+//! - Otherwise, through the feedback relay (a small Cloudflare Worker, in
+//!   `feedback-relay/`), which posts it as the "Git Raccoon Feedback"
+//!   GitHub App. The app holds no token for that: the relay does.
+//! - Builds that don't know a relay open the issue form on GitHub instead
+//!   (.github/ISSUE_TEMPLATE; its field ids are the query parameters in
+//!   [`issue_url`]), for the person to post.
+//!
+//! A screenshot can go with it either way it's posted. GitHub's API can't
+//! attach images to an issue, so the relay keeps it in a repository of
+//! feedback images and the issue shows it from there.
 
 use crate::crash::{ISSUES, encode};
-
-include!(concat!(env!("OUT_DIR"), "/feedback_token.rs"));
+use crate::forge::Account;
 
 const API: &str = "https://api.github.com/repos/Trashpanda-GameDev/Git-Raccoon/issues";
 
-/// Where screenshots are uploaded.
-const IMAGES: &str =
-    "https://api.github.com/repos/Trashpanda-GameDev/git-raccoon-feedback-images/contents";
+/// The feedback relay's address: from the build (the release workflow sets
+/// it), or for trying one out, from the environment when run.
+pub fn relay() -> Option<String> {
+    std::env::var("GIT_RACCOON_FEEDBACK_RELAY")
+        .ok()
+        .or_else(|| option_env!("GIT_RACCOON_FEEDBACK_RELAY").map(str::to_string))
+        .map(|u| u.trim().trim_end_matches('/').to_string())
+        .filter(|u| !u.is_empty())
+}
 
-fn unscramble(scrambled: &[u8]) -> Option<String> {
-    let bytes: Vec<u8> = scrambled
+/// How feedback is sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Route {
+    /// Posted with this GitHub account, as its owner.
+    AsYou(Account),
+    /// Posted by the feedback bot, through the relay.
+    Bot,
+    /// Continued on GitHub's own issue form, in the browser.
+    OnGitHub,
+}
+
+impl Route {
+    /// Whether it's posted from here (rather than on GitHub's page).
+    pub fn posts(&self) -> bool {
+        !matches!(self, Route::OnGitHub)
+    }
+
+    /// Whether a screenshot can go with it (the relay keeps those).
+    pub fn attaches(&self) -> bool {
+        self.posts() && relay().is_some()
+    }
+}
+
+/// How feedback goes for someone signed in to `accounts`.
+pub fn route(accounts: &[Account]) -> Route {
+    let github = accounts
         .iter()
-        .zip(KEY.iter().cycle())
-        .map(|(b, k)| b ^ k)
-        .collect();
-    String::from_utf8(bytes).ok().filter(|t| !t.is_empty())
-}
-
-/// The token this build posts issues with, if it has one.
-fn token() -> Option<String> {
-    unscramble(SCRAMBLED)
-}
-
-/// The token this build uploads screenshots with, if it has one.
-fn screenshot_token() -> Option<String> {
-    unscramble(SCREENSHOT_SCRAMBLED)
-}
-
-/// Whether this build posts feedback itself (or opens GitHub for it).
-pub fn posts_itself() -> bool {
-    token().is_some()
-}
-
-/// Whether this build can send a screenshot with the feedback.
-pub fn uploads_screenshots() -> bool {
-    posts_itself() && screenshot_token().is_some()
+        .find(|a| a.kind == crate::forge::Kind::GitHub && a.base == "https://github.com");
+    match (github, relay()) {
+        (Some(account), _) => Route::AsYou(account.clone()),
+        (None, Some(_)) => Route::Bot,
+        (None, None) => Route::OnGitHub,
+    }
 }
 
 /// A screenshot as a PNG file.
@@ -126,50 +141,64 @@ fn github(
         .header("Content-Type", "application/json")
 }
 
-/// Uploads a screenshot. Returns the address it can be seen at.
-fn upload_to(api: &str, token: &str, png: &[u8]) -> Result<String, String> {
-    let name = format!(
-        "{}-{:08x}.png",
-        chrono::Utc::now().format("%Y-%m-%d-%H%M%S"),
-        rand_suffix()
-    );
-    let body = serde_json::json!({
-        "message": "A screenshot sent with feedback",
-        "content": base64(png),
-    });
-    let response = github(ureq::put(&format!("{api}/{name}")), token)
-        .send(body.to_string())
+/// Sends JSON to the relay; its answer, or why there wasn't one.
+fn to_relay(
+    relay: &str,
+    path: &str,
+    json: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let response = ureq::post(&format!("{relay}{path}"))
+        .header(
+            "User-Agent",
+            &format!("Git-Raccoon/{}", env!("CARGO_PKG_VERSION")),
+        )
+        .header("Content-Type", "application/json")
+        .send(json.to_string())
         .map_err(|e| match e {
-            ureq::Error::StatusCode(code) => format!("GitHub answered {code}"),
-            other => format!("couldn't reach GitHub: {other}"),
+            ureq::Error::StatusCode(429) => {
+                "too many were sent from here in the last hour; try again later".to_string()
+            }
+            ureq::Error::StatusCode(400) => "the feedback service turned it down".to_string(),
+            ureq::Error::StatusCode(code) => format!("the feedback service answered {code}"),
+            other => format!("couldn't reach the feedback service: {other}"),
         })?;
     let text = response
         .into_body()
         .read_to_string()
         .map_err(|e| e.to_string())?;
-    let made: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    made["content"]["download_url"]
-        .as_str()
-        .map(str::to_string)
-        .ok_or_else(|| "GitHub's answer had no address for it".to_string())
+    serde_json::from_str(&text).map_err(|e| e.to_string())
 }
 
-/// A few random bits for a file name.
-fn rand_suffix() -> u32 {
-    use std::hash::{BuildHasher as _, Hasher as _};
-    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
-    h.write_u128(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos()),
-    );
-    #[expect(clippy::cast_possible_truncation, reason = "a few bits are plenty")]
-    let bits = h.finish() as u32;
-    bits
+/// Uploads a screenshot through the relay. Returns the address it can be
+/// seen at.
+fn upload_via(relay: &str, png: &[u8]) -> Result<String, String> {
+    let made = to_relay(
+        relay,
+        "/screenshot",
+        &serde_json::json!({ "png": base64(png) }),
+    )?;
+    made["url"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| "the feedback service didn't say where the screenshot is".to_string())
+}
+
+/// Who an issue is from: the person (their account posts it), or someone
+/// unnamed (the bot does), who may say how to reach them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sender<'a> {
+    You,
+    Someone { contact: &'a str },
 }
 
 /// The issue for some feedback: its title, body and label.
-fn issue(kind: Kind, title: &str, details: &str, screenshot: Option<&str>) -> serde_json::Value {
+fn issue(
+    kind: Kind,
+    title: &str,
+    details: &str,
+    screenshot: Option<&str>,
+    from: Sender<'_>,
+) -> serde_json::Value {
     let (prefix, label) = match kind {
         Kind::Bug => ("Bug", "bug"),
         Kind::Feedback => ("Feedback", "feedback"),
@@ -193,7 +222,16 @@ fn issue(kind: Kind, title: &str, details: &str, screenshot: Option<&str>) -> se
     if kind == Kind::Bug {
         body.push_str(&format!("\n\n**Version and system:** {}", system()));
     }
-    body.push_str("\n\n---\n_Sent from the feedback form in Git Raccoon._");
+    match from {
+        Sender::You => body.push_str("\n\n---\n_Sent from the feedback form in Git Raccoon._"),
+        Sender::Someone { contact } => {
+            let contact: String = contact.trim().chars().take(200).collect();
+            if !contact.is_empty() {
+                body.push_str(&format!("\n\n**How to reach them:** {contact}"));
+            }
+            body.push_str("\n\n---\n_Sent anonymously from the feedback form in Git Raccoon._");
+        }
+    }
     serde_json::json!({
         "title": format!("{prefix}: {title}"),
         "body": body,
@@ -201,35 +239,52 @@ fn issue(kind: Kind, title: &str, details: &str, screenshot: Option<&str>) -> se
     })
 }
 
-/// Posts the feedback as an issue, with a screenshot (a PNG) if given.
-/// Returns its number. Blocks: run it off the UI thread.
+/// Posts the feedback as an issue, the way `route` says, with a
+/// screenshot (a PNG) if given. Returns its number. Blocks: run it off the
+/// UI thread.
 pub fn post(
-    kind: Kind,
-    title: &str,
-    details: &str,
+    route: &Route,
+    (kind, title, details): (Kind, &str, &str),
+    contact: &str,
     screenshot: Option<&[u8]>,
 ) -> Result<u64, String> {
-    let token = token().ok_or("this build can't post feedback itself")?;
-    let shot = match (screenshot, screenshot_token()) {
-        (Some(png), Some(t)) => Some(upload_to(IMAGES, &t, png)?),
+    let relay = relay();
+    let shot = match (screenshot, relay.as_deref()) {
+        (Some(png), Some(relay)) => Some(upload_via(relay, png)?),
         _ => None,
     };
-    post_to(API, &token, kind, title, details, shot.as_deref())
+    match route {
+        Route::AsYou(account) => {
+            let token = crate::forge::accounts::load(account)?.token;
+            let body = issue(kind, title, details, shot.as_deref(), Sender::You);
+            post_to(API, &token, &body)
+        }
+        Route::Bot => {
+            let relay = relay.ok_or("this build has no feedback service")?;
+            let body = issue(
+                kind,
+                title,
+                details,
+                shot.as_deref(),
+                Sender::Someone { contact },
+            );
+            let made = to_relay(&relay, "/issue", &body)?;
+            made["number"]
+                .as_u64()
+                .ok_or_else(|| "the feedback service didn't say which issue it is".to_string())
+        }
+        Route::OnGitHub => Err("this build can't post feedback itself".into()),
+    }
 }
 
-fn post_to(
-    api: &str,
-    token: &str,
-    kind: Kind,
-    title: &str,
-    details: &str,
-    screenshot: Option<&str>,
-) -> Result<u64, String> {
+/// Posts an issue with a person's own token.
+fn post_to(api: &str, token: &str, issue: &serde_json::Value) -> Result<u64, String> {
     let response = github(ureq::post(api), token)
-        .send(issue(kind, title, details, screenshot).to_string())
+        .send(issue.to_string())
         .map_err(|e| match e {
-            ureq::Error::StatusCode(401 | 403) => {
-                "GitHub turned it away (the feedback token may have expired)".to_string()
+            ureq::Error::StatusCode(401 | 403 | 404) => {
+                "GitHub didn't let your account post it (sign in again under Settings › Accounts)"
+                    .to_string()
             }
             ureq::Error::StatusCode(code) => format!("GitHub answered {code}"),
             other => format!("couldn't reach GitHub: {other}"),
@@ -310,69 +365,15 @@ pub fn issue_url(kind: Kind, title: &str, details: &str) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn posts_the_issue_and_reads_its_number() {
-        use std::io::{BufRead as _, BufReader, Read as _, Write as _};
-        // A stand-in for GitHub's API.
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let api = format!("http://{}/issues", listener.local_addr().unwrap());
-        let server = std::thread::spawn(move || {
-            let (stream, _) = listener.accept().unwrap();
-            let mut reader = BufReader::new(stream.try_clone().unwrap());
-            let mut head = String::new();
-            let mut length = 0;
-            loop {
-                let mut line = String::new();
-                reader.read_line(&mut line).unwrap();
-                if let Some(n) = line.to_lowercase().strip_prefix("content-length:") {
-                    length = n.trim().parse().unwrap();
-                }
-                head.push_str(&line);
-                if line == "\r\n" {
-                    break;
-                }
-            }
-            let mut body = vec![0; length];
-            reader.read_exact(&mut body).unwrap();
-            let reply = "{\"number\": 42}";
-            let mut stream = stream;
-            write!(
-                stream,
-                "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{reply}",
-                reply.len()
-            )
-            .unwrap();
-            (head, String::from_utf8(body).unwrap())
-        });
-        let number = post_to(
-            &api,
-            "t0ken",
-            Kind::Feedback,
-            "Lovely",
-            "Really.",
-            Some("https://img/x.png"),
-        )
-        .unwrap();
-        assert_eq!(number, 42);
-        let (head, body) = server.join().unwrap();
-        assert!(head.starts_with("POST /issues "));
-        assert!(head.to_lowercase().contains("authorization: bearer t0ken"));
-        let sent: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(sent["title"], "Feedback: Lovely");
-        assert_eq!(sent["labels"][0], "feedback");
-        assert!(
-            sent["body"]
-                .as_str()
-                .unwrap()
-                .contains("Really.\n\n![Screenshot](https://img/x.png)")
-        );
-    }
-
-    #[test]
-    fn uploads_a_screenshot_as_a_png() {
+    /// A stand-in server: answers one request with `status` and `reply`,
+    /// and gives back what it was sent (head, body).
+    fn stand_in(
+        status: &'static str,
+        reply: &'static str,
+    ) -> (String, std::thread::JoinHandle<(String, String)>) {
         use std::io::{BufRead as _, BufReader, Read as _, Write as _};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let api = format!("http://{}/contents", listener.local_addr().unwrap());
+        let base = format!("http://{}", listener.local_addr().unwrap());
         let server = std::thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap();
             let mut reader = BufReader::new(stream.try_clone().unwrap());
@@ -390,32 +391,123 @@ mod tests {
             }
             let mut body = vec![0; length];
             reader.read_exact(&mut body).unwrap();
-            let reply = r#"{"content": {"download_url": "https://raw.example/shot.png"}}"#;
             let mut stream = stream;
             write!(
                 stream,
-                "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{reply}",
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{reply}",
                 reply.len()
             )
             .unwrap();
             (head, String::from_utf8(body).unwrap())
         });
+        (base, server)
+    }
+
+    #[test]
+    fn posts_the_issue_with_their_own_token() {
+        let (base, server) = stand_in("201 Created", "{\"number\": 42}");
+        let body = issue(
+            Kind::Feedback,
+            "Lovely",
+            "Really.",
+            Some("https://img/x.png"),
+            Sender::You,
+        );
+        let number = post_to(&format!("{base}/issues"), "t0ken", &body).unwrap();
+        assert_eq!(number, 42);
+        let (head, body) = server.join().unwrap();
+        assert!(head.starts_with("POST /issues "));
+        assert!(head.to_lowercase().contains("authorization: bearer t0ken"));
+        let sent: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(sent["title"], "Feedback: Lovely");
+        assert_eq!(sent["labels"][0], "feedback");
+        assert!(
+            sent["body"]
+                .as_str()
+                .unwrap()
+                .contains("Really.\n\n![Screenshot](https://img/x.png)")
+        );
+    }
+
+    #[test]
+    fn says_so_when_their_account_cant_post() {
+        let (base, server) = stand_in("403 Forbidden", "{}");
+        let body = issue(Kind::Idea, "x", "y", None, Sender::You);
+        let err = post_to(&format!("{base}/issues"), "t0ken", &body).unwrap_err();
+        assert!(err.contains("sign in again"), "{err}");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn posts_through_the_relay_with_no_token() {
+        let (base, server) = stand_in(
+            "201 Created",
+            r#"{"number": 77, "url": "https://github.com/x/y/issues/77"}"#,
+        );
+        let body = issue(
+            Kind::Bug,
+            "It broke",
+            "Badly.",
+            None,
+            Sender::Someone {
+                contact: " me@example.com ",
+            },
+        );
+        let made = to_relay(&base, "/issue", &body).unwrap();
+        assert_eq!(made["number"], 77);
+        let (head, sent) = server.join().unwrap();
+        assert!(head.starts_with("POST /issue "), "{head}");
+        assert!(
+            !head.to_lowercase().contains("authorization"),
+            "no token goes out"
+        );
+        let sent: serde_json::Value = serde_json::from_str(&sent).unwrap();
+        let text = sent["body"].as_str().unwrap();
+        assert!(text.contains("**How to reach them:** me@example.com"));
+        assert!(text.ends_with("_Sent anonymously from the feedback form in Git Raccoon._"));
+    }
+
+    #[test]
+    fn explains_a_busy_relay() {
+        let (base, server) = stand_in("429 Too Many Requests", "{}");
+        let err = to_relay(&base, "/issue", &serde_json::json!({})).unwrap_err();
+        assert!(err.contains("try again later"), "{err}");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn uploads_a_screenshot_through_the_relay() {
+        let (base, server) = stand_in("201 Created", r#"{"url": "https://raw.example/shot.png"}"#);
         let image = eframe::egui::ColorImage::new([3, 2], vec![eframe::egui::Color32::RED; 6]);
         let png = png(&image).unwrap();
         assert!(png.starts_with(b"\x89PNG"));
-        let url = upload_to(&api, "img-t0ken", &png).unwrap();
+        let url = upload_via(&base, &png).unwrap();
         assert_eq!(url, "https://raw.example/shot.png");
         let (head, body) = server.join().unwrap();
-        assert!(
-            head.starts_with("PUT /contents/") && head.contains(".png "),
-            "{head}"
-        );
-        assert!(
-            head.to_lowercase()
-                .contains("authorization: bearer img-t0ken")
-        );
+        assert!(head.starts_with("POST /screenshot "), "{head}");
         let sent: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(sent["content"].as_str().unwrap(), base64(&png));
+        assert_eq!(sent["png"].as_str().unwrap(), base64(&png));
+    }
+
+    #[test]
+    fn goes_as_them_when_signed_in_to_github() {
+        use crate::forge::Kind as Forge;
+        let account = |kind, base: &str| Account {
+            kind,
+            base: base.into(),
+            login: "rocky".into(),
+            client: None,
+        };
+        let github = account(Forge::GitHub, "https://github.com");
+        let gitlab = account(Forge::GitLab, "https://gitlab.com");
+        assert_eq!(
+            route(&[gitlab.clone(), github.clone()]),
+            Route::AsYou(github)
+        );
+        // Without a GitHub account: the bot, if this build knows a relay.
+        let other = route(&[gitlab]);
+        assert!(matches!(other, Route::Bot | Route::OnGitHub));
+        assert_eq!(other == Route::Bot, relay().is_some());
     }
 
     #[test]
@@ -441,14 +533,20 @@ mod tests {
 
     #[test]
     fn writes_the_issue() {
-        let bug = issue(Kind::Bug, " It crashed ", "When I clicked.", None);
+        let bug = issue(
+            Kind::Bug,
+            " It crashed ",
+            "When I clicked.",
+            None,
+            Sender::You,
+        );
         assert_eq!(bug["title"], "Bug: It crashed");
         assert_eq!(bug["labels"][0], "bug");
         let body = bug["body"].as_str().unwrap();
         assert!(body.starts_with("When I clicked.\n\n**Version and system:** Git Raccoon "));
         assert!(body.ends_with("_Sent from the feedback form in Git Raccoon._"));
         let long = "word ".repeat(40);
-        let long_one = issue(Kind::Idea, &long, "Details.", None);
+        let long_one = issue(Kind::Idea, &long, "Details.", None, Sender::You);
         let title = long_one["title"].as_str().unwrap();
         assert!(title.chars().count() <= 106 && title.ends_with('…'));
         assert!(
@@ -457,9 +555,19 @@ mod tests {
                 .unwrap()
                 .starts_with(&format!("**{}**", long.trim()))
         );
-        let idea = issue(Kind::Idea, "More raccoons", "", None);
+        let idea = issue(
+            Kind::Idea,
+            "More raccoons",
+            "",
+            None,
+            Sender::Someone { contact: "" },
+        );
         assert_eq!(idea["labels"][0], "enhancement");
         assert!(!idea["body"].as_str().unwrap().contains("Version"));
+        assert!(
+            !idea["body"].as_str().unwrap().contains("How to reach"),
+            "no contact given"
+        );
     }
 
     #[test]

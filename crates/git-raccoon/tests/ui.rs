@@ -5188,6 +5188,33 @@ fn shows_whats_new_after_an_update_and_takes_feedback() {
 }
 
 #[test]
+fn feedback_is_sent_as_the_person_when_signed_in_to_github() {
+    use git_raccoon::forge::{Account, Kind};
+    let account = Account {
+        kind: Kind::GitHub,
+        base: "https://github.com".into(),
+        login: "rocky".into(),
+        client: None,
+    };
+    let mut h = harness(Settings {
+        accounts: vec![account],
+        ..Settings::default()
+    });
+    let sample = Sample::build();
+    open(&mut h, sample.path());
+    h.get_by_label("Send feedback: a bug, a thought or an idea")
+        .click();
+    h.run_ok();
+    // Posted from here, with their own account: no "continue on GitHub",
+    // and no "how to reach you" (replies reach them there).
+    h.get_by_label_contains("as you, @rocky");
+    assert!(h.query_by_label("Continue on GitHub").is_none());
+    assert!(h.query_by_label("How to reach you").is_none());
+    h.get_by_label("Send");
+    screenshot(&mut h, "85-feedback-as-you");
+}
+
+#[test]
 fn renders_every_theme() {
     use git_raccoon::settings::{ThemeChoice, ThemeMode};
     let sample = Sample::build();

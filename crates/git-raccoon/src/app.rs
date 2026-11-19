@@ -2329,15 +2329,26 @@ impl App {
             let on_github = |form: &crate::ui::feedback::Form| {
                 crate::feedback::issue_url(form.kind, &form.title, &form.details)
             };
-            match crate::ui::feedback::show(&ctx, form) {
-                Some(Action::Send) if crate::feedback::posts_itself() => {
+            // As them if they're signed in to GitHub; otherwise by the bot.
+            let route = crate::feedback::route(&self.settings.accounts);
+            match crate::ui::feedback::show(&ctx, form, &route) {
+                Some(Action::Send) if route.posts() => {
                     form.status = Status::Sending;
-                    let (kind, title, details) =
-                        (form.kind, form.title.clone(), form.details.clone());
-                    let shot = form.attached();
+                    let (kind, title, details, contact) = (
+                        form.kind,
+                        form.title.clone(),
+                        form.details.clone(),
+                        form.contact.clone(),
+                    );
+                    let shot = form.attached().filter(|_| route.attaches());
                     self.feedback_post = Some(crate::task::Task::spawn(&ctx, move || {
                         let png = shot.map(|s| crate::feedback::png(&s)).transpose()?;
-                        crate::feedback::post(kind, &title, &details, png.as_deref())
+                        crate::feedback::post(
+                            &route,
+                            (kind, &title, &details),
+                            &contact,
+                            png.as_deref(),
+                        )
                     }));
                 }
                 Some(Action::Send | Action::OpenOnGitHub) => {

@@ -38,14 +38,13 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/* || "$GITHUB_REF" == refs/heads/release ]]; then
             echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
-      - name: The feedback token is there
+      - name: The feedback relay is set
         if: steps.version.outputs.publish == 'true'
         env:
-          TOKEN: ${{ secrets.FEEDBACK_TOKEN }}
+          RELAY: ${{ vars.FEEDBACK_RELAY_URL }}
         run: |
-          if [ -z "$TOKEN" ]; then
-            echo "::error::The FEEDBACK_TOKEN secret is missing or empty, so the feedback form couldn't post issues. Add it under Settings > Secrets and variables > Actions > Repository secrets."
-            exit 1
+          if [ -z "$RELAY" ]; then
+            echo "::warning::The FEEDBACK_RELAY_URL variable isn't set, so the feedback form can only post for people signed in to GitHub (others continue on GitHub's page). See feedback-relay/README.md."
           fi
       - name: Not released already
         if: github.ref == 'refs/heads/release'
@@ -68,10 +67,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release -p git-raccoon
         env:
-          # Lets the feedback form post issues itself (see feedback.rs).
-          GIT_RACCOON_FEEDBACK_TOKEN: ${{ secrets.FEEDBACK_TOKEN }}
-          # And upload screenshots with them (optional; see feedback.rs).
-          GIT_RACCOON_SCREENSHOT_TOKEN: ${{ secrets.SCREENSHOT_TOKEN }}
+          # Where the feedback form sends what it doesn't post as the
+          # person (see feedback.rs and feedback-relay/). Not a secret.
+          GIT_RACCOON_FEEDBACK_RELAY: ${{ vars.FEEDBACK_RELAY_URL }}
       - name: Files to install
         shell: bash
         run: |
@@ -147,10 +145,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release -p git-raccoon
         env:
-          # Lets the feedback form post issues itself (see feedback.rs).
-          GIT_RACCOON_FEEDBACK_TOKEN: ${{ secrets.FEEDBACK_TOKEN }}
-          # And upload screenshots with them (optional; see feedback.rs).
-          GIT_RACCOON_SCREENSHOT_TOKEN: ${{ secrets.SCREENSHOT_TOKEN }}
+          # Where the feedback form sends what it doesn't post as the
+          # person (see feedback.rs and feedback-relay/). Not a secret.
+          GIT_RACCOON_FEEDBACK_RELAY: ${{ vars.FEEDBACK_RELAY_URL }}
       - name: Files to install, and the icon in Apple's format
         run: |
           mkdir publish && cp target/release/git-raccoon publish/
@@ -218,10 +215,9 @@ jobs:
             libxrandr-dev libxi-dev libdbus-1-dev libfuse2
       - run: cargo build --release -p git-raccoon
         env:
-          # Lets the feedback form post issues itself (see feedback.rs).
-          GIT_RACCOON_FEEDBACK_TOKEN: ${{ secrets.FEEDBACK_TOKEN }}
-          # And upload screenshots with them (optional; see feedback.rs).
-          GIT_RACCOON_SCREENSHOT_TOKEN: ${{ secrets.SCREENSHOT_TOKEN }}
+          # Where the feedback form sends what it doesn't post as the
+          # person (see feedback.rs and feedback-relay/). Not a secret.
+          GIT_RACCOON_FEEDBACK_RELAY: ${{ vars.FEEDBACK_RELAY_URL }}
       - name: Files to install
         run: |
           mkdir publish && cp target/release/git-raccoon publish/

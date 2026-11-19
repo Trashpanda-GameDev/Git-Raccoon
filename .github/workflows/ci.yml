@@ -17,6 +17,17 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  relay:
+    name: Feedback relay (its tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+        working-directory: feedback-relay
+
   linux:
     name: Linux (lints and all tests, UI included)
     runs-on: ubuntu-latest
