@@ -1156,6 +1156,15 @@ impl App {
     /// signing in, Refresh, Fetch), loads what's on it, and takes in what's
     /// loaded.
     fn keep_forge(&mut self, ctx: &egui::Context) {
+        // A worktree made for a request: open it in a tab once it's there.
+        if let Some(repo) = &mut self.repo
+            && !repo.op_running()
+            && let Some(folder) = repo.open_when_done.take()
+            && std::path::Path::new(&folder).join(".git").exists()
+        {
+            self.open(ctx, folder);
+            return;
+        }
         let Some(repo) = &mut self.repo else { return };
         let remotes: Vec<(String, Option<String>)> = repo
             .refs
@@ -2855,10 +2864,18 @@ fn request_view(
         return None;
     };
     let mine = drafts.get(&f.drafts_key(n)).map_or(&[][..], Vec::as_slice);
+    let kind = f.project.kind;
+    let aside = repo
+        .refs
+        .stashes
+        .iter()
+        .find_map(|st| crate::ui::request::aside_from(&st.message, kind, n));
+    let f = repo.forge.as_mut()?;
     let here = crate::ui::request::Here {
         branch: branch.as_deref(),
         now,
         drafts: mine,
+        aside,
     };
     crate::ui::request::show(ui, f, &here)
 }
@@ -2920,8 +2937,44 @@ fn request_action(
             f.send(ctx, Sent::Merge, move |s| s.merge(&r, &how));
         }
         Action::CheckOut => {
-            if let Some(op) = check_out_op(f, n) {
+            // Already checked out in another worktree: go there.
+            let branch = f.viewed().map(|(r, _)| {
+                if r.from_fork {
+                    crate::ui::request::fork_branch(f.project.kind, n)
+                } else {
+                    r.source.clone()
+                }
+            });
+            if let Some(w) = repo
+                .extras
+                .worktrees
+                .iter()
+                .find(|w| !w.current && w.branch.is_some() && w.branch == branch)
+            {
+                repo.open_when_done = Some(w.path.clone());
+                return Ok(());
+            }
+            let dirty = repo
+                .status
+                .as_ref()
+                .is_some_and(|st| !st.staged.is_empty() || !st.unstaged.is_empty());
+            if dirty {
+                f.state.changes_in_the_way = true;
+            } else if let Some(op) = check_out_op(f, n) {
                 repo.run(ctx, op);
+            }
+        }
+        Action::CheckOutAside => {
+            let kind = f.project.kind;
+            if let Some(op) = check_out_op(f, n) {
+                let from = head.clone().unwrap_or_else(|| "HEAD".into());
+                let stash = Op::Stash {
+                    message: crate::ui::request::aside_message(kind, n, &from),
+                    untracked: true,
+                    staged: false,
+                    paths: Vec::new(),
+                };
+                repo.run(ctx, Op::Then(vec![stash, op]));
             }
         }
         Action::CheckOutWorktree => {
@@ -2964,20 +3017,28 @@ fn request_action(
             });
             if let Some(f) = repo.forge.as_mut() {
                 f.state.sent = Some(Ok(format!(
-                    "Checking it out in {folder}: open it from Worktrees in the sidebar."
+                    "Checking it out in {folder}: it opens in a tab when it's ready."
                 )));
             }
             repo.run(ctx, Op::Then(steps));
+            repo.open_when_done = Some(folder);
         }
         Action::PullLatest => repo.pull(ctx, None, pull),
         Action::BackTo(target) => {
-            let remote = f.remote.clone();
-            let op = if repo.refs.local.iter().any(|b| b.name == target) {
+            let (remote, kind) = (f.remote.clone(), f.project.kind);
+            // Changes put aside to check it out, on that branch, come back.
+            let aside = repo.refs.stashes.iter().find(|st| {
+                crate::ui::request::aside_from(&st.message, kind, n).as_deref() == Some(&target)
+            });
+            let mut steps = vec![if repo.refs.local.iter().any(|b| b.name == target) {
                 Op::Checkout(target)
             } else {
                 Op::CheckoutRemote(format!("{remote}/{target}"))
-            };
-            repo.run(ctx, op);
+            }];
+            if let Some(st) = aside {
+                steps.push(Op::StashPop(st.target.clone()));
+            }
+            repo.run(ctx, Op::Then(steps));
         }
         Action::PullMerged => {
             let Some((r, _)) = viewed else { return Ok(()) };

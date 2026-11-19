@@ -1368,6 +1368,9 @@ pub struct RepoView {
     /// A pull/merge request's commits, marked in the graph: its number,
     /// and the commits.
     pub highlight: Option<(u64, std::collections::HashSet<String>)>,
+    /// A folder to open in a tab once the operation running is done (a
+    /// worktree being made).
+    pub open_when_done: Option<String>,
     committing: Option<Task<Result<Option<Undoable>, String>>>,
     /// How to undo the last action, if it can be.
     pub undo: Option<Undoable>,
@@ -1478,6 +1481,7 @@ impl RepoView {
             web: crate::forge::Web::default(),
             forge_stale: true,
             highlight: None,
+            open_when_done: None,
             committing: None,
             undo: None,
             conflict: None,

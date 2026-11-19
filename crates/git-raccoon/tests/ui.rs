@@ -3872,8 +3872,91 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     );
 
     // Check it out: its branch, from the remote.
+    // With uncommitted changes, it asks first.
+    let readme = sample.dir.join("README.md");
+    let before = std::fs::read_to_string(&readme).unwrap();
+    std::fs::write(&readme, format!("{before}Work in progress.\n")).unwrap();
+    h.key_press(Key::F5);
+    wait_for(&mut h, "the change", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| !s.unstaged.is_empty())
+    });
     h.get_by_label("!12 Pipeline cache").click();
     h.run_ok();
+    h.get_by_label_contains("Check out").click();
+    h.run_ok();
+    h.get_by_label("Check out cache").click();
+    h.run_ok();
+    h.get_by_label("You have uncommitted changes");
+    screenshot(&mut h, "60-request-changes-in-the-way");
+    h.get_by_label("Put them aside and check out").click();
+    wait_for(&mut h, "the checkout", |app| {
+        head_branch(app).as_deref() == Some("cache")
+    });
+    assert_eq!(
+        std::fs::read_to_string(&readme).unwrap(),
+        before,
+        "put aside"
+    );
+    // Back where it was, with them.
+    h.get_by_label("Back to main").click();
+    wait_for(&mut h, "going back", |app| {
+        head_branch(app).as_deref() == Some("main") && app.repo().unwrap().refs.stashes.len() == 1
+    });
+    assert!(
+        std::fs::read_to_string(&readme)
+            .unwrap()
+            .ends_with("Work in progress.\n")
+    );
+    // Or, with them, a worktree of its own instead: it opens in a tab.
+    h.get_by_label_contains("Check out").click();
+    h.run_ok();
+    h.get_by_label("Check out cache").click();
+    h.run_ok();
+    h.get_by_label("Use a worktree instead").click();
+    wait_for(&mut h, "the worktree's tab", |app| {
+        app.repo()
+            .is_some_and(|r| r.path().trim_end_matches('/').ends_with("-cache"))
+    });
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::W);
+    wait_for(&mut h, "back in the first tab", |app| {
+        app.repo()
+            .is_some_and(|r| !r.path().trim_end_matches('/').ends_with("-cache"))
+    });
+    assert!(
+        std::fs::read_to_string(&readme)
+            .unwrap()
+            .ends_with("Work in progress.\n"),
+        "left here"
+    );
+    // Checking it out again goes to that worktree.
+    h.get_by_label_contains("Check out").click();
+    h.run_ok();
+    h.get_by_label("Check out cache").click();
+    wait_for(&mut h, "the worktree's tab again", |app| {
+        app.repo()
+            .is_some_and(|r| r.path().trim_end_matches('/').ends_with("-cache"))
+    });
+    let worktree = h.state().repo().unwrap().path().to_string();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::W);
+    wait_for(&mut h, "back in the first tab", |app| {
+        app.repo()
+            .is_some_and(|r| !r.path().trim_end_matches('/').ends_with("-cache"))
+    });
+    git(&sample, &["worktree", "remove", "--force", &worktree]);
+    // Now without changes in the way (put them aside by hand).
+    std::fs::write(&readme, &before).unwrap();
+    h.key_press(Key::F5);
+    wait_for(&mut h, "no changes", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.unstaged.is_empty() && s.staged.is_empty())
+    });
     h.get_by_label_contains("Check out").click();
     h.run_ok();
     h.get_by_label("Check out cache").click();

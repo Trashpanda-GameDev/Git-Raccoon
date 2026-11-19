@@ -98,6 +98,8 @@ pub struct RequestState {
     pub split: bool,
     pub whole: bool,
     pub blame: bool,
+    /// Checking out met uncommitted changes: ask what to do.
+    pub changes_in_the_way: bool,
     /// Its commits fetched here (without a branch), which the whole file and
     /// blame need: `None` until that's done.
     pub local: Option<Result<(), String>>,

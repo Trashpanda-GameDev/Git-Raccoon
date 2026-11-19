@@ -30,6 +30,8 @@ pub enum Action {
     /// Check out its branch; or into a new worktree.
     CheckOut,
     CheckOutWorktree,
+    /// With uncommitted changes: put them aside, then check it out.
+    CheckOutAside,
     /// On its branch: pull, or go back to the branch it goes into.
     PullLatest,
     BackTo(String),
@@ -61,6 +63,25 @@ pub struct Here<'a> {
     pub now: i64,
     /// This request's drafts.
     pub drafts: &'a [Draft],
+    /// Uncommitted changes were put aside to check it out, on this branch:
+    /// going back there brings them back.
+    pub aside: Option<String>,
+}
+
+/// What a stash made to check out a request says, so going back can find it.
+pub fn aside_message(kind: Kind, number: u64, from: &str) -> String {
+    format!(
+        "Git Raccoon: put aside to check out {} (from {from})",
+        kind.number(number)
+    )
+}
+
+/// The branch changes were put aside on, to check out this request, if a
+/// stash `message` says so.
+pub fn aside_from(message: &str, kind: Kind, number: u64) -> Option<String> {
+    let marker = format!("to check out {} (from ", kind.number(number));
+    let rest = &message[message.find(&marker)? + marker.len()..];
+    rest.strip_suffix(')').map(str::to_string)
 }
 
 /// Whether a request's branch is checked out here.
@@ -137,6 +158,9 @@ pub fn show(ui: &mut egui::Ui, forge: &mut ForgeView, here: &Here<'_>) -> Option
         action = Some(a);
     }
     if let Some(a) = merge_window(ui.ctx(), kind, (&r, &o), state) {
+        action = Some(a);
+    }
+    if let Some(a) = changes_in_the_way(ui.ctx(), state) {
         action = Some(a);
     }
     action
@@ -328,8 +352,14 @@ fn header(
                     if ui.small_button("Pull the latest").clicked() {
                         *action = Some(Action::PullLatest);
                     }
-                    if ui.small_button(format!("Back to {}", r.target)).clicked() {
-                        *action = Some(Action::BackTo(r.target.clone()));
+                    let back = here.aside.clone().unwrap_or_else(|| r.target.clone());
+                    let tip = if here.aside.is_some() {
+                        "Check it out again, and bring back the changes put aside"
+                    } else {
+                        "Check out the branch it goes into"
+                    };
+                    if ui.small_button(format!("Back to {back}")).on_hover_text(tip).clicked() {
+                        *action = Some(Action::BackTo(back));
                     }
                 });
             }
@@ -1982,6 +2012,51 @@ fn pick(
     }
 }
 
+/// Checking out with uncommitted changes: put them aside, use a worktree
+/// instead, or cancel.
+fn changes_in_the_way(ctx: &egui::Context, state: &mut RequestState) -> Option<Action> {
+    if !state.changes_in_the_way {
+        return None;
+    }
+    let mut action = None;
+    let mut close = false;
+    let modal = egui::Modal::new(egui::Id::new("request-changes-in-the-way")).show(ctx, |ui| {
+        ui.set_width(460.0);
+        ui.label(
+            RichText::new("You have uncommitted changes")
+                .strong()
+                .size(16.0),
+        );
+        ui.add_space(6.0);
+        ui.label("Checking out its branch here needs them out of the way.");
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            if widgets::primary_button(ui, "Put them aside and check out")
+                .on_hover_text("They're stashed, and come back when you go back")
+                .clicked()
+            {
+                action = Some(Action::CheckOutAside);
+                close = true;
+            }
+            if ui
+                .button("Use a worktree instead")
+                .on_hover_text("Check it out in a folder of its own; your changes stay here")
+                .clicked()
+            {
+                action = Some(Action::CheckOutWorktree);
+                close = true;
+            }
+            if ui.button("Cancel").clicked() {
+                close = true;
+            }
+        });
+    });
+    if close || modal.should_close() {
+        state.changes_in_the_way = false;
+    }
+    action
+}
+
 /// The message a merge starts with.
 pub fn default_message(kind: Kind, r: &Request, o: &Overview, method: Method) -> String {
     match method {
@@ -2209,4 +2284,23 @@ fn merge_window(
         state.merging = None;
     }
     action
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_changes_put_aside_for_a_request() {
+        let message = aside_message(Kind::GitLab, 12, "feature/x");
+        assert_eq!(
+            aside_from(&message, Kind::GitLab, 12).as_deref(),
+            Some("feature/x")
+        );
+        assert_eq!(
+            aside_from(&format!("On main: {message}"), Kind::GitLab, 12).as_deref(),
+            Some("feature/x")
+        );
+        assert_eq!(aside_from(&message, Kind::GitLab, 13), None);
+    }
 }
