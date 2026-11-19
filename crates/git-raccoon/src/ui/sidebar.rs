@@ -830,8 +830,18 @@ pub fn drag_label(ctx: &egui::Context) {
     painter.galley(rect.min + egui::vec2(8.0, 4.0), galley, theme::on_accent());
 }
 
-/// Adds the items of a context menu; the chosen one becomes the action.
-/// "Open on GitHub" (and copying the link) at the top of a context menu.
+/// "Copy name" in a branch's or tag's menu: puts its name on the
+/// clipboard ("origin/feature" for a remote branch).
+pub fn copy_name(ui: &mut egui::Ui, name: &str) {
+    let item = ui.button(format!("{}  Copy name", icon::COPY));
+    ui.ctx()
+        .accesskit_node_builder(item.id, |n| n.set_label("Copy name"));
+    if item.on_hover_text(name).clicked() {
+        ui.ctx().copy_text(name.to_string());
+        ui.close();
+    }
+}
+
 /// A page on the forge, and copying its link, at the top of a menu.
 pub fn web_items(ui: &mut egui::Ui, action: &mut Option<Action>, web: Option<&(String, String)>) {
     let Some((text, url)) = web else { return };
@@ -1209,6 +1219,7 @@ pub fn show(
                             if c.picked_menu(ui, &me, head) {
                                 return;
                             }
+                            copy_name(ui, &b.name);
                             web_items(ui, &mut c.action, page.as_ref());
                             let items = local_branch_items(&b.name, &b.target, b.is_head, head);
                             menu(ui, &mut c.action, items);
@@ -1285,6 +1296,7 @@ pub fn show(
                                     if c.picked_menu(ui, &me, head) {
                                         return;
                                     }
+                                    copy_name(ui, &b.full_name);
                                     web_items(ui, &mut c.action, page.as_ref());
                                     let items = remote_branch_items(&b.full_name, &b.target, head);
                                     menu(ui, &mut c.action, items);
@@ -1333,6 +1345,7 @@ pub fn show(
                     }
                     let page = web.tag(&t.name);
                     response.context_menu(|ui| {
+                        copy_name(ui, &t.name);
                         web_items(ui, &mut c.action, page.as_ref());
                         menu(ui, &mut c.action, tag_items(&t.name, &t.target));
                     });

@@ -5048,6 +5048,58 @@ fn draws_branch_lines_the_chosen_way() {
 }
 
 #[test]
+fn copies_branch_and_tag_names() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    settle(&mut h);
+    // Clicks "Copy name" in the open menu, and says what was copied.
+    let copy = |h: &mut Harness<'_, App>| -> String {
+        h.get_by_label("Copy name").click();
+        h.step();
+        let copied = h
+            .output()
+            .platform_output
+            .commands
+            .iter()
+            .find_map(|c| match c {
+                egui::OutputCommand::CopyText(text) => Some(text.clone()),
+                _ => None,
+            })
+            .expect("something was copied");
+        h.run_ok();
+        copied
+    };
+    // A branch in the sidebar (shown in its folder, copied whole).
+    h.get_by_label("toolbar-glitch").click_secondary();
+    h.run_ok();
+    assert_eq!(copy(&mut h), "fix/ui/toolbar-glitch");
+    // A tag in the sidebar.
+    h.get_all_by_label("v0.1.0")
+        .last()
+        .unwrap()
+        .click_secondary();
+    h.run_ok();
+    assert_eq!(copy(&mut h), "v0.1.0");
+    // A branch's label on the graph.
+    let row = h.get_by_label("Colour lanes").rect();
+    let label = egui::pos2(row.left() + 30.0, row.center().y);
+    h.event(egui::Event::PointerMoved(label));
+    h.run_ok();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: label,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run_ok();
+    }
+    screenshot(&mut h, "70-copy-name");
+    assert_eq!(copy(&mut h), "feature/graph");
+}
+
+#[test]
 fn shows_the_licenses() {
     let mut h = harness(Settings::default());
     h.run_ok();

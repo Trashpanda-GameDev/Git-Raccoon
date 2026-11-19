@@ -5,6 +5,7 @@ release page). Newest first; a version's heading is just its number.
 
 ## 0.5.15
 
+- **Copy a branch's or tag's name** from its right-click menu, in the sidebar or on the graph (a remote branch copies as `origin/feature`).
 - **Easier-to-read buttons**: the text on orange buttons in the Raccoon look (and on any look's accent-coloured buttons, your own themes too) now always reads at 4.5:1 or better: the button's colour is deepened just enough. Links and highlights keep the brighter colour, which stands out better on the background.
 
 ## 0.5.14

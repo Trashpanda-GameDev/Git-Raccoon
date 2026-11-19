@@ -1499,6 +1499,7 @@ fn commit_menu(
             .collect();
         if !items.is_empty() {
             ui.label(RichText::new(&r.name).size(12.0).color(theme::muted()));
+            sidebar::copy_name(ui, &r.name);
             let mut action = None;
             sidebar::menu(ui, &mut action, items);
             chosen = action.map(Click::Branch);
