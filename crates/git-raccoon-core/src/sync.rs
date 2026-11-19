@@ -403,6 +403,24 @@ pub fn push_to(
     run_push(path, &args, on, cancel)
 }
 
+/// Pushes branch `branch` (checked out or not) to the same name on
+/// `remote`, which it then pushes to and pulls from.
+pub fn push_branch(
+    path: &str,
+    remote: &str,
+    branch: &str,
+    on: &mut dyn FnMut(Progress),
+    cancel: &AtomicBool,
+) -> Result<()> {
+    let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
+    run_push(
+        path,
+        &["push", "--progress", "--set-upstream", remote, &refspec],
+        on,
+        cancel,
+    )
+}
+
 /// Runs a `git push`, telling a refusal to overwrite the remote's commits
 /// ([`Error::Rejected`]) from other failures.
 fn run_push(
@@ -696,6 +714,22 @@ mod tests {
             std::fs::read_to_string(s.b.dir.join("f.txt")).unwrap(),
             "two\n"
         );
+    }
+
+    #[test]
+    fn pushes_a_branch_that_isnt_checked_out() {
+        let s = setup();
+        let none = AtomicBool::new(false);
+        cli::run(s.a.path(), &["checkout", "-q", "-b", "side"], None).unwrap();
+        commit_file(&s.a, "side.txt", "side\n", "side work");
+        let tip = head(&s.a);
+        cli::run(s.a.path(), &["checkout", "-q", &s.branch], None).unwrap();
+        push_branch(s.a.path(), "origin", "side", &mut |_| {}, &none).unwrap();
+        let r = refs::load_refs(s.a.path()).unwrap();
+        let side = r.local.iter().find(|b| b.name == "side").unwrap();
+        let up = side.upstream.as_ref().expect("it tracks the remote's now");
+        assert_eq!((up.name.as_str(), up.ahead), ("origin/side", 0));
+        assert_eq!(side.target, tip);
     }
 
     #[test]

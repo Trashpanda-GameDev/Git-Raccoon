@@ -4054,8 +4054,7 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     assert_eq!(sent["squash"].as_bool(), Some(true));
     assert_eq!(sent["reviewer_ids"], serde_json::json!([31]));
 
-    // From any branch: its right-click menu. Not pushed, and not checked
-    // out, so it says to do that first.
+    // From any branch: its right-click menu.
     h.get_by_label("graph").click_secondary();
     h.run_ok();
     h.get_by_label("Open a merge request…").click();
@@ -4064,8 +4063,41 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     assert_eq!(form.source, "feature/graph");
     // (Merged into main already, so it's named after the branch.)
     assert_eq!((form.title.as_str(), form.commits.len()), ("Graph", 0));
-    h.get_by_label_contains("check it out and push it first");
     screenshot(&mut h, "79-request-from-branch");
+    h.get_by_label("Cancel").click();
+    h.run_ok();
+    // One with something new: its commits and the files it changes.
+    h.get_by_label("toolbar-glitch").click_secondary();
+    h.run_ok();
+    h.get_by_label("Open a merge request…").click();
+    h.run_ok();
+    let form = h.state().new_request_form().unwrap();
+    assert_eq!(form.commits.len(), 1);
+    assert_eq!(
+        form.title, "Fix toolbar glitch",
+        "named after its one commit"
+    );
+    let file = form
+        .files
+        .first()
+        .expect("a file it changes")
+        .diff
+        .path
+        .clone();
+    h.get_by_label_contains("file changed").click();
+    h.run_ok();
+    h.get_all_by_label(&file).last().unwrap().click();
+    h.run_ok();
+    assert_eq!(h.state().new_request_form().unwrap().open_file, Some(0));
+    // Not pushed, and not checked out: it's pushed by name.
+    assert!(
+        h.get_by_label("Push 1 commit and open")
+            .accesskit_node()
+            .is_disabled()
+            == false,
+        "pushing doesn't need it checked out"
+    );
+    screenshot(&mut h, "79c-request-files");
     h.get_by_label("Cancel").click();
     h.run_ok();
 

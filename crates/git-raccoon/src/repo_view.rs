@@ -309,6 +309,12 @@ pub enum Op {
         remote_branch: String,
         id: String,
     },
+    /// Push a branch (checked out or not) to its name on a remote, and
+    /// track it there.
+    PushBranch {
+        remote: String,
+        branch: String,
+    },
     /// Push the checked-out branch; `force` only with lease.
     Push {
         force: bool,
@@ -530,6 +536,9 @@ impl Op {
                 sync::pull(path, from.as_deref(), mode, stash, report, &ctl.cancel)
             }
             Op::Push { force, to: None } => sync::push(path, force, report, &ctl.cancel),
+            Op::PushBranch { remote, branch } => {
+                sync::push_branch(path, &remote, &branch, report, &ctl.cancel)
+            }
             Op::Push {
                 force,
                 to: Some((remote, branch)),
@@ -623,7 +632,7 @@ impl Op {
             Op::Then(ops) => ops.first().map_or("undo", Op::verb),
             Op::Fetch(_) | Op::FetchRemote(..) => "fetch",
             Op::Pull { .. } => "pull",
-            Op::Push { .. } => "push",
+            Op::Push { .. } | Op::PushBranch { .. } => "push",
             Op::DeleteRemoteBranch(_) => "delete the remote branch",
             Op::DeleteRemoteBranches(_) => "delete the remote branches",
             Op::FetchInto { .. } => "fetch",
@@ -1785,6 +1794,7 @@ impl RepoView {
                 | Op::FetchRemote(..)
                 | Op::Pull { .. }
                 | Op::Push { .. }
+                | Op::PushBranch { .. }
                 | Op::UpdateSubmodule(_)
                 | Op::DeleteRemoteBranch(_)
                 | Op::DeleteRemoteBranches(_)

@@ -1283,7 +1283,17 @@ impl App {
             Some(NewAction::PushAndCreate) => {
                 form.pushing = true;
                 form.error = None;
-                repo.push(ctx);
+                match (&repo.forge, form.checked_out) {
+                    // Not checked out: push it by name.
+                    (Some(f), false) => {
+                        let op = Op::PushBranch {
+                            remote: f.remote.clone(),
+                            branch: form.source.clone(),
+                        };
+                        repo.run(ctx, op);
+                    }
+                    _ => repo.push(ctx),
+                }
             }
             Some(NewAction::Create) => create = true,
             Some(NewAction::Close) => {
@@ -2718,6 +2728,8 @@ fn new_form(repo: &RepoView, branch: Option<&str>) -> Option<crate::ui::forge::N
         behind: 0,
         conflicts: false,
         compared: String::new(),
+        files: Vec::new(),
+        open_file: None,
         template: (!templates.is_empty()).then_some(0),
         templates,
         reviewers: Vec::new(),
@@ -2770,6 +2782,17 @@ fn compare_form(repo: &RepoView, form: &mut crate::ui::forge::NewForm) {
             form.conflicts = false;
         }
     }
+    // What it changes: from where it left the target.
+    form.open_file = None;
+    form.files = git_raccoon_core::request::merge_base(repo.path(), &source, &target)
+        .and_then(|base| git_raccoon_core::request::changes(repo.path(), &base, &source))
+        .map(|files| {
+            files
+                .into_iter()
+                .map(|d| std::sync::Arc::new(crate::highlight::RenderedDiff::new(d)))
+                .collect()
+        })
+        .unwrap_or_default();
     form.to_push = match upstream.filter(|u| !u.gone) {
         Some(u) => u.ahead,
         None => form.commits.len(),

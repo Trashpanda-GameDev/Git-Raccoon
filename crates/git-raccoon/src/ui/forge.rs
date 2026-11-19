@@ -109,6 +109,9 @@ pub struct NewForm {
     pub behind: usize,
     pub conflicts: bool,
     pub compared: String,
+    /// The files it changes, laid out, and the one open.
+    pub files: Vec<std::sync::Arc<crate::highlight::RenderedDiff>>,
+    pub open_file: Option<usize>,
     /// The repository's templates (name, text), and the one picked.
     pub templates: Vec<(String, String)>,
     pub template: Option<usize>,
@@ -281,6 +284,88 @@ fn picker(
     }
 }
 
+/// The files a new request changes, with how many lines each adds and
+/// removes; click one to see its diff.
+fn changed_files(
+    ui: &mut egui::Ui,
+    files: &[std::sync::Arc<crate::highlight::RenderedDiff>],
+    open: &mut Option<usize>,
+) {
+    use git_raccoon_core::details::LineKind;
+    egui::ScrollArea::vertical()
+        .id_salt("request-file-list")
+        .max_height(320.0)
+        .show(ui, |ui| {
+            for (i, d) in files.iter().enumerate() {
+                let lines = d.diff.hunks[..d.changes].iter().flat_map(|h| &h.lines);
+                let (added, removed) = lines.fold((0, 0), |(a, r), l| match l.kind {
+                    LineKind::Add => (a + 1, r),
+                    LineKind::Delete => (a, r + 1),
+                    _ => (a, r),
+                });
+                let on = *open == Some(i);
+                let row = ui.horizontal(|ui| {
+                    let caret = if on {
+                        icon::CARET_DOWN
+                    } else {
+                        icon::CARET_RIGHT
+                    };
+                    ui.label(RichText::new(caret).color(theme::muted()));
+                    ui.label(&d.diff.path);
+                    ui.label(RichText::new(format!("+{added}")).color(theme::add()));
+                    ui.label(RichText::new(format!("−{removed}")).color(theme::del()));
+                });
+                let row = ui
+                    .interact(
+                        row.response.rect,
+                        ui.id().with(("new-file", i)),
+                        egui::Sense::click(),
+                    )
+                    .on_hover_text("Show its changes");
+                row.widget_info(|| {
+                    egui::WidgetInfo::selected(
+                        egui::WidgetType::SelectableLabel,
+                        true,
+                        on,
+                        &d.diff.path,
+                    )
+                });
+                if row.clicked() {
+                    *open = if on { None } else { Some(i) };
+                }
+                if on {
+                    if d.diff.binary {
+                        ui.label(RichText::new("Binary file.").color(theme::muted()));
+                    }
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    for row in &d.unified {
+                        let (rect, _) = ui.allocate_exact_size(
+                            egui::vec2(ui.available_width(), crate::ui::diff::LINE),
+                            egui::Sense::hover(),
+                        );
+                        match *row {
+                            crate::highlight::Row::Header(h) => {
+                                crate::ui::diff::header(
+                                    ui.painter(),
+                                    rect,
+                                    &d.diff.hunks[h].header,
+                                );
+                            }
+                            crate::highlight::Row::Line(h, l) => crate::ui::diff::unified_line(
+                                ui.painter(),
+                                rect,
+                                &d.diff.hunks[h].lines[l],
+                                &d.jobs[h][l],
+                                false,
+                            ),
+                        }
+                    }
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                }
+            }
+        });
+}
+
 pub enum NewAction {
     /// Push the branch, then open it.
     PushAndCreate,
@@ -371,6 +456,13 @@ pub fn new_request(ctx: &egui::Context, f: &mut NewForm) -> Option<NewAction> {
                         });
                 });
         }
+        if !f.files.is_empty() {
+            let n = f.files.len();
+            let s = if n == 1 { "" } else { "s" };
+            egui::CollapsingHeader::new(format!("{n} file{s} changed"))
+                .id_salt("request-files")
+                .show(ui, |ui| changed_files(ui, &f.files, &mut f.open_file));
+        }
         if f.conflicts {
             ui.label(
                 RichText::new(format!(
@@ -457,16 +549,6 @@ pub fn new_request(ctx: &egui::Context, f: &mut NewForm) -> Option<NewAction> {
             );
             ui.checkbox(&mut f.squash, "Squash its commits when it's merged");
         }
-        if f.unpushed && !f.checked_out {
-            ui.add_space(6.0);
-            ui.label(
-                RichText::new(format!(
-                    "{} isn't pushed as it is here: check it out and push it first.",
-                    f.source
-                ))
-                .color(theme::modified()),
-            );
-        }
         if let Some(e) = &f.error {
             ui.add_space(6.0);
             ui.label(RichText::new(format!("It wasn't opened: {e}.")).color(theme::danger()));
@@ -474,10 +556,7 @@ pub fn new_request(ctx: &egui::Context, f: &mut NewForm) -> Option<NewAction> {
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             let busy = f.sending || f.pushing;
-            let ready = (!f.unpushed || f.checked_out)
-                && !busy
-                && !f.title.trim().is_empty()
-                && !f.target.trim().is_empty();
+            let ready = !busy && !f.title.trim().is_empty() && !f.target.trim().is_empty();
             let label = if f.pushing {
                 "Pushing…".to_string()
             } else if f.sending {
@@ -558,6 +637,8 @@ mod tests {
             behind: 0,
             conflicts: false,
             compared: "main".into(),
+            files: Vec::new(),
+            open_file: None,
             templates: Vec::new(),
             template: None,
             reviewers: Vec::new(),
