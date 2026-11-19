@@ -2218,6 +2218,20 @@ impl App {
                     return;
                 }
                 // The search box over the history, while searching (Ctrl+F).
+                if let Some(back) = highlight_bar(ui, repo) {
+                    match back {
+                        Some(n) => {
+                            repo.highlight = None;
+                            repo.deselect();
+                            if let Some(f) = &mut repo.forge {
+                                f.open_request(&ctx, n);
+                                f.state.tab = crate::forge_view::Tab::Commits;
+                            }
+                            return;
+                        }
+                        None => repo.highlight = None,
+                    }
+                }
                 if repo.search.open {
                     search_bar::show(&ctx, ui.max_rect(), repo);
                 }
@@ -2787,6 +2801,47 @@ fn check_out_op(forge: &crate::forge_view::ForgeView, number: u64) -> Option<Op>
     }
 }
 
+/// While a request's commits are marked in the graph: how many are here,
+/// and going back to it (`Some(Some(n))`) or clearing them (`Some(None)`).
+fn highlight_bar(ui: &mut egui::Ui, repo: &RepoView) -> Option<Option<u64>> {
+    let (n, ids) = repo.highlight.as_ref()?;
+    let kind = repo
+        .forge
+        .as_ref()
+        .map_or(crate::forge::Kind::GitHub, |f| f.project.kind);
+    let here = ids
+        .iter()
+        .filter(|id| repo.history.locate(id).is_some())
+        .count();
+    let mut chosen = None;
+    Frame::new()
+        .fill(theme::accent().gamma_multiply(0.12))
+        .inner_margin(Margin::symmetric(12, 4))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let s = if ids.len() == 1 { "" } else { "s" };
+                let text = if here == ids.len() {
+                    format!("{}'s {} commit{s}, marked.", kind.number(*n), ids.len())
+                } else {
+                    format!(
+                        "{}'s commits, marked: {here} of {} are in the graph (fetch, or check it out, for the rest).",
+                        kind.number(*n),
+                        ids.len()
+                    )
+                };
+                ui.label(RichText::new(text).color(theme::text()));
+                if ui.small_button(format!("Back to {}", kind.number(*n))).clicked() {
+                    chosen = Some(Some(*n));
+                }
+                if ui.small_button("Clear").clicked() {
+                    chosen = Some(None);
+                }
+            });
+        });
+    chosen
+}
+
 /// Shows the open pull/merge request's view, if one is open.
 fn request_view(
     ui: &mut egui::Ui,
@@ -2970,6 +3025,31 @@ fn request_action(
                 g.path
             )));
             repo.refresh_status(ctx);
+        }
+        Action::ShowInGraph(pick) => {
+            let Some((_, o)) = viewed else { return Ok(()) };
+            let ids: std::collections::HashSet<String> =
+                o.commits.iter().map(|c| c.sha.clone()).collect();
+            f.open = None;
+            // The one asked for, or its newest here.
+            let here: Vec<&String> = o
+                .commits
+                .iter()
+                .map(|c| &c.sha)
+                .filter(|id| repo.history.locate(id).is_some())
+                .collect();
+            let asked = pick.is_some();
+            let select = pick
+                .filter(|id| here.contains(&id))
+                .or_else(|| here.last().map(|id| (*id).clone()));
+            repo.highlight = Some((n, ids));
+            if let Some(id) = select {
+                repo.select(&id);
+            } else if asked {
+                return Err(
+                    "That commit isn't in the graph yet: fetch, or check the request out.".into(),
+                );
+            }
         }
         Action::GoToCommit(id) => {
             if repo.history.locate(&id).is_some() {

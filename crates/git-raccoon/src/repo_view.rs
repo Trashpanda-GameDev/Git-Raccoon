@@ -1365,6 +1365,9 @@ pub struct RepoView {
     pub web: crate::forge::Web,
     /// Which forge, and what's on it, should be found out (again).
     pub forge_stale: bool,
+    /// A pull/merge request's commits, marked in the graph: its number,
+    /// and the commits.
+    pub highlight: Option<(u64, std::collections::HashSet<String>)>,
     committing: Option<Task<Result<Option<Undoable>, String>>>,
     /// How to undo the last action, if it can be.
     pub undo: Option<Undoable>,
@@ -1474,6 +1477,7 @@ impl RepoView {
             forge: None,
             web: crate::forge::Web::default(),
             forge_stale: true,
+            highlight: None,
             committing: None,
             undo: None,
             conflict: None,

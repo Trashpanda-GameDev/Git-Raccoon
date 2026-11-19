@@ -36,6 +36,8 @@ pub enum Action {
     /// After it's merged: pull the branch it went into.
     PullMerged,
     GoToCommit(String),
+    /// Show its commits marked in the graph (and select this one, if given).
+    ShowInGraph(Option<String>),
     /// Keep a draft: new, or in place of the one at this index.
     SaveDraft(Draft, Option<usize>),
     DeleteDraft(usize),
@@ -1198,6 +1200,12 @@ fn commits(ui: &mut egui::Ui, o: &Overview, now: i64, action: &mut Option<Action
                 .show(ui, |ui| {
                     if o.commits.is_empty() {
                         ui.label(RichText::new("No commits.").color(theme::muted()));
+                    } else if ui
+                        .button(format!("{}  Show them in the graph", icon::GRAPH))
+                        .on_hover_text("Back to the graph, with its commits marked")
+                        .clicked()
+                    {
+                        *action = Some(Action::ShowInGraph(None));
                     }
                     for c in &o.commits {
                         let row = ui
@@ -1220,7 +1228,7 @@ fn commits(ui: &mut egui::Ui, o: &Overview, now: i64, action: &mut Option<Action
                             .response;
                         let row = ui
                             .interact(row.rect, ui.id().with(("commit", &c.sha)), Sense::click())
-                            .on_hover_text("Show it in the graph");
+                            .on_hover_text("Show it in the graph, with the others marked");
                         if row.hovered() {
                             ui.painter().rect_filled(
                                 row.rect.expand(2.0),
@@ -1229,7 +1237,7 @@ fn commits(ui: &mut egui::Ui, o: &Overview, now: i64, action: &mut Option<Action
                             );
                         }
                         if row.clicked() {
-                            *action = Some(Action::GoToCommit(c.sha.clone()));
+                            *action = Some(Action::ShowInGraph(Some(c.sha.clone())));
                         }
                     }
                 });

@@ -842,6 +842,21 @@ pub fn show(
                 });
             }
             let is_selected = commit.is_some_and(|c| selected.as_deref() == Some(c.id.as_str()));
+            // A request's commits, marked.
+            let marked = commit.is_some_and(|c| {
+                repo.highlight
+                    .as_ref()
+                    .is_some_and(|(_, ids)| ids.contains(&c.id))
+            });
+            if marked && !is_selected {
+                ui.painter()
+                    .rect_filled(rect, 0, theme::accent().gamma_multiply(0.12));
+                ui.painter().rect_filled(
+                    Rect::from_min_size(rect.min, egui::vec2(3.0, ROW_HEIGHT)),
+                    0,
+                    theme::accent(),
+                );
+            }
             if is_selected {
                 ui.painter().rect_filled(rect, 0, theme::bg_selected());
                 let lane = commit.map_or(0, |c| c.column);

@@ -3517,8 +3517,8 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
         ("GET /api/v4/projects/team%2Fapp/merge_requests/12/approvals", r#"{"approved_by": [{"user": {"username": "rocky"}}]}"#.into()),
         ("GET /api/v4/projects/team%2Fapp/merge_requests/12/diffs", r#"[{"old_path": "README.md", "new_path": "README.md",
             "diff": "@@ -1,2 +1,3 @@\n # Sample\n-Old line\n+New line\n+Another\n"}]"#.into()),
-        ("GET /api/v4/projects/team%2Fapp/merge_requests/12/commits", r#"[{"id": "abc1234", "title": "Cache the pipeline",
-            "author_name": "Ada", "created_at": "2026-11-01T00:00:00Z"}]"#.into()),
+        ("GET /api/v4/projects/team%2Fapp/merge_requests/12/commits", format!(r#"[{{"id": "{main}", "title": "Cache the pipeline",
+            "author_name": "Ada", "created_at": "2026-11-01T00:00:00Z"}}]"#)),
         ("GET /api/v4/projects/team%2Fapp/merge_requests/12/discussions", r#"[
             {"id": "d1", "individual_note": true, "notes": [{"id": 1, "body": "Looks **good**", "author": {"username": "milo"},
                 "created_at": "2026-11-02T00:00:00Z", "system": false}]},
@@ -3603,6 +3603,31 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     h.get_by_label("Why another?");
     h.get_by_label_contains("README.md, line 3");
     screenshot(&mut h, "50-merge-request");
+
+    // Its commits, marked in the graph; and back.
+    h.get_by_label("Commits tab").click();
+    h.run_ok();
+    h.get_by_label_contains("Show them in the graph").click();
+    h.run_ok();
+    {
+        let repo = h.state().repo().unwrap();
+        assert!(
+            repo.highlight
+                .as_ref()
+                .is_some_and(|(n, ids)| *n == 12 && ids.contains(&main))
+        );
+        assert_eq!(
+            repo.selected.as_ref().map(|s| s.id.clone()),
+            Some(main.clone())
+        );
+    }
+    h.get_by_label_contains("'s 1 commit, marked.");
+    screenshot(&mut h, "58b-request-commits-marked");
+    h.get_by_label("Back to !12").click();
+    h.run_ok();
+    assert!(h.state().repo().unwrap().highlight.is_none());
+    h.get_by_label("Conversation tab").click();
+    h.run_ok();
 
     // A suggestion in the thread: what it changes, and applying it.
     h.get_by_label_contains("Suggested change");
