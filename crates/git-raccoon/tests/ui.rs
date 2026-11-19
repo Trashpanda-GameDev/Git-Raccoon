@@ -858,6 +858,64 @@ fn numbered(edit: impl Fn(usize) -> Option<&'static str>) -> String {
 }
 
 #[test]
+fn unstaged_and_staged_share_the_pane_like_the_sidebar() {
+    let sample = Sample::build();
+    sample.write("notes.txt", "one\n");
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    wait_for(&mut h, "the WIP row", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| !s.unstaged.is_empty())
+    });
+    h.get_by_label("Working changes").click();
+    settle(&mut h);
+    // With a file or two, the line between the lists is still halfway down,
+    // not right under the last unstaged file.
+    let line = |h: &Harness<'_, App>| h.get_by_label("Resize Unstaged files").rect().center().y;
+    let bottom = h.get_by_label("Commit summary").rect().top();
+    let top = h.get_by_label("Working changes").rect().bottom();
+    let middle = (top + bottom) / 2.0;
+    assert!((line(&h) - middle).abs() < 60.0, "{} vs {middle}", line(&h));
+    screenshot(&mut h, "83-working-lists");
+    // Dragging it moves it; a double-click puts it back halfway.
+    let at = egui::pos2(
+        h.get_by_label("Resize Unstaged files").rect().center().x,
+        line(&h),
+    );
+    drag(&mut h, at, at - egui::vec2(0.0, 80.0));
+    settle(&mut h);
+    let moved = line(&h);
+    assert!((moved - (at.y - 80.0)).abs() < 8.0, "{moved}");
+    double_click_at(&mut h, egui::pos2(at.x, moved));
+    settle(&mut h);
+    assert!((line(&h) - at.y).abs() < 2.0, "back halfway");
+    // Fold the staged list: its heading goes down to the commit box, and
+    // the unstaged list takes the room.
+    h.get_by_label("Hide staged files").click();
+    settle(&mut h);
+    assert!(
+        h.query_by_label("Resize Unstaged files").is_none(),
+        "no line to drag"
+    );
+    // (Below it: the commit box's own heading, then its summary field.)
+    let staged = h.get_by_label("Show staged files").rect();
+    assert!(bottom - staged.bottom() < 80.0, "{staged:?} vs {bottom}");
+    // And the unstaged list: the staged one comes up under its heading.
+    h.get_by_label("Show staged files").click();
+    h.get_by_label("Hide unstaged files").click();
+    settle(&mut h);
+    let unstaged = h.get_by_label("Show unstaged files").rect();
+    let staged = h.get_by_label("Hide staged files").rect();
+    assert!(
+        staged.top() - unstaged.bottom() < 30.0,
+        "{unstaged:?} {staged:?}"
+    );
+}
+
+#[test]
 fn stages_files_hunks_and_lines() {
     let sample = Sample::build();
     sample.write("notes.txt", numbered(|_| None));

@@ -339,31 +339,38 @@ pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
                 ui.spacing_mut().item_spacing.y = 6.0;
             }
         });
-    // Unstaged and staged files share the rest, each list scrolling on its
-    // own, so staged files are in view however many unstaged ones there are.
-    // A folded list gives its room to the other.
+    // Unstaged and staged files share the rest, like the sidebar's
+    // sections: half each to start with, a line between them to drag
+    // (double-click: half each again), each list scrolling on its own. A
+    // folded list gives its room to the other.
     let folded_id = |side: Side| egui::Id::new(("list folded", side == Side::Staged));
     let folded = |side: Side| ui.data(|d| d.get_temp::<bool>(folded_id(side)).unwrap_or(false));
     let (unstaged_folded, staged_folded) = (folded(Side::Unstaged), folded(Side::Staged));
-    let need = |side: Side, folded: bool| {
-        if folded {
-            0.0
-        } else {
-            list_height(file_list::rows(
-                status.files(side).iter().map(|f| f.path.as_str()),
-                tree,
-            ))
-        }
+    let share_id = egui::Id::new("working-lists-share");
+    let share = ui.data_mut(|d| d.get_persisted::<f32>(share_id).unwrap_or(0.5));
+    // How tall a folded list's heading is (measured; a guess at first).
+    let folded_height_id = egui::Id::new("working-list-folded-height");
+    let folded_height = ui.data(|d| d.get_temp::<f32>(folded_height_id).unwrap_or(40.0));
+    let both = !unstaged_folded && !staged_folded;
+    let space = ui.available_height() - 2.0 * LIST_CHROME - if both { HANDLE } else { 0.0 };
+    let space = space.max(2.0 * FILE_ROW);
+    let unstaged = if both {
+        (space * share).clamp(FILE_ROW, space - FILE_ROW)
+    } else if staged_folded {
+        space + LIST_CHROME - folded_height
+    } else {
+        0.0
     };
-    let (unstaged, staged) = split(
-        ui.available_height() - 2.0 * LIST_CHROME,
-        need(Side::Unstaged, unstaged_folded),
-        need(Side::Staged, staged_folded),
-    );
-    for (side, height, folded) in [
-        (Side::Unstaged, unstaged, unstaged_folded),
-        (Side::Staged, staged, staged_folded),
+    for (side, folded) in [
+        (Side::Unstaged, unstaged_folded),
+        (Side::Staged, staged_folded),
     ] {
+        // The staged list takes what's left, down to the commit box.
+        let height = match side {
+            Side::Unstaged => unstaged,
+            Side::Staged => (ui.available_height() - LIST_CHROME).max(FILE_ROW),
+        };
+        let top = ui.cursor().top();
         let list = List {
             side,
             busy: staging,
@@ -378,6 +385,42 @@ pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
             }
             Some(ListAction::Do(a)) => action = Some(a),
             None => {}
+        }
+        if folded {
+            let h = ui.cursor().top() - top;
+            ui.data_mut(|d| d.insert_temp(folded_height_id, h));
+        }
+        // The line between them, to drag.
+        if side == Side::Unstaged && both {
+            let width = ui.available_width();
+            let (rect, handle) =
+                ui.allocate_exact_size(egui::vec2(width, HANDLE), egui::Sense::click_and_drag());
+            handle.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "Resize Unstaged files")
+            });
+            let handle = handle
+                .on_hover_cursor(egui::CursorIcon::ResizeVertical)
+                .on_hover_text("Drag to share the space; double-click for half each");
+            let (thickness, colour) = if handle.hovered() || handle.dragged() {
+                (2.0, theme::accent())
+            } else {
+                (1.0, theme::border())
+            };
+            ui.painter().hline(
+                rect.x_range(),
+                rect.center().y,
+                Stroke::new(thickness, colour),
+            );
+            if handle.double_clicked() {
+                ui.data_mut(|d| d.insert_persisted(share_id, 0.5_f32));
+            } else if handle.dragged() {
+                // Applied next frame: the staged list is drawn from this
+                // frame's split, so nothing below jumps while dragging.
+                let next = ((unstaged + handle.drag_delta().y) / space).clamp(0.05, 0.95);
+                ui.data_mut(|d| d.insert_persisted(share_id, next));
+                ui.ctx().request_repaint();
+            }
+            ui.add_space(4.0);
         }
     }
     action
@@ -401,34 +444,10 @@ enum ListAction {
 }
 
 const FILE_ROW: f32 = 26.0;
+/// The line between the two lists, to drag.
+const HANDLE: f32 = 6.0;
 /// A list's heading and the space after it.
 const LIST_CHROME: f32 = 50.0;
-
-/// The height a list of `files` needs ("None" when empty).
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "file counts are far below f32 limits"
-)]
-fn list_height(files: usize) -> f32 {
-    (files as f32 * FILE_ROW).max(20.0)
-}
-
-/// Shares `space` between two lists: each gets what it needs if both fit;
-/// otherwise a short one keeps its height and the other gets the rest, or
-/// two long ones get half each.
-fn split(space: f32, first: f32, second: f32) -> (f32, f32) {
-    let space = space.max(2.0 * FILE_ROW);
-    let half = space / 2.0;
-    if first + second <= space {
-        (first, second)
-    } else if second <= half {
-        (space - second, second)
-    } else if first <= half {
-        (first, space - first)
-    } else {
-        (half, half)
-    }
-}
 
 fn file_list(
     ui: &mut egui::Ui,
@@ -540,9 +559,6 @@ fn file_list(
         });
     });
     ui.spacing_mut().item_spacing.y = 0.0;
-    if files.is_empty() && !folded {
-        ui.label(RichText::new("None").size(12.0).color(theme::muted()));
-    }
     if folded {
         ui.add_space(8.0);
         ui.spacing_mut().item_spacing.y = 6.0;
@@ -560,8 +576,12 @@ fn file_list(
     egui::ScrollArea::vertical()
         .id_salt(("files", side == Side::Staged))
         .max_height(height)
-        .auto_shrink([false, true])
+        .min_scrolled_height(height)
+        .auto_shrink([false, false])
         .show(ui, |ui| {
+            if files.is_empty() {
+                ui.label(RichText::new("None").size(12.0).color(theme::muted()));
+            }
             file_list::show(
                 ui,
                 ("tree", side == Side::Staged),
@@ -799,22 +819,5 @@ fn as_changed(f: &WorkingFile) -> ChangedFile {
         additions: 0,
         deletions: 0,
         binary: false,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn shares_the_height_between_the_lists() {
-        // Both fit: each as tall as it needs.
-        assert_eq!(split(400.0, 100.0, 50.0), (100.0, 50.0));
-        // Many unstaged, a few staged: the staged list keeps its height.
-        assert_eq!(split(400.0, 2000.0, 52.0), (348.0, 52.0));
-        // And the other way round.
-        assert_eq!(split(400.0, 26.0, 2000.0), (26.0, 374.0));
-        // Both long: half each.
-        assert_eq!(split(400.0, 2000.0, 2000.0), (200.0, 200.0));
     }
 }

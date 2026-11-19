@@ -81,33 +81,6 @@ impl Folders {
     }
 }
 
-/// How many rows `paths` take: one each, plus the folders in a tree.
-pub fn rows<'a>(paths: impl Iterator<Item = &'a str>, tree: bool) -> usize {
-    let mut paths: Vec<&str> = paths.collect();
-    if !tree {
-        return paths.len();
-    }
-    paths.sort_unstable();
-    let shown = Folders::new(paths.iter().copied());
-    let mut open: Vec<String> = Vec::new();
-    let mut count = 0;
-    for path in paths {
-        let dirs = shown.above(path);
-        let same = open
-            .iter()
-            .zip(&dirs)
-            .take_while(|(a, (b, _))| *a == b)
-            .count();
-        open.truncate(same);
-        for (full, _) in &dirs[same..] {
-            open.push(full.clone());
-            count += 1;
-        }
-        count += 1;
-    }
-    count
-}
-
 /// The order `items` are shown in: as given, or by path in a tree.
 pub fn order<T>(items: &[T], path: impl Fn(&T) -> &str, tree: bool) -> Vec<&T> {
     let mut sorted: Vec<&T> = items.iter().collect();
@@ -246,20 +219,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn counts_rows_with_their_folders() {
-        let paths = [
-            "src/a.rs",
-            "src/ui/b.rs",
-            "src/ui/c.rs",
-            "README.md",
-            "docs/x.md",
-        ];
-        assert_eq!(rows(paths.into_iter(), false), 5);
-        // README.md, docs/, x.md, src/, a.rs, ui/, b.rs, c.rs
-        assert_eq!(rows(paths.into_iter(), true), 8);
-    }
-
-    #[test]
     fn single_folders_share_a_row() {
         let paths = [
             "game/assets/localisation/en.csv",
@@ -285,9 +244,6 @@ mod tests {
             shown.above(paths[2]).last().map(|(full, _)| full.as_str()),
             Some("game/src/deep/er")
         );
-        // game/, assets/localisation/, 2 files, src/, deep/er/, main.rs,
-        // lib.rs, tools/x/, y.py
-        assert_eq!(rows(paths.into_iter(), true), 10);
         let issue = [
             "game/assets/localisation/a.txt",
             "game/assets/localisation/b.txt",
@@ -296,6 +252,5 @@ mod tests {
             Folders::new(issue.into_iter()).above(issue[0])[0].1,
             "game/assets/localisation"
         );
-        assert_eq!(rows(issue.into_iter(), true), 3);
     }
 }
