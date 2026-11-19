@@ -5,6 +5,11 @@ release page). Newest first; a version's heading is just its number.
 
 ## 0.5.18
 
+- **Pull and merge requests, without leaving the app**: click one in the sidebar and it opens in place of the graph, with how its checks, approvals and threads stand, and **Conversation**, **Commits** and **Changes** tabs. Its description and comments show as formatted Markdown. Changes shows each file's diff with the comment threads under their lines: reply, resolve or unresolve them there.
+- **Reviews**: comment on a line (its **+**), on a range of lines (pick them, then right-click › *Comment on selection*), reply to threads, or comment on the whole request. They're drafts, kept until you **Finish review**, then sent together with a summary and *Comment*, *Approve* or *Request changes*.
+- **Merge from the app**: merge commit, squash or rebase (what the repository allows), the message, and deleting the branch after; when it can't be merged yet it says why.
+- **Check out ▾** a request's branch or a new worktree for it, and once on it, **Pull the latest** or go **Back to main**.
+- **Opening a request** shows the commits it will have, warns when it won't merge cleanly or is behind, fills in the title and description from its commits (or the repository's template), takes reviewers, assignees and labels, and pushes and opens in one step. **Open a pull/merge request…** is in every local branch's right-click menu too.
 - **Check for updates now**: a button in Settings › Updates and privacy (and *Check for updates* in the command palette) looks for a new version right away, instead of waiting for the next half-hourly check, and says how it went: up to date, downloaded and ready to restart into, or what went wrong.
 
 ## 0.5.17

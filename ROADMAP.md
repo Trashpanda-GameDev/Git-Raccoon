@@ -106,24 +106,29 @@ Mockup and clickable prototype: [Git Raccoon profiles](https://claude.ai/artifac
 
 Clickable prototype: [Git Raccoon merge requests](https://claude.ai/artifact/HZ9aRqi9yffGtvRmptrYW8). Build work: the [Merge requests milestone](https://github.com/Trashpanda-GameDev/Git-Raccoon/milestone/2).
 
-Today the sidebar lists open pull/merge requests, shows one's description, reviews and checks, checks out its branch and opens new ones; everything else needs the website. This is the rest, with one set of words for GitHub and GitLab (what a forge doesn't support is hidden).
+Built in 0.5.18, with one set of words for GitHub and GitLab (what a forge doesn't support is hidden). What's left is marked.
 
-- [ ] **A request view in place of the graph** (Esc goes back): a header with its state, branches, checks, approvals and unresolved threads, and **Check out ▾**, **Review** and **Merge ▾**; tabs below it for **Conversation**, **Commits** and **Changes**.
-- [ ] **Changes:** the request's files (each with its open threads) and the diff view (Whole file, Split, Blame, line picking), with comment threads under the lines they're about: reply, resolve and unresolve.
-- [ ] **Comments are drafts until the review is finished**, then all sent at once: on a line (its **+**), on a range of lines (click line numbers, Shift+click or drag; or pick lines and right-click › *Comment on selection*), replies, and comments on the whole request. Drafts are marked, can be edited or deleted, and only you see them.
-- [ ] **Finish review:** lists every draft (click one to go to it), an optional summary, and **Comment**, **Approve** or **Request changes**; "Submit review and send 3" posts everything together.
-- [ ] **Conversation:** the description, threads with the code they're about (*Show in Changes*), check results, reviews and comments, in order; a comment box at the bottom (a draft too).
-- [ ] **Commits:** the request's commits, highlighted in the graph while the tab is open.
-- [ ] **Merge ▾:** Merge commit, Squash or Rebase (each explained; only what the repository allows), the commit message, *Delete the branch after merging*. When it can't be merged yet (approvals, failing checks), it says why instead of being hidden. Afterwards: a *Merged* banner saying what happened, and *Pull to get it*.
-- [ ] **Check out ▾:** the request's branch (following the request, so Pull brings new commits), or a **new worktree** opened in a tab; with uncommitted changes, ask: put them aside and check out (they come back with *Back to main*), use a worktree instead, or cancel. Once on it: *Pull the latest* and *Back to main*. A request from a fork gets a local branch that tracks it.
-- [ ] **The active profile's account** does the reviewing and merging (see Profiles); when it can't, say so up front.
-- [ ] **Opening a request:**
+- [x] **A request view in place of the graph** (Esc goes back): a header with its state, branches, checks, approvals and unresolved threads, and **Check out ▾**, **Review** and **Merge**; tabs below it for **Conversation**, **Commits** and **Changes**.
+- [x] **Changes:** the request's files (each with its open threads) and its diff with line picking, with comment threads under the lines they're about: reply, resolve and unresolve.
+  - [ ] Whole file, Split and Blame in a request's diff (it shows the forge's patch, unified, for now).
+- [x] **Comments are drafts until the review is finished**, then all sent at once: on a line (its **+**), on a range of lines (click, Shift+click or drag; then right-click › *Comment on selection*), replies, and comments on the whole request. Drafts are marked, can be edited or deleted, and are kept on this computer until sent.
+- [x] **Finish review:** lists every draft (click one to go to it), an optional summary, and **Comment**, **Approve** or **Request changes** (GitHub only: GitLab's API has no way to ask for changes); "Submit review and send 3" posts everything together.
+- [x] **Conversation:** the description and comments as formatted Markdown, threads with the code they're about (*Show in Changes*), check results, reviews and comments, in order; a comment box at the bottom (a draft too).
+- [x] **Commits:** the request's commits; click one to see it in the graph.
+  - [ ] Highlighted in the graph while the tab is open.
+- [x] **Merge:** Merge commit, Squash or Rebase (each explained; only what the repository allows), the commit message, *Delete the branch after merging*. When it can't be merged yet, it says why. Afterwards: a *Merged* banner, and *Pull to get it*.
+- [x] **Check out ▾:** the request's branch (following the request, so Pull brings new commits; uncommitted changes in the way get the usual offer to put them aside), or a **new worktree** beside the repository. Once on it: *Pull the latest* and *Back to main*. A request from a fork gets a branch of its own.
+  - [ ] Open the new worktree in a tab by itself, and bring put-aside changes back with *Back to main*.
+- [ ] **The active profile's account** does the reviewing and merging (waits on Profiles); when it can't, say so up front.
+- [x] **Opening a request:**
   - [x] The target branch is a **dropdown** of the remote's branches, starting on the repository's default branch (not a text field).
-  - [ ] The same view as a request, in a *new* state: **Commits** and **Changes** show what it will contain before it's opened; a warning when it won't merge cleanly into the target, or is behind it.
-  - [ ] From **any branch**: right-click a branch (sidebar or graph) › *Open a merge request…*, as well as the **+** in the sidebar; after pushing a new branch, offer to open one.
-  - [ ] **Title and description filled in**: one commit → its message; several → the branch name and the commits listed; the repository's template when it has one (a picker for several).
-  - [ ] **Reviewers, assignees and labels**; GitLab's *Delete source branch* and *Squash when merging*.
-  - [ ] **Push and open in one step** ("Push 3 commits and open"), setting the upstream; draft or ready; then straight to the new request's view.
+  - [x] The commits it will contain; a warning when it won't merge cleanly into the target, or is behind it.
+    - [ ] Its **Changes** too, in the request view's *new* state.
+  - [x] From **any branch**: right-click a branch (sidebar or graph) › *Open a merge request…*, as well as the **+** in the sidebar.
+    - [ ] After pushing a new branch, offer to open one.
+  - [x] **Title and description filled in**: one commit → its message; several → the branch name and the commits listed; the repository's template when it has one (a picker for several).
+  - [x] **Reviewers, assignees and labels**; GitLab's *Delete source branch* and *Squash when merging*.
+  - [x] **Push and open in one step** ("Push 3 commits and open"), setting the upstream; draft or ready; then straight to the new request's view.
 - Later: check logs and re-runs; editing the title, description, reviewers, assignees and labels; draft/ready, close/reopen; suggested changes with *Apply*; sidebar filters (*Mine*, *Review requested*), and a count of requests waiting on you.
 
 ## Later (ideas, not commitments)

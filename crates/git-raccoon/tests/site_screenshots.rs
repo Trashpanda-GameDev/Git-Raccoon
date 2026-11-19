@@ -465,6 +465,50 @@ fn requests(demo: &Demo) {
         ),
         (format!("GET {api}/merge_requests/9"), flush.clone()),
         (format!("GET {api}/merge_requests/9/approvals"), r#"{"approved_by": []}"#.into()),
+        // Its view: the file it adds, its commits, and the conversation.
+        (format!("GET {api}/merge_requests/7/diffs"), {
+            let lines: Vec<&str> = EXPIRY_2.lines().collect();
+            let mut patch = format!("@@ -0,0 +1,{} @@\n", lines.len());
+            for l in &lines {
+                patch.push('+');
+                patch.push_str(l);
+                patch.push('\n');
+            }
+            serde_json::json!([{"old_path": "src/expiry.rs", "new_path": "src/expiry.rs",
+                "new_file": true, "diff": patch}])
+            .to_string()
+        }),
+        (
+            format!("GET {api}/merge_requests/7/commits"),
+            r#"[{"id": "9f2c41d0", "title": "Sweep expired keys in the background", "author_name": "Milo",
+                "created_at": "2026-11-12T09:00:00Z"},
+               {"id": "4be7a113", "title": "Expire keys after a time to live", "author_name": "Milo",
+                "created_at": "2026-11-11T16:00:00Z"}]"#
+                .into(),
+        ),
+        (
+            format!("GET {api}/merge_requests/7/discussions"),
+            serde_json::json!([
+                {"id": "d1", "individual_note": true, "notes": [{"id": 1, "system": false,
+                    "author": {"username": "ada"}, "created_at": "2026-11-12T10:15:00Z",
+                    "body": "Nice! Two things before it goes in:\n\n- the sweep should run **off** the write path\n- a test for a key that's set twice\n\nOtherwise good to go."}]},
+                {"id": "d2", "individual_note": false, "notes": [
+                    {"id": 2, "system": false, "author": {"username": "ada"}, "created_at": "2026-11-12T10:20:00Z",
+                     "resolvable": true, "resolved": false,
+                     "body": "Could `retain` do this in one pass, without the second `Vec`?",
+                     "position": {"old_path": "src/expiry.rs", "new_path": "src/expiry.rs", "old_line": null, "new_line": 22}},
+                    {"id": 3, "system": false, "author": {"username": "milo"}, "created_at": "2026-11-12T11:02:00Z",
+                     "body": "It needs the removed keys back, so `retain` alone won't do. I'll try `extract_if` once it's stable."}]},
+                {"id": "d3", "individual_note": true, "notes": [{"id": 4, "system": true,
+                    "author": {"username": "ada"}, "created_at": "2026-11-12T11:30:00Z",
+                    "body": "approved this merge request"}]}
+            ])
+            .to_string(),
+        ),
+        (format!("GET {api}/merge_requests/9/diffs"), "[]".into()),
+        (format!("GET {api}/merge_requests/9/commits"), "[]".into()),
+        (format!("GET {api}/merge_requests/9/discussions"), "[]".into()),
+        (format!("GET {api}"), r#"{"default_branch": "main", "squash_option": "default_off"}"#.into()),
     ]);
     demo.repo
         .remote_set_url("origin", &format!("{base}/rocky/stash-box.git"))
