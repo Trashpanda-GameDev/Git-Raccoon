@@ -233,13 +233,44 @@ fn folder_row(
 /// shown when `add` names it.
 fn section_header(
     ui: &mut egui::Ui,
+    c: &mut Ctx<'_>,
+    key: &str,
     title: &str,
     count: usize,
     open: bool,
     add: Option<&str>,
 ) -> (bool, bool) {
+    // Drawn in its turn: open ones first, collapsed ones at the bottom.
+    if !c.now(key) {
+        return (false, false);
+    }
     let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 28.0), Sense::click());
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), HEADER), Sense::click());
+    // Its top edge, so the sections read as separate.
+    ui.painter().hline(
+        rect.x_range(),
+        rect.top(),
+        Stroke::new(1.0, theme::border()),
+    );
+    // Which sections to show.
+    response.context_menu(|ui| {
+        ui.label(
+            RichText::new("Show in the sidebar")
+                .size(12.0)
+                .color(theme::muted()),
+        );
+        for (k, name) in &c.all_sections {
+            let mut shown = !c.hidden.iter().any(|h| h == k);
+            if ui.checkbox(&mut shown, name).clicked() {
+                c.action = Some(Action::ToggleSection((*k).to_string()));
+                ui.close();
+            }
+        }
+        if !c.hidden.is_empty() && ui.button("Show all sections").clicked() {
+            c.action = Some(Action::ShowAllSections);
+            ui.close();
+        }
+    });
     response
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::CollapsingHeader, true, title));
     let mut added = false;
@@ -248,7 +279,8 @@ fn section_header(
             Pos2::new(rect.right() - 40.0, rect.center().y + 2.0),
             egui::vec2(20.0, 20.0),
         );
-        let button = ui.put(
+        // Placed, so it doesn't move what comes after.
+        let button = ui.place(
             r,
             egui::Button::new(RichText::new(icon::PLUS).size(12.0)).frame(false),
         );
@@ -286,72 +318,131 @@ fn section_header(
     (response.clicked(), added)
 }
 
-/// How tall each open section is: every section's heading stays in view,
-/// and each scrolls inside its own space (#13). A section is as tall as
-/// what's in it, unless that doesn't fit; dragging the handle under one
-/// sets its height (double-clicking it lets it fit again).
+/// Every section the sidebar can have (key, name), in order; some only
+/// show when there's something for them (a forge, submodules).
+pub const SECTIONS: &[(&str, &str)] = &[
+    ("local", "Local branches"),
+    ("remotes", "Remote branches"),
+    ("requests", "Pull or merge requests"),
+    ("issues", "Issues"),
+    ("tags", "Tags"),
+    ("stashes", "Stashes"),
+    ("worktrees", "Worktrees"),
+    ("submodules", "Submodules"),
+];
+
+/// How tall each open section is. The open sections always share all
+/// the height there is (#44), each by its share; a handle between two
+/// moves just the line between them (pushing past a neighbour at its
+/// smallest to the next). Shares are kept between runs; without any, a
+/// section's share is what's in it, and the first one (Local) takes the
+/// rest.
 #[derive(Default)]
 struct Sizes {
     /// The height each open section gets this frame.
     heights: HashMap<String, f32>,
     /// How tall each one's contents were last frame.
     measured: HashMap<String, f32>,
-    /// Heights set by dragging, kept between runs.
-    set: HashMap<String, f32>,
+    /// Each section's share (in points, as it was when last set).
+    shares: HashMap<String, f32>,
+    /// The open sections, in order.
+    open: Vec<String>,
 }
 
-/// Space between a section and the next heading, to drag.
+/// Space between two open sections, to drag.
 const HANDLE: f32 = 6.0;
 const HEADER: f32 = 28.0;
+/// The smallest an open section's list gets.
+const SMALLEST: f32 = 44.0;
 
 impl Sizes {
-    /// Shares `space` among the open `sections` (in order).
+    /// Shares `space` among the open sections (in order).
     fn plan(&mut self, open: &[&str], space: f32) {
-        let content = |k: &str| self.measured.get(k).copied().unwrap_or(200.0).max(1.0);
-        let want: Vec<f32> = open
-            .iter()
-            .map(|k| self.set.get(*k).map_or(content(k), |s| s.min(content(k))))
-            .collect();
-        let total: f32 = want.iter().sum();
-        let heights: Vec<f32> = if total <= space {
-            want
+        self.open = open.iter().map(ToString::to_string).collect();
+        self.heights.clear();
+        if open.is_empty() {
+            return;
+        }
+        let content = |k: &str| self.measured.get(k).copied().unwrap_or(120.0).max(SMALLEST);
+        let shared: Vec<f32> = if open.iter().any(|k| self.shares.contains_key(*k)) {
+            open.iter()
+                .map(|k| self.shares.get(*k).copied().unwrap_or_else(|| content(k)))
+                .collect()
         } else {
-            // Too much: the ones set by dragging keep theirs where they
-            // can; the rest share what's left, small ones whole.
-            let pinned: f32 = open
-                .iter()
-                .zip(&want)
-                .filter(|(k, _)| self.set.contains_key(**k))
-                .map(|(_, w)| w)
-                .sum();
-            let free: Vec<usize> = (0..open.len())
-                .filter(|i| !self.set.contains_key(open[*i]))
-                .collect();
-            let mut left = space - pinned;
-            let mut out = want.clone();
-            if left < 48.0 * free.len() as f32 {
-                // Not even that: everything shrinks alike.
-                let scale = space / total;
-                out.iter_mut().for_each(|h| *h *= scale);
-            } else {
-                let mut rest = free.clone();
-                rest.sort_by(|a, b| want[*a].total_cmp(&want[*b]));
-                let mut n = rest.len();
-                for i in rest {
-                    #[expect(clippy::cast_precision_loss, reason = "a few sections")]
-                    let share = left / n as f32;
-                    out[i] = want[i].min(share);
-                    left -= out[i];
-                    n -= 1;
-                }
-            }
-            out
+            // What's in each; the first takes what's left.
+            let rest: f32 = open[1..].iter().map(|k| content(k)).sum();
+            std::iter::once((space - rest).max(SMALLEST))
+                .chain(open[1..].iter().map(|k| content(k)))
+                .collect()
         };
-        self.heights = open
+        let total: f32 = shared.iter().sum::<f32>().max(1.0);
+        let mut heights: Vec<f32> = shared.iter().map(|w| w / total * space).collect();
+        fit(&mut heights, space);
+        self.heights = open.iter().map(ToString::to_string).zip(heights).collect();
+    }
+
+    /// Heights of the open sections, in order.
+    fn ordered(&self) -> Vec<f32> {
+        self.open
             .iter()
-            .zip(heights)
-            .map(|(k, h)| ((*k).to_string(), h.max(24.0_f32.min(content(k)))))
-            .collect();
+            .map(|k| self.heights.get(k).copied().unwrap_or(0.0))
+            .collect()
+    }
+
+    /// Moves the line under open section `at` by `dy`: it grows (or
+    /// shrinks) and the next (or itself, and the ones before) give way,
+    /// none below their smallest. The others stay as they are.
+    fn drag(&mut self, at: usize, dy: f32) {
+        let mut heights = self.ordered();
+        if at + 1 >= heights.len() {
+            return;
+        }
+        if dy > 0.0 {
+            let mut want = dy;
+            for h in heights.iter_mut().skip(at + 1) {
+                let give = (*h - SMALLEST).max(0.0).min(want);
+                *h -= give;
+                want -= give;
+            }
+            heights[at] += dy - want;
+        } else {
+            let mut want = -dy;
+            for h in heights[..=at].iter_mut().rev() {
+                let give = (*h - SMALLEST).max(0.0).min(want);
+                *h -= give;
+                want -= give;
+            }
+            heights[at + 1] += -dy - want;
+        }
+        for (k, h) in self.open.iter().zip(&heights) {
+            self.shares.insert(k.clone(), *h);
+            self.heights.insert(k.clone(), *h);
+        }
+    }
+}
+
+/// Keeps every height at least the smallest (where there's room), taking
+/// what that needs from the taller ones; they still add up to `space`.
+fn fit(heights: &mut [f32], space: f32) {
+    #[expect(clippy::cast_precision_loss, reason = "a few sections")]
+    let n = heights.len() as f32;
+    if space < SMALLEST * n {
+        heights.iter_mut().for_each(|h| *h = space / n);
+        return;
+    }
+    for _ in 0..4 {
+        let short: f32 = heights.iter().map(|h| (SMALLEST - h).max(0.0)).sum();
+        if short <= 0.0 {
+            break;
+        }
+        let spare: f32 = heights.iter().map(|h| (h - SMALLEST).max(0.0)).sum();
+        for h in heights.iter_mut() {
+            if *h < SMALLEST {
+                *h = SMALLEST;
+            } else if spare > 0.0 {
+                *h -= (*h - SMALLEST) / spare * short;
+            }
+        }
     }
 }
 
@@ -364,7 +455,10 @@ fn body(
     title: &str,
     add: impl FnOnce(&mut egui::Ui, &mut Ctx<'_>),
 ) {
-    let height = c.sizes.heights.get(key).copied().unwrap_or(200.0);
+    if !c.now(key) {
+        return;
+    }
+    let height = c.sizes.heights.get(key).copied().unwrap_or(SMALLEST);
     let width = ui.available_width();
     let shown = ui
         .allocate_ui(egui::vec2(width, height), |ui| {
@@ -384,29 +478,45 @@ fn body(
         })
         .inner;
     c.sizes.measured.insert(key.to_string(), shown.inner);
-    // The handle.
+    // The handle between this section and the next open one.
+    let Some(at) = c.sizes.open.iter().position(|k| k == key) else {
+        return;
+    };
+    if at + 1 >= c.sizes.open.len() {
+        return;
+    }
     let (rect, handle) = ui.allocate_exact_size(egui::vec2(width, HANDLE), Sense::click_and_drag());
     handle.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Other, true, format!("Resize {title}"))
     });
-    let handle = handle.on_hover_cursor(egui::CursorIcon::ResizeVertical);
-    if handle.hovered() || handle.dragged() {
-        ui.painter().hline(
-            rect.x_range(),
-            rect.center().y,
-            Stroke::new(2.0, theme::accent()),
-        );
-    }
+    let handle = handle
+        .on_hover_cursor(egui::CursorIcon::ResizeVertical)
+        .on_hover_text("Drag to share the space; double-click to share it by what's in each");
+    let (thickness, colour) = if handle.hovered() || handle.dragged() {
+        (2.0, theme::accent())
+    } else {
+        (1.0, theme::border())
+    };
+    ui.painter().hline(
+        rect.x_range(),
+        rect.center().y,
+        Stroke::new(thickness, colour),
+    );
     if handle.double_clicked() {
-        c.sizes.set.remove(key);
+        c.sizes.shares.clear();
     } else if handle.dragged() {
-        let to = (height + handle.drag_delta().y).max(24.0);
-        c.sizes.set.insert(key.to_string(), to);
+        c.sizes.drag(at, handle.drag_delta().y);
     }
 }
 
 struct Ctx<'s> {
     sizes: Sizes,
+    /// The sections there are (key, name), whether shown or not, and the
+    /// ones hidden.
+    all_sections: Vec<(&'static str, String)>,
+    hidden: &'s [String],
+    /// Drawing the open sections (then the collapsed ones, at the bottom).
+    open_pass: bool,
     collapsed: &'s mut HashSet<String>,
     filtering: bool,
     selected: Option<&'s str>,
@@ -424,6 +534,14 @@ enum Picked {
 }
 
 impl Ctx<'_> {
+    /// Whether a section is drawn now: it's shown, and it's open in the
+    /// first pass, collapsed in the second.
+    fn now(&self, key: &str) -> bool {
+        self.all_sections.iter().any(|(k, _)| *k == key)
+            && !self.hidden.iter().any(|h| h == key)
+            && self.is_open(key) == self.open_pass
+    }
+
     /// A click on a branch's row: Ctrl (Cmd) picks it, or unpicks it;
     /// otherwise the picking is over. Returns whether it was picked.
     fn pick(&mut self, ui: &egui::Ui, response: &egui::Response, branch: Picked) -> bool {
@@ -556,6 +674,8 @@ fn forge_sections(
     let open = c.is_open("requests");
     let (toggled, add) = section_header(
         ui,
+        c,
+        "requests",
         &title,
         requests.len(),
         open,
@@ -640,7 +760,7 @@ fn forge_sections(
         .filter(|i| matches(&i.title) || matches(&format!("#{}", i.number)))
         .collect();
     let open = c.is_open("issues");
-    if section_header(ui, "Issues", issues.len(), open, None).0 {
+    if section_header(ui, c, "issues", "Issues", issues.len(), open, None).0 {
         c.toggle("issues");
     }
     if open {
@@ -725,6 +845,9 @@ pub enum Action {
     NewRequest,
     /// Open a page on the forge.
     OpenWeb(String),
+    /// Show or hide a section of the sidebar (by its key).
+    ToggleSection(String),
+    ShowAllSections,
     StashApply(String),
     StashPop(String),
     StashDrop(String),
@@ -996,6 +1119,8 @@ pub struct Shown<'a> {
     pub forge: Option<&'a crate::forge_view::ForgeView>,
     /// The remotes' web pages.
     pub web: &'a crate::forge::Web,
+    /// Sections hidden (by key).
+    pub hidden: &'a [String],
 }
 
 pub fn show(
@@ -1011,6 +1136,7 @@ pub fn show(
         selected,
         forge,
         web,
+        hidden,
     } = shown;
     ui.add_space(8.0);
     ui.horizontal(|ui| {
@@ -1059,28 +1185,39 @@ pub fn show(
         .collect();
 
     let picked_id = egui::Id::new(("sidebar-picked", root));
-    // Each open section's height, from the space there is.
+    // The sections there are, with their names.
     let filtering = !f.is_empty();
-    let mut sections = vec!["local", "remotes"];
-    if forge.is_some() {
-        sections.extend(["requests", "issues"]);
+    let mut all_sections: Vec<(&'static str, String)> =
+        vec![("local", "Local".into()), ("remotes", "Remote".into())];
+    if let Some(forge) = forge {
+        all_sections.push(("requests", format!("{}s", forge.project.kind.request())));
+        all_sections.push(("issues", "Issues".into()));
     }
-    sections.extend(["tags", "stashes", "worktrees"]);
+    all_sections.extend([
+        ("tags", "Tags".into()),
+        ("stashes", "Stashes".into()),
+        ("worktrees", "Worktrees".into()),
+    ]);
     if !extras.submodules.is_empty() {
-        sections.push("submodules");
+        all_sections.push(("submodules", "Submodules".into()));
     }
-    let open: Vec<&str> = sections
+    let shown_keys: Vec<&str> = all_sections
+        .iter()
+        .map(|(k, _)| *k)
+        .filter(|k| !hidden.iter().any(|h| h == k))
+        .collect();
+    let open: Vec<&str> = shown_keys
         .iter()
         .copied()
         .filter(|k| filtering || !collapsed.contains(*k))
         .collect();
-    let (set_id, measured_id) = (
-        egui::Id::new("sidebar-section-heights"),
+    let (shares_id, measured_id) = (
+        egui::Id::new("sidebar-section-shares"),
         egui::Id::new(("sidebar-section-contents", root)),
     );
     let mut sizes = Sizes {
-        set: ui.data_mut(|d| {
-            d.get_persisted::<HashMap<String, f32>>(set_id)
+        shares: ui.data_mut(|d| {
+            d.get_persisted::<HashMap<String, f32>>(shares_id)
                 .unwrap_or_default()
         }),
         measured: ui.data(|d| {
@@ -1090,10 +1227,14 @@ pub fn show(
         ..Sizes::default()
     };
     #[expect(clippy::cast_precision_loss, reason = "a few sections")]
-    let chrome = HEADER * sections.len() as f32 + HANDLE * open.len() as f32;
-    sizes.plan(&open, (ui.available_height() - chrome - 4.0).max(0.0));
+    let chrome = HEADER * shown_keys.len() as f32 + HANDLE * open.len().saturating_sub(1) as f32;
+    sizes.plan(&open, (ui.available_height() - chrome).max(0.0));
+    let collapsed_shown = shown_keys.len() - open.len();
     let mut c = Ctx {
         sizes,
+        all_sections,
+        hidden,
+        open_pass: true,
         collapsed,
         filtering: !f.is_empty(),
         selected,
@@ -1121,426 +1262,469 @@ pub fn show(
             ui.add_space(6.0);
         };
         let none = if f.is_empty() { "" } else { "No matches" };
+        // Open sections, then the collapsed ones at the bottom.
+        for open_pass in [true, false] {
+            c.open_pass = open_pass;
+            if !open_pass {
+                #[expect(clippy::cast_precision_loss, reason = "a few sections")]
+                let below = ui.available_height() - HEADER * collapsed_shown as f32;
+                if below > 0.0 {
+                    ui.add_space(below);
+                }
+            }
 
-        // Local branches.
-        let open = c.is_open("local");
-        let (toggled, add) = section_header(ui, "Local", local.len(), open, Some("New branch"));
-        if toggled {
-            c.toggle("local");
-        }
-        if add {
-            let label = head.map_or_else(|| "HEAD".to_string(), |b| format!("{b} (HEAD)"));
-            c.action = Some(Action::NewBranch {
-                start: "HEAD".into(),
-                label,
-            });
-        }
-        if open {
-            body(ui, &mut c, "local", "Local", |ui, c| {
-                if local.is_empty() {
-                    empty(ui, if none.is_empty() { "No branches" } else { none });
-                }
-                let nodes = build_tree(local.iter().copied(), |b: &LocalBranch| b.name.as_str());
-                tree(
-                    ui,
-                    c,
-                    &nodes,
-                    "local",
-                    0,
-                    &mut |ui, c, b: &LocalBranch, name, depth| {
-                        let mut badges = Vec::new();
-                        let tooltip = match &b.upstream {
-                            Some(up) if up.gone => {
-                                badges.push(Badge {
-                                    text: "gone".into(),
-                                    colour: theme::muted(),
-                                });
-                                format!("{}\nUpstream {} is gone", b.name, up.name)
-                            }
-                            Some(up) => {
-                                if up.ahead > 0 {
-                                    badges.push(Badge {
-                                        text: format!("{} {}", icon::ARROW_UP, up.ahead),
-                                        colour: theme::add(),
-                                    });
-                                }
-                                if up.behind > 0 {
-                                    badges.push(Badge {
-                                        text: format!("{} {}", icon::ARROW_DOWN, up.behind),
-                                        colour: theme::modified(),
-                                    });
-                                }
-                                format!(
-                                    "{}\nTracking {}: {} ahead, {} behind",
-                                    b.name, up.name, up.ahead, up.behind
-                                )
-                            }
-                            None => format!("{}\nNo upstream", b.name),
-                        };
-                        let glyph = if b.is_head {
-                            icon::CHECK
-                        } else {
-                            icon::GIT_BRANCH
-                        };
-                        let response = row(
-                            ui,
-                            depth,
-                            glyph,
-                            name,
-                            &badges,
-                            c.selected == Some(b.target.as_str())
-                                || c.is_picked(&Picked::Local(b.name.clone())),
-                            b.is_head,
-                            &tooltip,
-                            b.is_head.then(|| {
-                                b.upstream
-                                    .as_ref()
-                                    .is_some_and(|u| !u.gone && u.ahead == 0 && u.behind == 0)
-                            }),
-                        );
-                        let me = Picked::Local(b.name.clone());
-                        if response.double_clicked() {
-                            c.action = Some(Action::Checkout(b.name.clone()));
-                        } else if c.pick(ui, &response, me.clone()) {
-                        } else if response.clicked() {
-                            c.action = Some(Action::Jump(b.target.clone()));
-                        }
-                        drag_source(&response, &b.name);
-                        if let Some(a) = drop_target(ui, &response, &b.name) {
-                            c.action = Some(a);
-                        }
-                        // On the forge, as its upstream.
-                        let page = b
-                            .upstream
-                            .as_ref()
-                            .filter(|u| !u.gone)
-                            .and_then(|u| web.branch(&u.name));
-                        response.context_menu(|ui| {
-                            if c.picked_menu(ui, &me, head) {
-                                return;
-                            }
-                            copy_name(ui, &b.name);
-                            web_items(ui, &mut c.action, page.as_ref());
-                            let items = local_branch_items(&b.name, &b.target, b.is_head, head);
-                            menu(ui, &mut c.action, items);
-                        });
-                    },
-                );
-            });
-        }
-
-        // Remotes.
-        let count = remotes.iter().map(|r| r.2.len()).sum();
-        let open = c.is_open("remotes");
-        let (toggled, add) = section_header(ui, "Remote", count, open, Some("Add remote"));
-        if toggled {
-            c.toggle("remotes");
-        }
-        if add {
-            c.action = Some(Action::EditRemote(None));
-        }
-        if open {
-            body(ui, &mut c, "remotes", "Remote", |ui, c| {
-                if remotes.is_empty() {
-                    empty(ui, if none.is_empty() { "No remotes" } else { none });
-                }
-                for (name, url, branches) in &remotes {
-                    let key = format!("remote:{name}");
-                    let open = c.is_open(&key);
-                    let response = folder_row(ui, 0, icon::CLOUD, name, open, url.unwrap_or(name));
-                    if response.clicked() {
-                        c.toggle(&key);
-                    }
-                    let page = web.remote_page(name);
-                    response.context_menu(|ui| {
-                        web_items(ui, &mut c.action, page.as_ref());
-                        let items = vec![
-                            ("Edit…", true, Action::EditRemote(Some((*name).to_string()))),
-                            ("Remove…", true, Action::RemoveRemote((*name).to_string())),
-                        ];
-                        menu(ui, &mut c.action, items);
-                    });
-                    if open {
-                        let nodes = build_tree(branches.iter().copied(), |b: &RemoteBranch| {
-                            b.name.as_str()
-                        });
-                        tree(
-                            ui,
-                            c,
-                            &nodes,
-                            &key,
-                            1,
-                            &mut |ui, c, b: &RemoteBranch, name, depth| {
-                                let response = row(
-                                    ui,
-                                    depth,
-                                    icon::GIT_BRANCH,
-                                    name,
-                                    &[],
-                                    c.selected == Some(b.target.as_str())
-                                        || c.is_picked(&Picked::Remote(b.full_name.clone())),
-                                    false,
-                                    &b.full_name,
-                                    None,
-                                );
-                                let me = Picked::Remote(b.full_name.clone());
-                                if response.double_clicked() {
-                                    c.action = Some(Action::CheckoutRemote(b.full_name.clone()));
-                                } else if c.pick(ui, &response, me.clone()) {
-                                } else if response.clicked() {
-                                    c.action = Some(Action::Jump(b.target.clone()));
-                                }
-                                drag_source(&response, &b.full_name);
-                                let page = web.branch(&b.full_name);
-                                response.context_menu(|ui| {
-                                    if c.picked_menu(ui, &me, head) {
-                                        return;
-                                    }
-                                    copy_name(ui, &b.full_name);
-                                    web_items(ui, &mut c.action, page.as_ref());
-                                    let items = remote_branch_items(&b.full_name, &b.target, head);
-                                    menu(ui, &mut c.action, items);
-                                });
-                            },
-                        );
-                    }
-                }
-            });
-        }
-
-        // The forge's pull/merge requests and issues.
-        if let Some(forge) = forge {
-            forge_sections(ui, &mut c, forge, &matches);
-        }
-
-        // Tags.
-        let open = c.is_open("tags");
-        if section_header(ui, "Tags", tags.len(), open, None).0 {
-            c.toggle("tags");
-        }
-        if open {
-            body(ui, &mut c, "tags", "Tags", |ui, c| {
-                if tags.is_empty() {
-                    empty(ui, if none.is_empty() { "No tags" } else { none });
-                }
-                for t in &tags {
-                    let tip = if t.annotated {
-                        format!("{} (annotated)", t.name)
-                    } else {
-                        t.name.clone()
-                    };
-                    let response = row(
-                        ui,
-                        0,
-                        icon::TAG,
-                        &t.name,
-                        &[],
-                        c.selected == Some(t.target.as_str()),
-                        false,
-                        &tip,
-                        None,
-                    );
-                    if response.clicked() {
-                        c.action = Some(Action::Jump(t.target.clone()));
-                    }
-                    let page = web.tag(&t.name);
-                    response.context_menu(|ui| {
-                        copy_name(ui, &t.name);
-                        web_items(ui, &mut c.action, page.as_ref());
-                        menu(ui, &mut c.action, tag_items(&t.name, &t.target));
-                    });
-                }
-            });
-        }
-
-        // Stashes.
-        let open = c.is_open("stashes");
-        if section_header(ui, "Stashes", stashes.len(), open, None).0 {
-            c.toggle("stashes");
-        }
-        if open {
-            body(ui, &mut c, "stashes", "Stashes", |ui, c| {
-                if stashes.is_empty() {
-                    empty(ui, if none.is_empty() { "No stashes" } else { none });
-                }
-                for s in &stashes {
-                    let tip = format!("stash@{{{}}}: {}", s.index, s.message);
-                    let response = row(
-                        ui,
-                        0,
-                        icon::STACK,
-                        &s.message,
-                        &[],
-                        c.selected == Some(s.target.as_str()),
-                        false,
-                        &tip,
-                        None,
-                    );
-                    if response.clicked() {
-                        c.action = Some(Action::Jump(s.target.clone()));
-                    }
-                    response.context_menu(|ui| {
-                        let items = vec![
-                            ("Apply", true, Action::StashApply(s.target.clone())),
-                            ("Pop", true, Action::StashPop(s.target.clone())),
-                            ("Delete…", true, Action::StashDrop(s.target.clone())),
-                        ];
-                        menu(ui, &mut c.action, items);
-                    });
-                }
-            });
-        }
-        // Worktrees.
-        let open = c.is_open("worktrees");
-        let (toggled, add) = section_header(
-            ui,
-            "Worktrees",
-            extras.worktrees.len(),
-            open,
-            Some("Add worktree"),
-        );
-        if toggled {
-            c.toggle("worktrees");
-        }
-        if add {
-            c.action = Some(Action::AddWorktree);
-        }
-        if open {
-            body(ui, &mut c, "worktrees", "Worktrees", |ui, c| {
-                for w in &extras.worktrees {
-                    let folder = std::path::Path::new(&w.path)
-                        .file_name()
-                        .map_or_else(|| w.path.clone(), |n| n.to_string_lossy().into_owned());
-                    let branch = w.branch.clone().unwrap_or_else(|| "detached".into());
-                    let mut badges = vec![Badge {
-                        text: branch,
-                        colour: theme::muted(),
-                    }];
-                    if w.missing {
-                        badges.push(Badge {
-                            text: "missing".into(),
-                            colour: theme::danger(),
-                        });
-                    }
-                    let tip = format!(
-                        "{}{}",
-                        w.path,
-                        if w.current { "\nThis worktree" } else { "" }
-                    );
-                    let glyph = if w.current {
-                        icon::CHECK
-                    } else {
-                        icon::FOLDER_SIMPLE
-                    };
-                    let response =
-                        row(ui, 0, glyph, &folder, &badges, false, w.current, &tip, None);
-                    if response.double_clicked() && !w.current {
-                        c.action = Some(Action::OpenPath(w.path.clone()));
-                    }
-                    response.context_menu(|ui| {
-                        let items = vec![
-                            (
-                                "Open in a tab",
-                                !w.current && !w.missing,
-                                Action::OpenPath(w.path.clone()),
-                            ),
-                            (
-                                "Open a terminal here",
-                                !w.missing,
-                                Action::Terminal(w.path.clone()),
-                            ),
-                            (
-                                "Remove…",
-                                !w.main && !w.current,
-                                Action::RemoveWorktree(w.path.clone()),
-                            ),
-                        ];
-                        menu(ui, &mut c.action, items);
-                    });
-                }
-            });
-        }
-
-        // Submodules, if there are any.
-        if !extras.submodules.is_empty() {
-            let open = c.is_open("submodules");
-            if section_header(ui, "Submodules", extras.submodules.len(), open, None).0 {
-                c.toggle("submodules");
+            // Local branches.
+            let open = c.is_open("local");
+            let (toggled, add) = section_header(
+                ui,
+                &mut c,
+                "local",
+                "Local",
+                local.len(),
+                open,
+                Some("New branch"),
+            );
+            if toggled {
+                c.toggle("local");
+            }
+            if add {
+                let label = head.map_or_else(|| "HEAD".to_string(), |b| format!("{b} (HEAD)"));
+                c.action = Some(Action::NewBranch {
+                    start: "HEAD".into(),
+                    label,
+                });
             }
             if open {
-                body(ui, &mut c, "submodules", "Submodules", |ui, c| {
-                    use git_raccoon_core::modules::SubmoduleState;
-                    for s in &extras.submodules {
-                        let (badge, colour, about) = match s.state {
-                            SubmoduleState::UpToDate => ("", theme::muted(), "Up to date"),
-                            SubmoduleState::Uninitialized => (
-                                "not cloned",
-                                theme::modified(),
-                                "Not cloned yet: update it to get its files",
-                            ),
-                            SubmoduleState::OtherCommit => (
-                                "other commit",
-                                theme::modified(),
-                                "A different commit is checked out than the one recorded here",
-                            ),
-                            SubmoduleState::Changed => {
-                                ("changed", theme::modified(), "It has uncommitted changes")
+                body(ui, &mut c, "local", "Local", |ui, c| {
+                    if local.is_empty() {
+                        empty(ui, if none.is_empty() { "No branches" } else { none });
+                    }
+                    let nodes =
+                        build_tree(local.iter().copied(), |b: &LocalBranch| b.name.as_str());
+                    tree(
+                        ui,
+                        c,
+                        &nodes,
+                        "local",
+                        0,
+                        &mut |ui, c, b: &LocalBranch, name, depth| {
+                            let mut badges = Vec::new();
+                            let tooltip = match &b.upstream {
+                                Some(up) if up.gone => {
+                                    badges.push(Badge {
+                                        text: "gone".into(),
+                                        colour: theme::muted(),
+                                    });
+                                    format!("{}\nUpstream {} is gone", b.name, up.name)
+                                }
+                                Some(up) => {
+                                    if up.ahead > 0 {
+                                        badges.push(Badge {
+                                            text: format!("{} {}", icon::ARROW_UP, up.ahead),
+                                            colour: theme::add(),
+                                        });
+                                    }
+                                    if up.behind > 0 {
+                                        badges.push(Badge {
+                                            text: format!("{} {}", icon::ARROW_DOWN, up.behind),
+                                            colour: theme::modified(),
+                                        });
+                                    }
+                                    format!(
+                                        "{}\nTracking {}: {} ahead, {} behind",
+                                        b.name, up.name, up.ahead, up.behind
+                                    )
+                                }
+                                None => format!("{}\nNo upstream", b.name),
+                            };
+                            let glyph = if b.is_head {
+                                icon::CHECK
+                            } else {
+                                icon::GIT_BRANCH
+                            };
+                            let response = row(
+                                ui,
+                                depth,
+                                glyph,
+                                name,
+                                &badges,
+                                c.selected == Some(b.target.as_str())
+                                    || c.is_picked(&Picked::Local(b.name.clone())),
+                                b.is_head,
+                                &tooltip,
+                                b.is_head.then(|| {
+                                    b.upstream
+                                        .as_ref()
+                                        .is_some_and(|u| !u.gone && u.ahead == 0 && u.behind == 0)
+                                }),
+                            );
+                            let me = Picked::Local(b.name.clone());
+                            if response.double_clicked() {
+                                c.action = Some(Action::Checkout(b.name.clone()));
+                            } else if c.pick(ui, &response, me.clone()) {
+                            } else if response.clicked() {
+                                c.action = Some(Action::Jump(b.target.clone()));
                             }
-                        };
-                        let badges: Vec<Badge> = if badge.is_empty() {
-                            Vec::new()
+                            drag_source(&response, &b.name);
+                            if let Some(a) = drop_target(ui, &response, &b.name) {
+                                c.action = Some(a);
+                            }
+                            // On the forge, as its upstream.
+                            let page = b
+                                .upstream
+                                .as_ref()
+                                .filter(|u| !u.gone)
+                                .and_then(|u| web.branch(&u.name));
+                            response.context_menu(|ui| {
+                                if c.picked_menu(ui, &me, head) {
+                                    return;
+                                }
+                                copy_name(ui, &b.name);
+                                web_items(ui, &mut c.action, page.as_ref());
+                                let items = local_branch_items(&b.name, &b.target, b.is_head, head);
+                                menu(ui, &mut c.action, items);
+                            });
+                        },
+                    );
+                });
+            }
+
+            // Remotes.
+            let count = remotes.iter().map(|r| r.2.len()).sum();
+            let open = c.is_open("remotes");
+            let (toggled, add) = section_header(
+                ui,
+                &mut c,
+                "remotes",
+                "Remote",
+                count,
+                open,
+                Some("Add remote"),
+            );
+            if toggled {
+                c.toggle("remotes");
+            }
+            if add {
+                c.action = Some(Action::EditRemote(None));
+            }
+            if open {
+                body(ui, &mut c, "remotes", "Remote", |ui, c| {
+                    if remotes.is_empty() {
+                        empty(ui, if none.is_empty() { "No remotes" } else { none });
+                    }
+                    for (name, url, branches) in &remotes {
+                        let key = format!("remote:{name}");
+                        let open = c.is_open(&key);
+                        let response =
+                            folder_row(ui, 0, icon::CLOUD, name, open, url.unwrap_or(name));
+                        if response.clicked() {
+                            c.toggle(&key);
+                        }
+                        let page = web.remote_page(name);
+                        response.context_menu(|ui| {
+                            web_items(ui, &mut c.action, page.as_ref());
+                            let items = vec![
+                                ("Edit…", true, Action::EditRemote(Some((*name).to_string()))),
+                                ("Remove…", true, Action::RemoveRemote((*name).to_string())),
+                            ];
+                            menu(ui, &mut c.action, items);
+                        });
+                        if open {
+                            let nodes = build_tree(branches.iter().copied(), |b: &RemoteBranch| {
+                                b.name.as_str()
+                            });
+                            tree(
+                                ui,
+                                c,
+                                &nodes,
+                                &key,
+                                1,
+                                &mut |ui, c, b: &RemoteBranch, name, depth| {
+                                    let response = row(
+                                        ui,
+                                        depth,
+                                        icon::GIT_BRANCH,
+                                        name,
+                                        &[],
+                                        c.selected == Some(b.target.as_str())
+                                            || c.is_picked(&Picked::Remote(b.full_name.clone())),
+                                        false,
+                                        &b.full_name,
+                                        None,
+                                    );
+                                    let me = Picked::Remote(b.full_name.clone());
+                                    if response.double_clicked() {
+                                        c.action =
+                                            Some(Action::CheckoutRemote(b.full_name.clone()));
+                                    } else if c.pick(ui, &response, me.clone()) {
+                                    } else if response.clicked() {
+                                        c.action = Some(Action::Jump(b.target.clone()));
+                                    }
+                                    drag_source(&response, &b.full_name);
+                                    let page = web.branch(&b.full_name);
+                                    response.context_menu(|ui| {
+                                        if c.picked_menu(ui, &me, head) {
+                                            return;
+                                        }
+                                        copy_name(ui, &b.full_name);
+                                        web_items(ui, &mut c.action, page.as_ref());
+                                        let items =
+                                            remote_branch_items(&b.full_name, &b.target, head);
+                                        menu(ui, &mut c.action, items);
+                                    });
+                                },
+                            );
+                        }
+                    }
+                });
+            }
+
+            // The forge's pull/merge requests and issues.
+            if let Some(forge) = forge {
+                forge_sections(ui, &mut c, forge, &matches);
+            }
+
+            // Tags.
+            let open = c.is_open("tags");
+            if section_header(ui, &mut c, "tags", "Tags", tags.len(), open, None).0 {
+                c.toggle("tags");
+            }
+            if open {
+                body(ui, &mut c, "tags", "Tags", |ui, c| {
+                    if tags.is_empty() {
+                        empty(ui, if none.is_empty() { "No tags" } else { none });
+                    }
+                    for t in &tags {
+                        let tip = if t.annotated {
+                            format!("{} (annotated)", t.name)
                         } else {
-                            vec![Badge {
-                                text: badge.into(),
-                                colour,
-                            }]
+                            t.name.clone()
                         };
-                        let tip = format!(
-                            "{}\n{}{}",
-                            s.path,
-                            about,
-                            s.url
-                                .as_deref()
-                                .map(|u| format!("\n{u}"))
-                                .unwrap_or_default()
-                        );
-                        let full = std::path::Path::new(root)
-                            .join(&s.path)
-                            .to_string_lossy()
-                            .into_owned();
-                        let cloned = s.state != SubmoduleState::Uninitialized;
                         let response = row(
                             ui,
                             0,
-                            icon::PACKAGE,
-                            &s.path,
-                            &badges,
-                            false,
+                            icon::TAG,
+                            &t.name,
+                            &[],
+                            c.selected == Some(t.target.as_str()),
                             false,
                             &tip,
                             None,
                         );
-                        if response.double_clicked() && cloned {
-                            c.action = Some(Action::OpenPath(full.clone()));
+                        if response.clicked() {
+                            c.action = Some(Action::Jump(t.target.clone()));
+                        }
+                        let page = web.tag(&t.name);
+                        response.context_menu(|ui| {
+                            copy_name(ui, &t.name);
+                            web_items(ui, &mut c.action, page.as_ref());
+                            menu(ui, &mut c.action, tag_items(&t.name, &t.target));
+                        });
+                    }
+                });
+            }
+
+            // Stashes.
+            let open = c.is_open("stashes");
+            if section_header(ui, &mut c, "stashes", "Stashes", stashes.len(), open, None).0 {
+                c.toggle("stashes");
+            }
+            if open {
+                body(ui, &mut c, "stashes", "Stashes", |ui, c| {
+                    if stashes.is_empty() {
+                        empty(ui, if none.is_empty() { "No stashes" } else { none });
+                    }
+                    for s in &stashes {
+                        let tip = format!("stash@{{{}}}: {}", s.index, s.message);
+                        let response = row(
+                            ui,
+                            0,
+                            icon::STACK,
+                            &s.message,
+                            &[],
+                            c.selected == Some(s.target.as_str()),
+                            false,
+                            &tip,
+                            None,
+                        );
+                        if response.clicked() {
+                            c.action = Some(Action::Jump(s.target.clone()));
                         }
                         response.context_menu(|ui| {
                             let items = vec![
-                                ("Open in a tab", cloned, Action::OpenPath(full.clone())),
+                                ("Apply", true, Action::StashApply(s.target.clone())),
+                                ("Pop", true, Action::StashPop(s.target.clone())),
+                                ("Delete…", true, Action::StashDrop(s.target.clone())),
+                            ];
+                            menu(ui, &mut c.action, items);
+                        });
+                    }
+                });
+            }
+            // Worktrees.
+            let open = c.is_open("worktrees");
+            let (toggled, add) = section_header(
+                ui,
+                &mut c,
+                "worktrees",
+                "Worktrees",
+                extras.worktrees.len(),
+                open,
+                Some("Add worktree"),
+            );
+            if toggled {
+                c.toggle("worktrees");
+            }
+            if add {
+                c.action = Some(Action::AddWorktree);
+            }
+            if open {
+                body(ui, &mut c, "worktrees", "Worktrees", |ui, c| {
+                    for w in &extras.worktrees {
+                        let folder = std::path::Path::new(&w.path)
+                            .file_name()
+                            .map_or_else(|| w.path.clone(), |n| n.to_string_lossy().into_owned());
+                        let branch = w.branch.clone().unwrap_or_else(|| "detached".into());
+                        let mut badges = vec![Badge {
+                            text: branch,
+                            colour: theme::muted(),
+                        }];
+                        if w.missing {
+                            badges.push(Badge {
+                                text: "missing".into(),
+                                colour: theme::danger(),
+                            });
+                        }
+                        let tip = format!(
+                            "{}{}",
+                            w.path,
+                            if w.current { "\nThis worktree" } else { "" }
+                        );
+                        let glyph = if w.current {
+                            icon::CHECK
+                        } else {
+                            icon::FOLDER_SIMPLE
+                        };
+                        let response =
+                            row(ui, 0, glyph, &folder, &badges, false, w.current, &tip, None);
+                        if response.double_clicked() && !w.current {
+                            c.action = Some(Action::OpenPath(w.path.clone()));
+                        }
+                        response.context_menu(|ui| {
+                            let items = vec![
                                 (
-                                    if cloned { "Update" } else { "Clone and update" },
-                                    true,
-                                    Action::UpdateSubmodule(s.path.clone()),
+                                    "Open in a tab",
+                                    !w.current && !w.missing,
+                                    Action::OpenPath(w.path.clone()),
                                 ),
                                 (
                                     "Open a terminal here",
-                                    cloned,
-                                    Action::Terminal(full.clone()),
+                                    !w.missing,
+                                    Action::Terminal(w.path.clone()),
+                                ),
+                                (
+                                    "Remove…",
+                                    !w.main && !w.current,
+                                    Action::RemoveWorktree(w.path.clone()),
                                 ),
                             ];
                             menu(ui, &mut c.action, items);
                         });
                     }
                 });
+            }
+
+            // Submodules, if there are any.
+            if !extras.submodules.is_empty() {
+                let open = c.is_open("submodules");
+                if section_header(
+                    ui,
+                    &mut c,
+                    "submodules",
+                    "Submodules",
+                    extras.submodules.len(),
+                    open,
+                    None,
+                )
+                .0
+                {
+                    c.toggle("submodules");
+                }
+                if open {
+                    body(ui, &mut c, "submodules", "Submodules", |ui, c| {
+                        use git_raccoon_core::modules::SubmoduleState;
+                        for s in &extras.submodules {
+                            let (badge, colour, about) = match s.state {
+                                SubmoduleState::UpToDate => ("", theme::muted(), "Up to date"),
+                                SubmoduleState::Uninitialized => (
+                                    "not cloned",
+                                    theme::modified(),
+                                    "Not cloned yet: update it to get its files",
+                                ),
+                                SubmoduleState::OtherCommit => (
+                                    "other commit",
+                                    theme::modified(),
+                                    "A different commit is checked out than the one recorded here",
+                                ),
+                                SubmoduleState::Changed => {
+                                    ("changed", theme::modified(), "It has uncommitted changes")
+                                }
+                            };
+                            let badges: Vec<Badge> = if badge.is_empty() {
+                                Vec::new()
+                            } else {
+                                vec![Badge {
+                                    text: badge.into(),
+                                    colour,
+                                }]
+                            };
+                            let tip = format!(
+                                "{}\n{}{}",
+                                s.path,
+                                about,
+                                s.url
+                                    .as_deref()
+                                    .map(|u| format!("\n{u}"))
+                                    .unwrap_or_default()
+                            );
+                            let full = std::path::Path::new(root)
+                                .join(&s.path)
+                                .to_string_lossy()
+                                .into_owned();
+                            let cloned = s.state != SubmoduleState::Uninitialized;
+                            let response = row(
+                                ui,
+                                0,
+                                icon::PACKAGE,
+                                &s.path,
+                                &badges,
+                                false,
+                                false,
+                                &tip,
+                                None,
+                            );
+                            if response.double_clicked() && cloned {
+                                c.action = Some(Action::OpenPath(full.clone()));
+                            }
+                            response.context_menu(|ui| {
+                                let items = vec![
+                                    ("Open in a tab", cloned, Action::OpenPath(full.clone())),
+                                    (
+                                        if cloned { "Update" } else { "Clone and update" },
+                                        true,
+                                        Action::UpdateSubmodule(s.path.clone()),
+                                    ),
+                                    (
+                                        "Open a terminal here",
+                                        cloned,
+                                        Action::Terminal(full.clone()),
+                                    ),
+                                ];
+                                menu(ui, &mut c.action, items);
+                            });
+                        }
+                    });
+                }
             }
         }
     });
@@ -1551,7 +1735,7 @@ pub fn show(
     ui.data_mut(|d| {
         d.insert_temp(picked_id, c.picked.clone());
         d.insert_temp(measured_id, c.sizes.measured.clone());
-        d.insert_persisted(set_id, c.sizes.set.clone());
+        d.insert_persisted(shares_id, c.sizes.shares.clone());
     });
     c.action
 }

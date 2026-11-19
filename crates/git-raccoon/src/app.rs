@@ -1814,6 +1814,7 @@ impl App {
                 .show(ui, |ui| {
                     let selected = repo.selected.as_ref().map(|s| s.id.clone());
                     let root = repo.path().to_string();
+                    let hidden = self.settings.sidebar_hidden.clone();
                     sidebar::show(
                         ui,
                         &repo.refs,
@@ -1825,6 +1826,7 @@ impl App {
                             selected: selected.as_deref(),
                             forge: repo.forge.as_ref(),
                             web: &repo.web,
+                            hidden: &hidden,
                         },
                     )
                 })
@@ -1856,6 +1858,15 @@ impl App {
                         self.error = Some(format!("Could not open a terminal: {why}."));
                     }
                 }
+                Some(sidebar::Action::ToggleSection(key)) => {
+                    let hidden = &mut self.settings.sidebar_hidden;
+                    if let Some(at) = hidden.iter().position(|h| *h == key) {
+                        hidden.remove(at);
+                    } else {
+                        hidden.push(key);
+                    }
+                }
+                Some(sidebar::Action::ShowAllSections) => self.settings.sidebar_hidden.clear(),
                 Some(action) => repo_action(repo, &ctx, action),
                 None => {}
             }
@@ -2406,6 +2417,8 @@ fn repo_action(repo: &mut RepoView, ctx: &egui::Context, action: sidebar::Action
         | sidebar::Action::OpenIssue(_)
         | sidebar::Action::SignInToForge
         | sidebar::Action::NewRequest
+        | sidebar::Action::ToggleSection(_)
+        | sidebar::Action::ShowAllSections
         | sidebar::Action::Terminal(_) => {}
     }
 }

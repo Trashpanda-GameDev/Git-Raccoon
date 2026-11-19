@@ -179,6 +179,9 @@ pub struct Settings {
     /// The command that opens a terminal ("{path}" is the folder); empty
     /// for the system's own.
     pub terminal: String,
+    /// Sidebar sections not shown (by key: "local", "remotes", "requests",
+    /// "issues", "tags", "stashes", "worktrees", "submodules").
+    pub sidebar_hidden: Vec<String>,
     /// Which defaults these settings were saved with (see `upgrade`):
     /// 0 when missing, from a version before there was this field.
     #[serde(default)]
@@ -350,6 +353,7 @@ impl Default for Settings {
             accounts: Vec::new(),
             file_tree: false,
             terminal: String::new(),
+            sidebar_hidden: Vec::new(),
             columns: Column::ALL.to_vec(),
             themes: Vec::new(),
             branch_lines: BranchLines::default(),

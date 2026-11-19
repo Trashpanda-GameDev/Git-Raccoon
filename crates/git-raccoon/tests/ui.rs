@@ -1863,6 +1863,75 @@ fn sidebar_sections_scroll_on_their_own_and_resize() {
 }
 
 #[test]
+fn sidebar_sections_share_the_height_and_collapse_to_the_bottom() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    settle(&mut h);
+    let bottom = h.ctx.content_rect().bottom();
+    let top = |h: &Harness<'_, App>, s: &str| h.get_by_label(s).rect().top();
+    // A handle moves just the line between its two sections.
+    let (remote, tags, stashes) = (top(&h, "Remote"), top(&h, "Tags"), top(&h, "Stashes"));
+    let handle = h.get_by_label("Resize Local").rect().center();
+    drag(&mut h, handle, handle - egui::vec2(0.0, 60.0));
+    settle(&mut h);
+    assert!(top(&h, "Remote") < remote - 40.0, "Remote moved up");
+    assert_eq!(top(&h, "Tags"), tags, "Tags stayed");
+    assert_eq!(top(&h, "Stashes"), stashes, "Stashes stayed");
+    // A collapsed section goes to the bottom, and the open ones fill the
+    // space it leaves.
+    h.get_by_label("Tags").click();
+    settle(&mut h);
+    let worktrees = h.get_by_label("Worktrees").rect();
+    let tags = h.get_by_label("Tags").rect();
+    assert!(tags.top() > worktrees.top(), "Tags is below Worktrees");
+    assert!(
+        bottom - tags.bottom() < 12.0,
+        "Tags at the bottom: {tags:?}"
+    );
+    // With them all collapsed, every heading sits at the bottom.
+    for s in ["Local", "Remote", "Stashes", "Worktrees"] {
+        h.get_by_label(s).click();
+        settle(&mut h);
+    }
+    let local = h.get_by_label("Local").rect();
+    assert!(
+        local.top() > bottom - 6.0 * 30.0,
+        "Local at the bottom: {local:?}"
+    );
+    let last = h.get_by_label("Worktrees").rect();
+    assert!(
+        (bottom - last.bottom()).abs() < 1.0,
+        "flush with the bottom: {last:?}"
+    );
+    screenshot(&mut h, "71-sidebar-collapsed");
+}
+
+#[test]
+fn sidebar_sections_can_be_hidden() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    settle(&mut h);
+    // Right-click a heading, and untick Tags.
+    h.get_by_label("Stashes").click_secondary();
+    h.run_ok();
+    h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Tags")
+        .click();
+    settle(&mut h);
+    assert!(h.query_by_label("Tags").is_none(), "Tags is hidden");
+    assert_eq!(
+        h.state().settings().sidebar_hidden,
+        vec!["tags".to_string()]
+    );
+    // And back.
+    menu_item(&mut h, "Local", "Show all sections");
+    settle(&mut h);
+    assert!(h.query_by_label("Tags").is_some(), "Tags is back");
+    assert!(h.state().settings().sidebar_hidden.is_empty());
+}
+
+#[test]
 fn the_side_panels_are_as_wide_as_you_drag_them() {
     let sample = Sample::build();
     let mut h = harness(Settings::default());

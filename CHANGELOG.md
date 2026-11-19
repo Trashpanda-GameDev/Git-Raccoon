@@ -5,6 +5,8 @@ release page). Newest first; a version's heading is just its number.
 
 ## 0.5.15
 
+- **Sidebar sections fit together**: the open sections always fill the sidebar between them, and a clear line between two sections drags just that boundary (if the neighbour is as small as it goes, the next one gives way), so no section gets stuck. A collapsed section's heading moves to the bottom, and its space goes to the others; open it again and it gets its share back. Double-click a line to share the space by what's in each again. Sizes are remembered.
+- **Hide sidebar sections you don't use**: right-click any section heading to turn sections on or off (pull or merge requests, issues, tags…), or *Show all sections* to bring them back. The same switches are in Settings › Appearance › Sidebar.
 - **Copy a branch's or tag's name** from its right-click menu, in the sidebar or on the graph (a remote branch copies as `origin/feature`).
 - **Easier-to-read buttons**: the text on orange buttons in the Raccoon look (and on any look's accent-coloured buttons, your own themes too) now always reads at 4.5:1 or better: the button's colour is deepened just enough. Links and highlights keep the brighter colour, which stands out better on the background.
 

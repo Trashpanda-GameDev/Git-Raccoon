@@ -179,7 +179,7 @@ const ROWS: &[Row] = &[
         section: Section::Appearance,
         name: "Sidebar",
         hint: "Ctrl+B shows or hides it.",
-        words: "panel left branches show hide",
+        words: "panel left branches show hide sections tags stashes worktrees requests issues submodules remotes",
     },
     Row {
         section: Section::Appearance,
@@ -1217,6 +1217,17 @@ fn control(
             let mut shown = !settings.hide_sidebar;
             ui.checkbox(&mut shown, "Show the sidebar");
             settings.hide_sidebar = !shown;
+            ui.add_space(6.0);
+            hint(ui, "Its sections (or right-click one's heading):");
+            for (key, name) in crate::ui::sidebar::SECTIONS {
+                let mut on = !settings.sidebar_hidden.iter().any(|h| h == key);
+                if ui.checkbox(&mut on, *name).changed() {
+                    settings.sidebar_hidden.retain(|h| h != key);
+                    if !on {
+                        settings.sidebar_hidden.push((*key).to_string());
+                    }
+                }
+            }
         }
         "Graph columns" => {
             let usual = settings.columns == crate::settings::Column::ALL
