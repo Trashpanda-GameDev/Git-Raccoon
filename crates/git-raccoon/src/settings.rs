@@ -143,6 +143,8 @@ pub struct Settings {
     /// Which of them was showing.
     pub active_tab: usize,
     pub split_diff: bool,
+    /// Diffs show the whole file, not just the changes and a few lines around them.
+    pub whole_file: bool,
     /// How Fetch goes: pruning remote branches deleted there, and letting
     /// fetched refs overwrite local ones.
     pub fetch_prune: bool,
@@ -340,6 +342,7 @@ impl Default for Settings {
             open_tabs: Vec::new(),
             active_tab: 0,
             split_diff: false,
+            whole_file: false,
             fetch_prune: true,
             fetch_force: false,
             pull: PullOptions::default(),

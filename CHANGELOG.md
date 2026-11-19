@@ -5,6 +5,7 @@ release page). Newest first; a version's heading is just its number.
 
 ## 0.5.15
 
+- **See the whole file in a diff**: **Whole file** (next to Unified and Split) shows every line of the file with the changes marked in place, instead of just the changes and a few lines around them. It opens at the first change, and is remembered (also in Settings › Git › Diffs and the command palette). Staging hunks and lines works the same.
 - **Sidebar sections fit together**: the open sections always fill the sidebar between them, and a clear line between two sections drags just that boundary (if the neighbour is as small as it goes, the next one gives way), so no section gets stuck. A collapsed section's heading moves to the bottom, and its space goes to the others; open it again and it gets its share back. Double-click a line to share the space by what's in each again. Sizes are remembered.
 - **Hide sidebar sections you don't use**: right-click any section heading to turn sections on or off (pull or merge requests, issues, tags…), or *Show all sections* to bring them back. The same switches are in Settings › Appearance › Sidebar.
 - **Copy a branch's or tag's name** from its right-click menu, in the sidebar or on the graph (a remote branch copies as `origin/feature`).

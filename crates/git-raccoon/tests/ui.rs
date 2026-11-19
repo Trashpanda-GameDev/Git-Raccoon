@@ -1932,6 +1932,88 @@ fn sidebar_sections_can_be_hidden() {
 }
 
 #[test]
+fn hunks_stage_from_the_whole_file() {
+    let sample = Sample::build();
+    sample.write("notes.txt", numbered(|_| None));
+    sample.commit("Add notes", 1);
+    let mut h = harness(Settings {
+        whole_file: true,
+        ..Settings::default()
+    });
+    open(&mut h, sample.path());
+    sample.write(
+        "notes.txt",
+        numbered(|i| match i {
+            2 => Some("line 2 edited"),
+            18 => Some("line 18 edited"),
+            _ => None,
+        }),
+    );
+    wait_for(&mut h, "the change", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.unstaged.len() == 1)
+    });
+    h.get_by_label("Working changes").click();
+    settle(&mut h);
+    h.get_by_label("notes.txt").click();
+    settle(&mut h);
+    assert_eq!(h.get_all_by_label("Stage hunk").count(), 2);
+    h.get_all_by_label("Stage hunk").nth(1).unwrap().click();
+    wait_for(&mut h, "the second hunk staged", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.staged.len() == 1)
+    });
+    assert_eq!(
+        staged(&sample, "notes.txt").unwrap(),
+        numbered(|i| (i == 18).then_some("line 18 edited"))
+    );
+}
+
+#[test]
+fn a_diff_can_show_the_whole_file() {
+    let sample = Sample::build();
+    let file = Path::new(sample.path()).join("long.txt");
+    let old: String = (1..=200).map(|n| format!("line {n}\n")).collect();
+    std::fs::write(&file, &old).unwrap();
+    git(&sample, &["add", "long.txt"]);
+    git(&sample, &["commit", "-qm", "Add a long file"]);
+    std::fs::write(&file, old.replace("line 150\n", "line 150, changed\n")).unwrap();
+    git(&sample, &["commit", "-qam", "Change line 150"]);
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    settle(&mut h);
+    h.get_by_label("Change line 150").click();
+    settle(&mut h);
+    h.get_by_label("long.txt").click();
+    settle(&mut h);
+    let rows = |h: &Harness<'_, App>| {
+        let repo = h.state().repo().unwrap();
+        let key = repo.diff_key().unwrap();
+        match repo.diff.get(&key) {
+            Some(Ok(d)) => d.unified.len(),
+            _ => 0,
+        }
+    };
+    // Just the change: a header, three lines either side, and the change.
+    assert_eq!(rows(&h), 9);
+    h.get_by_label("Whole file").click();
+    settle(&mut h);
+    assert!(h.state().settings().whole_file, "remembered");
+    // Every line, with the changed one twice (before and after), no header.
+    assert_eq!(rows(&h), 201);
+    screenshot(&mut h, "72-whole-file");
+    h.get_by_label("Changes").click();
+    settle(&mut h);
+    assert_eq!(rows(&h), 9);
+}
+
+#[test]
 fn the_side_panels_are_as_wide_as_you_drag_them() {
     let sample = Sample::build();
     let mut h = harness(Settings::default());

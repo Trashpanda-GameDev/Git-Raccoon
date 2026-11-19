@@ -314,6 +314,60 @@ pub(crate) fn stored_blob(repo: &Repository, side: &git2::DiffFile) -> Result<Op
     Ok(Some(BlobData { size, bytes }))
 }
 
+/// The file's unchanged lines that a diff leaves out, for showing the
+/// whole file: before each hunk, and after the last (`hunks + 1` runs).
+/// `old` is the file before the change. Empty when the diff was cut short.
+pub fn unchanged_around(diff: &FileDiff, old: &[u8]) -> Vec<Vec<DiffLine>> {
+    if diff.truncated || diff.binary {
+        return Vec::new();
+    }
+    let text = String::from_utf8_lossy(old);
+    let lines: Vec<&str> = text.lines().collect();
+    let total = i64::try_from(lines.len()).unwrap_or(i64::MAX);
+    let run = |from: i64, to: i64, offset: i64| -> Vec<DiffLine> {
+        (from.max(1)..to.min(total + 1))
+            .map(|n| DiffLine {
+                kind: LineKind::Context,
+                old_line: u32::try_from(n).ok(),
+                new_line: u32::try_from(n + offset).ok(),
+                content: usize::try_from(n - 1)
+                    .ok()
+                    .and_then(|i| lines.get(i))
+                    .map(|l| (*l).to_string())
+                    .unwrap_or_default(),
+            })
+            .collect()
+    };
+    // The next old line not yet shown, and how far new numbers are ahead.
+    let (mut next, mut offset) = (1_i64, 0_i64);
+    let mut runs = Vec::with_capacity(diff.hunks.len() + 1);
+    for hunk in &diff.hunks {
+        let Some(((a, b), (c, d))) = ranges(&hunk.header) else {
+            return Vec::new();
+        };
+        // An empty range names the line before it.
+        let old_start = if b == 0 { a + 1 } else { a };
+        let new_start = if d == 0 { c + 1 } else { c };
+        runs.push(run(next, old_start, offset));
+        next = old_start + b;
+        offset = new_start + d - next;
+    }
+    runs.push(run(next, total + 1, offset));
+    runs
+}
+
+/// A hunk header's old and new ranges, as (start, count).
+fn ranges(header: &str) -> Option<((i64, i64), (i64, i64))> {
+    let mut parts = header.strip_prefix("@@ ")?.split(' ');
+    let range = |s: &str| -> Option<(i64, i64)> {
+        let (start, count) = s.split_once(',').unwrap_or((s, "1"));
+        Some((start.parse().ok()?, count.parse().ok()?))
+    };
+    let old = range(parts.next()?.strip_prefix('-')?)?;
+    let new = range(parts.next()?.strip_prefix('+')?)?;
+    Some((old, new))
+}
+
 fn header_of(hunk: &git2::DiffHunk) -> String {
     String::from_utf8_lossy(hunk.header())
         .trim_end()
@@ -324,6 +378,44 @@ fn header_of(hunk: &git2::DiffHunk) -> String {
 mod tests {
     use super::*;
     use crate::testutil::TempRepo;
+
+    #[test]
+    fn fills_in_the_whole_file_around_the_changes() {
+        let old: String = (1..=20).map(|n| format!("line {n}\n")).collect();
+        let new = old
+            .replace("line 5\n", "line 5\nadded\n")
+            .replace("line 15\n", "");
+        let repo = TempRepo::new();
+        repo.write("f.txt", &old);
+        repo.commit_all("one");
+        repo.write("f.txt", &new);
+        let id = repo.commit_all("two").to_string();
+        let diff = file_diff(repo.path(), &id, "f.txt").unwrap();
+        let runs = unchanged_around(&diff, old.as_bytes());
+        assert_eq!(runs.len(), diff.hunks.len() + 1);
+        // Every line of both versions, once, in order, numbered right.
+        let mut all: Vec<&DiffLine> = Vec::new();
+        for (i, run) in runs.iter().enumerate() {
+            all.extend(run);
+            if let Some(h) = diff.hunks.get(i) {
+                all.extend(&h.lines);
+            }
+        }
+        let old_side: Vec<&str> = all
+            .iter()
+            .filter(|l| l.kind != LineKind::Add)
+            .map(|l| l.content.as_str())
+            .collect();
+        let new_side: Vec<&str> = all
+            .iter()
+            .filter(|l| l.kind != LineKind::Delete)
+            .map(|l| l.content.as_str())
+            .collect();
+        assert_eq!(old_side, old.lines().collect::<Vec<_>>());
+        assert_eq!(new_side, new.lines().collect::<Vec<_>>());
+        let last = runs.last().unwrap().last().unwrap();
+        assert_eq!((last.old_line, last.new_line), (Some(20), Some(20)));
+    }
 
     #[test]
     fn root_commit_lists_every_file_as_added() {

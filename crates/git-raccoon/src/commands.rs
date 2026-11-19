@@ -19,6 +19,7 @@ pub enum Command {
     Find,
     ToggleSidebar,
     ToggleSplitDiff,
+    ToggleWholeFile,
     ZoomIn,
     ZoomOut,
     ZoomReset,
@@ -102,6 +103,7 @@ pub const SHORTCUTS: &[(Command, Option<KeyboardShortcut>)] = &[
         Some(KeyboardShortcut::new(CTRL, Key::B)),
     ),
     (Command::ToggleSplitDiff, None),
+    (Command::ToggleWholeFile, None),
     (Command::Undo, Some(KeyboardShortcut::new(CTRL, Key::Z))),
     (
         Command::ZoomIn,

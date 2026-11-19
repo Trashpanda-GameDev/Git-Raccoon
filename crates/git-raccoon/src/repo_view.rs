@@ -124,7 +124,8 @@ pub enum Source {
     Working(Side),
 }
 
-pub type DiffKey = (Source, String);
+/// A diff: where from, the file, and whether it's the whole file.
+pub type DiffKey = (Source, String, bool);
 
 /// The commit message being written.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -1237,6 +1238,8 @@ pub struct RepoView {
     pub active_side: Side,
     /// Lines picked in the open working diff, as (hunk, line).
     pub picked: std::collections::BTreeSet<(usize, usize)>,
+    /// Diffs show the whole file (from the settings).
+    pub whole_file: bool,
     pub draft: CommitDraft,
     /// Working files picked together (Ctrl+click, Shift+click).
     pub file_selection: crate::ui::working::FileSelection,
@@ -1329,6 +1332,7 @@ impl RepoView {
             active_file: None,
             active_side: Side::Unstaged,
             picked: std::collections::BTreeSet::new(),
+            whole_file: false,
             pick_anchor: None,
             op: None,
             dialog: None,
@@ -1367,9 +1371,13 @@ impl RepoView {
     pub fn diff_key(&self) -> Option<DiffKey> {
         let file = self.active_file.clone()?;
         if self.working_selected {
-            Some((Source::Working(self.active_side), file))
+            Some((Source::Working(self.active_side), file, self.whole_file))
         } else {
-            Some((Source::Commit(self.selected.as_ref()?.id.clone()), file))
+            Some((
+                Source::Commit(self.selected.as_ref()?.id.clone()),
+                file,
+                self.whole_file,
+            ))
         }
     }
 
@@ -2510,7 +2518,10 @@ impl RepoView {
             side: self.active_side,
             file: self.active_file.clone()?,
             pick,
-            headers: diff.diff.hunks.iter().map(|h| h.header.clone()).collect(),
+            headers: diff.diff.hunks[..diff.changes]
+                .iter()
+                .map(|h| h.header.clone())
+                .collect(),
         })
     }
 
@@ -2661,18 +2672,33 @@ impl RepoView {
         if let Some(key) = self.diff_key() {
             // Working diffs change as files are edited: reload with each status.
             let path = self.path().to_string();
-            self.diff.want(ctx, &key, move |(source, file)| {
-                match source {
-                    Source::Commit(id) => details::file_diff(&path, &id, &file),
-                    Source::Working(side) => working::working_diff(&path, side, &file),
+            self.diff.want(ctx, &key, move |(source, file, whole)| {
+                let diff = match &source {
+                    Source::Commit(id) => details::file_diff(&path, id, &file),
+                    Source::Working(side) => working::working_diff(&path, *side, &file),
                 }
-                .map(|d| Arc::new(RenderedDiff::new(d)))
-                .map_err(|e| e.to_string())
+                .map_err(|e| e.to_string())?;
+                if !whole {
+                    return Ok(Arc::new(RenderedDiff::new(diff)));
+                }
+                // The file before the change, for the lines around it.
+                let before = match &source {
+                    Source::Commit(id) => details::file_blobs(&path, id, &file),
+                    Source::Working(side) => working::working_blobs(&path, *side, &file),
+                }
+                .ok()
+                .and_then(|b| b.old)
+                .and_then(|b| b.bytes)
+                .unwrap_or_default();
+                let runs = details::unchanged_around(&diff, &before);
+                // Working diffs keep their hunk headers, for staging.
+                let headers = matches!(source, Source::Working(_));
+                Ok(Arc::new(RenderedDiff::whole(diff, runs, headers)))
             });
             if crate::images::is_image(&key.1) {
                 let path = self.path().to_string();
                 let ctx2 = ctx.clone();
-                self.images.want(ctx, &key, move |(source, file)| {
+                self.images.want(ctx, &key, move |(source, file, _)| {
                     match source {
                         Source::Commit(id) => details::file_blobs(&path, &id, &file),
                         Source::Working(side) => working::working_blobs(&path, side, &file),

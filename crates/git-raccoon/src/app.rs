@@ -858,6 +858,7 @@ impl App {
             | Command::Find
             | Command::ToggleSidebar
             | Command::ToggleSplitDiff
+            | Command::ToggleWholeFile
             | Command::ZoomIn
             | Command::ZoomOut
             | Command::ZoomReset
@@ -955,6 +956,10 @@ impl App {
             Command::ToggleSplitDiff,
             "Switch diffs between unified and side by side".into(),
         );
+        add(
+            Command::ToggleWholeFile,
+            "Show the whole file in diffs, or just the changes".into(),
+        );
         add(Command::CloseRepo, "Close repository".into());
         for b in &repo.refs.local {
             if !b.is_head {
@@ -1034,6 +1039,7 @@ impl App {
             Command::CloseRepo => self.close(ctx),
             Command::ToggleSidebar => self.settings.hide_sidebar = !self.settings.hide_sidebar,
             Command::ToggleSplitDiff => self.settings.split_diff = !self.settings.split_diff,
+            Command::ToggleWholeFile => self.settings.whole_file = !self.settings.whole_file,
             Command::ZoomIn => self.settings.zoom_step(true),
             Command::ZoomOut => self.settings.zoom_step(false),
             Command::ZoomReset => self.settings.zoom = None,
@@ -1105,7 +1111,7 @@ impl App {
                         };
                         if repo.file_view.is_some() {
                             repo.set_file_mode(ctx, mode);
-                        } else if let Some((source, file)) = repo.diff_key() {
+                        } else if let Some((source, file, _)) = repo.diff_key() {
                             let at = match source {
                                 Source::Commit(id) => Some(id),
                                 Source::Working(_) => None,
@@ -2032,12 +2038,13 @@ impl App {
                             repo.diff.get(&key),
                             repo.diff.is_loading(),
                             None,
-                            self.settings.split_diff,
+                            (self.settings.split_diff, self.settings.whole_file),
                             None,
                             false,
                         );
                         match shown {
                             Some(diff::Action::SetSplit(s)) => self.settings.split_diff = s,
+                            Some(diff::Action::SetWhole(w)) => self.settings.whole_file = w,
                             Some(diff::Action::Close) => repo.active_file = None,
                             _ => {}
                         }
@@ -2113,7 +2120,7 @@ impl App {
                         repo.diff.get(&key),
                         repo.diff.is_loading(),
                         images,
-                        self.settings.split_diff,
+                        (self.settings.split_diff, self.settings.whole_file),
                         staging.as_ref(),
                         true,
                     );
@@ -2132,6 +2139,7 @@ impl App {
                             repo.show_file(&ctx, file.clone(), at, mode);
                         }
                         Some(diff::Action::SetSplit(s)) => self.settings.split_diff = s,
+                        Some(diff::Action::SetWhole(w)) => self.settings.whole_file = w,
                         Some(diff::Action::StageHunk(h)) => repo.stage_hunk(&ctx, h),
                         Some(diff::Action::ToggleLine { hunk, line, extend }) => {
                             repo.toggle_pick(hunk, line, extend)
@@ -2209,6 +2217,7 @@ impl eframe::App for App {
         }
         self.poll_clone(ctx);
         if let Some(repo) = &mut self.repo {
+            repo.whole_file = self.settings.whole_file;
             repo.poll(ctx);
             if let Some(e) = repo.refresh_error.take() {
                 self.error = Some(e);

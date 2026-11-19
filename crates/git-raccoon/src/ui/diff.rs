@@ -25,6 +25,8 @@ pub enum Action {
     History,
     Blame,
     SetSplit(bool),
+    /// Show the whole file, or just the changes.
+    SetWhole(bool),
     /// Stage (or unstage) a whole hunk.
     StageHunk(usize),
     /// Pick or unpick a line; `extend` picks the range from the last pick.
@@ -65,7 +67,8 @@ pub fn show(
     diff: Option<&Result<Arc<RenderedDiff>, String>>,
     loading: bool,
     images: Option<&Result<Arc<ImagePair>, String>>,
-    split: bool,
+    // Side by side, and the whole file.
+    (split, whole): (bool, bool),
     staging: Option<&Staging<'_>>,
     // Whether to offer the file's History and Blame.
     past: bool,
@@ -148,6 +151,11 @@ pub fn show(
                         widgets::segmented(ui, split, &[(true, "Split"), (false, "Unified")]);
                     if chosen != split {
                         action = Some(Action::SetSplit(chosen));
+                    }
+                    let chosen =
+                        widgets::segmented(ui, whole, &[(true, "Whole file"), (false, "Changes")]);
+                    if chosen != whole {
+                        action = Some(Action::SetWhole(chosen));
                     }
                 });
             });
@@ -260,7 +268,28 @@ fn body(
 
     // Where the last line drawn ends, if it's on screen.
     let mut end = None;
-    let area = area.id_salt(("diff", split)).auto_shrink([false, false]);
+    let mut area = area.id_salt(("diff", split)).auto_shrink([false, false]);
+    // With the whole file, a newly opened one starts a few lines above its
+    // first change (not when the same one reloads, as working files do).
+    let seen_id = egui::Id::new("diff-whole-opened");
+    let this = (d.diff.path.clone(), split, d.changes < d.diff.hunks.len());
+    if ui.data(|m| m.get_temp::<(String, bool, bool)>(seen_id)) != Some(this.clone()) {
+        let first = if split {
+            d.split.iter().position(|r| match r {
+                SplitRow::Header(_) => true,
+                SplitRow::Pair(a, b) => a.or(*b).is_some_and(|(h, _)| h < d.changes),
+            })
+        } else {
+            d.unified.iter().position(|r| match r {
+                Row::Header(_) => true,
+                Row::Line(h, _) => *h < d.changes,
+            })
+        };
+        #[expect(clippy::cast_precision_loss, reason = "row counts are small")]
+        let offset = first.unwrap_or(0).saturating_sub(3) as f32 * LINE;
+        area = area.vertical_scroll_offset(offset);
+        ui.data_mut(|m| m.insert_temp(seen_id, this));
+    }
     let output = widgets::gapless_rows(ui, area, LINE, rows, |ui, range| {
         let start_y = ui.cursor().top();
         let left = ui.max_rect().left();

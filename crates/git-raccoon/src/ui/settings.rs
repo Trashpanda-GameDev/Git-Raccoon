@@ -110,6 +110,7 @@ impl Section {
                 settings.fetch_prune = d.fetch_prune;
                 settings.fetch_force = d.fetch_force;
                 settings.split_diff = d.split_diff;
+                settings.whole_file = d.whole_file;
                 settings.file_tree = d.file_tree;
             }
             Section::Tools => {
@@ -209,7 +210,7 @@ const ROWS: &[Row] = &[
         section: Section::Git,
         name: "Diffs",
         hint: "",
-        words: "diff unified side by side split",
+        words: "diff unified side by side split whole file full context",
     },
     Row {
         section: Section::Git,
@@ -1318,6 +1319,8 @@ fn control(
                     &[(false, "Unified"), (true, "Side by side")],
                 );
             });
+            ui.checkbox(&mut settings.whole_file, "Show the whole file")
+                .on_hover_text("Not just the changes and a few lines around them");
         }
         "Changed files" => {
             ui.horizontal(|ui| {

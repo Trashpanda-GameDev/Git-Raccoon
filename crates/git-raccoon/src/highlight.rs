@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 
 use eframe::egui::Color32;
 use eframe::egui::text::{LayoutJob, TextFormat};
-use git_raccoon_core::details::{FileDiff, Hunk, LineKind};
+use git_raccoon_core::details::{DiffLine, FileDiff, Hunk, LineKind};
 use git_raccoon_core::words;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{FontStyle, Theme};
@@ -60,7 +60,11 @@ pub enum SplitRow {
 }
 
 pub struct RenderedDiff {
+    /// With the whole file, the hunks after the first `changes` are its
+    /// unchanged lines.
     pub diff: FileDiff,
+    /// How many of the hunks are the change's own.
+    pub changes: usize,
     /// `jobs[hunk][line]`: the line's text, highlighted, with changed words marked.
     pub jobs: Vec<Vec<LayoutJob>>,
     pub unified: Vec<Row>,
@@ -71,6 +75,30 @@ pub struct RenderedDiff {
 
 impl RenderedDiff {
     pub fn new(diff: FileDiff) -> Self {
+        Self::build(diff, Vec::new(), true)
+    }
+
+    /// The whole file: the diff with the unchanged lines around its hunks
+    /// (`runs`, one before each hunk and one after the last), and hunk
+    /// headers only where `headers` (they hold the staging buttons).
+    pub fn whole(diff: FileDiff, runs: Vec<Vec<DiffLine>>, headers: bool) -> Self {
+        Self::build(diff, runs, headers)
+    }
+
+    fn build(mut diff: FileDiff, runs: Vec<Vec<DiffLine>>, headers: bool) -> Self {
+        let changes = diff.hunks.len();
+        let runs = if runs.len() == changes + 1 {
+            runs
+        } else {
+            Vec::new()
+        };
+        let whole = !runs.is_empty();
+        // The unchanged runs go after the real hunks (whose numbering staging
+        // relies on), as hunks of their own; the rows put them in place.
+        diff.hunks.extend(runs.into_iter().map(|lines| Hunk {
+            header: String::new(),
+            lines,
+        }));
         let bytes: usize = diff
             .hunks
             .iter()
@@ -85,16 +113,29 @@ impl RenderedDiff {
         let jobs = diff.hunks.iter().map(|h| render_hunk(h, syntax)).collect();
         let mut unified = Vec::new();
         let mut split = Vec::new();
-        for (h, hunk) in diff.hunks.iter().enumerate() {
-            unified.push(Row::Header(h));
+        let unchanged = |at: usize, unified: &mut Vec<Row>, split: &mut Vec<SplitRow>| {
+            if whole {
+                let h = changes + at;
+                for l in 0..diff.hunks[h].lines.len() {
+                    unified.push(Row::Line(h, l));
+                    split.push(SplitRow::Pair(Some((h, l)), Some((h, l))));
+                }
+            }
+        };
+        for (h, hunk) in diff.hunks[..changes].iter().enumerate() {
+            unchanged(h, &mut unified, &mut split);
+            if headers || !whole {
+                unified.push(Row::Header(h));
+                split.push(SplitRow::Header(h));
+            }
             unified.extend((0..hunk.lines.len()).map(|l| Row::Line(h, l)));
-            split.push(SplitRow::Header(h));
             split.extend(
                 split_rows(hunk)
                     .into_iter()
                     .map(|(a, b)| SplitRow::Pair(a.map(|l| (h, l)), b.map(|l| (h, l)))),
             );
         }
+        unchanged(changes, &mut unified, &mut split);
         let widest = diff
             .hunks
             .iter()
@@ -104,6 +145,7 @@ impl RenderedDiff {
             .unwrap_or(0);
         RenderedDiff {
             diff,
+            changes,
             jobs,
             unified,
             split,
