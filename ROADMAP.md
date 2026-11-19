@@ -118,7 +118,7 @@ Today the sidebar lists open pull/merge requests, shows one's description, revie
 - [ ] **Check out ▾:** the request's branch (following the request, so Pull brings new commits), or a **new worktree** opened in a tab; with uncommitted changes, ask: put them aside and check out (they come back with *Back to main*), use a worktree instead, or cancel. Once on it: *Pull the latest* and *Back to main*. A request from a fork gets a local branch that tracks it.
 - [ ] **The active profile's account** does the reviewing and merging (see Profiles); when it can't, say so up front.
 - [ ] **Opening a request:**
-  - [ ] The target branch is a **dropdown** of the remote's branches, starting on the repository's default branch (not a text field).
+  - [x] The target branch is a **dropdown** of the remote's branches, starting on the repository's default branch (not a text field).
   - [ ] The same view as a request, in a *new* state: **Commits** and **Changes** show what it will contain before it's opened; a warning when it won't merge cleanly into the target, or is behind it.
   - [ ] From **any branch**: right-click a branch (sidebar or graph) › *Open a merge request…*, as well as the **+** in the sidebar; after pushing a new branch, offer to open one.
   - [ ] **Title and description filled in**: one commit → its message; several → the branch name and the commits listed; the repository's template when it has one (a picker for several).

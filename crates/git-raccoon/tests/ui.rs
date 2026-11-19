@@ -3168,6 +3168,19 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     // A new merge request from the checked-out branch (it's pushed).
     h.get_by_label("New merge request").click();
     h.run_ok();
+    // The branch it goes into is picked from the remote's, the default first.
+    // (Here the remote has only main besides the branch itself.)
+    let shown = |h: &Harness<'_, App>| h.get_all_by_role_and_label(Role::Button, "main").count();
+    let before = shown(&h);
+    h.get_by_label("Target branch").click();
+    h.run_ok();
+    assert_eq!(shown(&h), before + 1, "main is offered");
+    screenshot(&mut h, "78-request-target");
+    h.get_all_by_role_and_label(Role::Button, "main")
+        .last()
+        .unwrap()
+        .click();
+    h.run_ok();
     type_into(&mut h, "Request title", "Faster start");
     h.get_by_role_and_label(Role::Button, "Open it").click();
     wait_for(&mut h, "the new one", |app| {

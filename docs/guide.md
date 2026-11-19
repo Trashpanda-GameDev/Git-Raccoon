@@ -99,7 +99,7 @@ For a repository on **GitHub**, **GitLab.com** or a **self-managed GitLab**, the
 - **Check out** puts you on its branch, brought up to the remote's. A request from a fork is fetched into a branch of its own (`pr/12` or `mr/12`).
 - **Open on GitHub/GitLab** opens it in the browser.
 
-**A new request.** The **+** next to *Pull requests* (or *Merge requests*) opens one from the checked-out branch: pick the branch it goes into, give it a title and a description, and whether it's a draft. If the branch has commits the remote doesn't, push them first (there's a Push button right there).
+**A new request.** The **+** next to *Pull requests* (or *Merge requests*) opens one from the checked-out branch: pick the branch it goes into from the remote's branches (the default one is already picked), give it a title and a description, and whether it's a draft. If the branch has commits the remote doesn't, push them first (there's a Push button right there).
 
 **Open on GitHub/GitLab.** Right-click a commit, a branch (a local one opens its upstream), a remote, a tag, a pull/merge request or an issue to open its page in the browser, or to copy its link. This works for any remote on GitHub or GitLab.com, and for self-managed GitLab servers you've signed in to; no sign-in is needed for the pages themselves.
 

@@ -234,6 +234,8 @@ pub struct NewForm {
     pub kind: Kind,
     pub source: String,
     pub target: String,
+    /// The remote's branches it can go into (the default one first).
+    pub targets: Vec<String>,
     pub title: String,
     pub body: String,
     pub draft: bool,
@@ -261,9 +263,24 @@ pub fn new_request(ctx: &egui::Context, f: &mut NewForm) -> Option<NewAction> {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.label(RichText::new(format!("{}  into", f.source)).color(theme::muted()));
-            let target = ui.add(egui::TextEdit::singleline(&mut f.target).desired_width(160.0));
-            ui.ctx()
-                .accesskit_node_builder(target.id, |n| n.set_label("Target branch"));
+            if f.targets.is_empty() {
+                // No branches known for the remote (not fetched yet): type one.
+                let target = ui.add(egui::TextEdit::singleline(&mut f.target).desired_width(200.0));
+                ui.ctx()
+                    .accesskit_node_builder(target.id, |n| n.set_label("Target branch"));
+            } else {
+                let combo = egui::ComboBox::from_id_salt("request-target")
+                    .selected_text(f.target.as_str())
+                    .width(220.0)
+                    .height(320.0)
+                    .show_ui(ui, |ui| {
+                        for t in &f.targets {
+                            ui.selectable_value(&mut f.target, t.clone(), t);
+                        }
+                    });
+                ui.ctx()
+                    .accesskit_node_builder(combo.response.id, |n| n.set_label("Target branch"));
+            }
         });
         ui.add_space(6.0);
         let title = ui.add(

@@ -2523,6 +2523,20 @@ fn new_form(repo: &RepoView) -> Option<crate::ui::forge::NewForm> {
         .find(|b| has(b) && *b != source)
         .unwrap_or("main")
         .to_string();
+    // The remote's branches, the default first, then by name.
+    let mut targets: Vec<String> = remote
+        .map(|r| {
+            r.branches
+                .iter()
+                .map(|b| b.name.clone())
+                .filter(|b| *b != source && b != "HEAD" && *b != target)
+                .collect()
+        })
+        .unwrap_or_default();
+    targets.sort();
+    if has(&target) {
+        targets.insert(0, target.clone());
+    }
     // Titled after the branch's last commit.
     let title = repo
         .history
@@ -2534,6 +2548,7 @@ fn new_form(repo: &RepoView) -> Option<crate::ui::forge::NewForm> {
         kind: forge.project.kind,
         source,
         target,
+        targets,
         title,
         body: String::new(),
         draft: false,
