@@ -582,11 +582,13 @@ pub fn branch_line(
     let points: Vec<Pos2> = if (a.x - b.x).abs() < 0.5 {
         vec![a, b]
     } else {
-        let mid = (a.y + b.y) / 2.0;
         match style {
             LineStyle::Curved => {
+                // How far it leaves and enters upright: halfway at the
+                // usual roundness (7), none at 0 (a straight diagonal).
+                let pull = ((b.y - a.y) * 0.5 * corner / 7.0).clamp(0.0, b.y - a.y);
                 let curve = CubicBezierShape::from_points_stroke(
-                    [a, Pos2::new(a.x, mid), Pos2::new(b.x, mid), b],
+                    [a, Pos2::new(a.x, a.y + pull), Pos2::new(b.x, b.y - pull), b],
                     false,
                     Color32::TRANSPARENT,
                     stroke,

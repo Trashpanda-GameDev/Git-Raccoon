@@ -5026,6 +5026,20 @@ fn draws_branch_lines_the_chosen_way() {
     h.get_by_label("Close settings").click();
     settle(&mut h);
     screenshot(&mut h, "69-square-corners");
+    // Curved at 0: straight across.
+    press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    h.get_by_role_and_label(Role::RadioButton, "Curved merges")
+        .scroll_to_me();
+    h.run_ok();
+    h.get_by_role_and_label(Role::RadioButton, "Curved merges")
+        .click();
+    h.get_by_role_and_label(Role::RadioButton, "Curved branch starts")
+        .click();
+    h.run_ok();
+    assert_eq!(h.state().settings().branch_lines.merges, LineStyle::Curved);
+    h.get_by_label("Close settings").click();
+    settle(&mut h);
+    screenshot(&mut h, "69-curved-flat");
     // Found by what people call them, too.
     press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
     type_into(&mut h, "Search settings", "curves");

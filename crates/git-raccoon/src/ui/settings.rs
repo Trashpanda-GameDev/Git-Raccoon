@@ -165,7 +165,7 @@ const ROWS: &[Row] = &[
 
         name: "Corner roundness",
 
-        hint: "For Rounded lines: 0 makes square corners.",
+        hint: "How round the bends are: at 0, Curved lines go straight across and Rounded ones turn square.",
 
         words: "graph branch lines corners round radius square curves",
     },
@@ -1170,10 +1170,7 @@ fn control(
             });
         }
         "Corner roundness" => {
-            let rounded = settings.branch_lines.starts == LineStyle::Rounded
-                || settings.branch_lines.merges == LineStyle::Rounded;
-            let slider = ui.add_enabled(
-                rounded,
+            let slider = ui.add(
                 egui::Slider::new(
                     &mut settings.branch_lines.corner,
                     crate::settings::BranchLines::CORNERS,
@@ -1184,9 +1181,6 @@ fn control(
             );
             ui.ctx()
                 .accesskit_node_builder(slider.id, |n| n.set_label("Corner roundness"));
-            if !rounded {
-                hint(ui, "Choose Rounded above to use it.");
-            }
         }
         "Interface size" => {
             let current = settings.zoom.unwrap_or(1.0);

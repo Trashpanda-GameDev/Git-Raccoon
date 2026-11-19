@@ -54,7 +54,9 @@ pub struct BranchLines {
     pub starts: LineStyle,
     /// From a merge commit out to the branch it merges.
     pub merges: LineStyle,
-    /// How round the corners of Rounded lines are, in points (0: square).
+    /// How round the bends are: Rounded lines' corner radius, in points
+    /// (0: square), and how far Curved lines leave and enter upright (0:
+    /// a straight diagonal; 7, the default, halfway).
     pub corner: f32,
 }
 
