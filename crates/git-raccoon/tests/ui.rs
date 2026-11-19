@@ -4361,15 +4361,12 @@ fn switches_theme_and_size_in_settings() {
     // Bigger, then back to normal and dark.
     h.get_by_label("Settings").click();
     h.run_ok();
-    h.get_by_label("125%").click();
-    h.run_ok();
+    scroll_and_click(&mut h, "125%");
     assert!((h.ctx.zoom_factor() - 1.25).abs() < 0.001);
     assert_eq!(h.state().settings().zoom, Some(1.25));
     screenshot(&mut h, "37-settings");
-    h.get_by_label("100%").click();
-    h.run_ok();
-    h.get_by_label("Dark").click();
-    h.run_ok();
+    scroll_and_click(&mut h, "100%");
+    scroll_and_click(&mut h, "Dark");
     assert_eq!(h.state().settings().zoom, None);
     assert!(h.ctx.theme() == egui::Theme::Dark);
 }
