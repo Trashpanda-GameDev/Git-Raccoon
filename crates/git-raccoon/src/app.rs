@@ -2388,15 +2388,6 @@ fn repo_action(repo: &mut RepoView, ctx: &egui::Context, action: sidebar::Action
         }
         sidebar::Action::DeleteRemoteBranch(name) => repo.confirm_delete_remote_branch(name),
         sidebar::Action::DeleteTag(name) => repo.confirm_delete_tag(name),
-        sidebar::Action::DeleteTagOn {
-            name,
-            remote,
-            local,
-        } => repo.confirm_delete_tag_on(name, remote, local),
-        sidebar::Action::DeleteBranchEverywhere {
-            name,
-            remote_branch,
-        } => repo.confirm_delete_branch_everywhere(name, remote_branch),
         sidebar::Action::EditRemote(name) => repo.edit_remote(name),
         sidebar::Action::RemoveRemote(name) => repo.confirm_remove_remote(name),
         sidebar::Action::Merge { source, target } => repo.ask_merge(source, target),

@@ -171,6 +171,29 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
                 }
                 ("Rename".into(), false, problem.is_none() && name != old)
             }
+            Dialog::Delete { tag, name, places } => {
+                let what = if *tag { "tag" } else { "branch" };
+                heading(
+                    ui,
+                    &format!("Delete {what} {name}"),
+                    Some("Only the name goes; the commits stay."),
+                );
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = 18.0;
+                    for p in places.iter_mut() {
+                        ui.checkbox(&mut p.on, p.label.as_str());
+                    }
+                });
+                if places.iter().any(|p| p.on && p.remote.is_some()) {
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new("On a remote, it's gone for everyone who fetches from it.")
+                            .size(12.0)
+                            .color(theme::muted()),
+                    );
+                }
+                ("Delete".into(), true, places.iter().any(|p| p.on))
+            }
             Dialog::SetUpstream { branch, upstream } => {
                 heading(
                     ui,
@@ -342,6 +365,35 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
                 new: name.trim().to_string(),
             }),
             Dialog::SetUpstream { branch, upstream } => Some(Op::SetUpstream { branch, upstream }),
+            Dialog::Delete { tag, name, places } => {
+                let local = places.iter().any(|p| p.on && p.remote.is_none());
+                let remotes: Vec<String> = places
+                    .iter()
+                    .filter(|p| p.on)
+                    .filter_map(|p| p.remote.clone())
+                    .collect();
+                match (tag, local, remotes.len()) {
+                    (_, false, 0) => None,
+                    (true, true, 0) => Some(Op::DeleteTag(name)),
+                    (true, _, _) => Some(Op::DeleteTagIn {
+                        name,
+                        local,
+                        remotes,
+                    }),
+                    (false, true, 0) => Some(Op::DeleteBranch { name, force: false }),
+                    (false, false, 1) => {
+                        Some(Op::DeleteRemoteBranch(format!("{}/{name}", remotes[0])))
+                    }
+                    (false, false, _) => Some(Op::DeleteRemoteBranches(
+                        remotes.iter().map(|r| format!("{r}/{name}")).collect(),
+                    )),
+                    (false, true, _) => Some(Op::DeleteBranchEverywhere {
+                        remote_branches: remotes.iter().map(|r| format!("{r}/{name}")).collect(),
+                        name,
+                        force: false,
+                    }),
+                }
+            }
             Dialog::NewTag {
                 target,
                 name,

@@ -234,18 +234,18 @@ pub enum Op {
         message: String,
     },
     DeleteTag(String),
-    /// Delete a tag on a remote, and here too when `local`.
-    DeleteTagOn {
+    /// Delete a tag on these remotes, and here too when `local`.
+    DeleteTagIn {
         name: String,
-        remote: String,
         local: bool,
+        remotes: Vec<String>,
     },
-    /// Delete a local branch and its copy on a remote (`remote_branch`,
+    /// Delete a local branch and its copies on remotes (`remote_branches`,
     /// "origin/feature"): unless `force`, only if its commits are on some
     /// other branch.
     DeleteBranchEverywhere {
         name: String,
-        remote_branch: String,
+        remote_branches: Vec<String>,
         force: bool,
     },
     /// Put a tag deleted on a remote back there (undoing the delete).
@@ -467,12 +467,14 @@ impl Op {
                 message,
             } => branch::create_tag(path, &name, &target, &message),
             Op::DeleteTag(name) => branch::delete_tag(path, &name),
-            Op::DeleteTagOn {
+            Op::DeleteTagIn {
                 name,
-                remote,
                 local,
+                remotes,
             } => {
-                sync::delete_remote_tag(path, &remote, &name, report, &ctl.cancel)?;
+                for remote in &remotes {
+                    sync::delete_remote_tag(path, remote, &name, report, &ctl.cancel)?;
+                }
                 if local {
                     branch::delete_tag(path, &name)?;
                 }
@@ -483,18 +485,18 @@ impl Op {
             }
             Op::DeleteBranchEverywhere {
                 name,
-                remote_branch,
+                remote_branches,
                 force,
             } => {
-                if !force
-                    && !branch::kept_elsewhere(path, &name, std::slice::from_ref(&remote_branch))?
-                {
+                if !force && !branch::kept_elsewhere(path, &name, &remote_branches)? {
                     return Err(Error::NotMerged(name));
                 }
-                // Here first: if that fails, nothing's gone from the remote.
+                // Here first: if that fails, nothing's gone from a remote.
                 branch::delete(path, &name, true)?;
-                let (remote, b) = split_remote(&remote_branch)?;
-                sync::delete_remote_branch(path, remote, b, report, &ctl.cancel)
+                remote_branches.iter().try_for_each(|rb| {
+                    let (remote, b) = split_remote(rb)?;
+                    sync::delete_remote_branch(path, remote, b, report, &ctl.cancel)
+                })
             }
             Op::StashThen(op) => {
                 let what = op.verb();
@@ -608,7 +610,7 @@ impl Op {
             Op::DeleteBranch { .. } => "delete the branch",
             Op::DeleteBranches { .. } => "delete the branches",
             Op::CreateTag { .. } => "create the tag",
-            Op::DeleteTag(_) | Op::DeleteTagOn { .. } => "delete the tag",
+            Op::DeleteTag(_) | Op::DeleteTagIn { .. } => "delete the tag",
             Op::DeleteBranchEverywhere { .. } => "delete the branch",
             Op::RestoreRemoteTag { .. } => "undo",
             Op::StashThen(op) => op.verb(),
@@ -736,7 +738,7 @@ impl Before {
                 b.tip = branch::tip(path, name).ok();
                 b.upstream = undo::upstream_of(path, name).ok().flatten();
             }
-            Op::DeleteTag(name) | Op::DeleteTagOn { name, .. } => {
+            Op::DeleteTag(name) | Op::DeleteTagIn { name, .. } => {
                 b.tag = undo::ref_target(path, &format!("refs/tags/{name}")).ok()
             }
             Op::StashDrop(id) => {
@@ -929,29 +931,28 @@ fn undo_for(op: &Op, before: Before, path: &str) -> Option<Undoable> {
         ),
         Op::DeleteBranchEverywhere {
             name,
-            remote_branch,
+            remote_branches,
             ..
         } => {
             let id = before.tip?;
-            (
-                format!("Undo delete {name} here and on the remote"),
-                vec![
-                    Op::RestoreRemoteBranch {
-                        remote_branch: remote_branch.clone(),
-                        id: id.clone(),
-                    },
-                    Op::RestoreBranch {
-                        name: name.clone(),
-                        id,
-                        upstream: before.upstream,
-                    },
-                ],
-            )
+            let mut ops: Vec<Op> = remote_branches
+                .iter()
+                .map(|rb| Op::RestoreRemoteBranch {
+                    remote_branch: rb.clone(),
+                    id: id.clone(),
+                })
+                .collect();
+            ops.push(Op::RestoreBranch {
+                name: name.clone(),
+                id,
+                upstream: before.upstream,
+            });
+            (format!("Undo delete {name}"), ops)
         }
-        Op::DeleteTagOn {
+        Op::DeleteTagIn {
             name,
-            remote,
             local,
+            remotes,
         } => {
             let id = before.tag?;
             let mut ops = Vec::new();
@@ -961,12 +962,12 @@ fn undo_for(op: &Op, before: Before, path: &str) -> Option<Undoable> {
                     id: id.clone(),
                 });
             }
-            ops.push(Op::RestoreRemoteTag {
+            ops.extend(remotes.iter().map(|remote| Op::RestoreRemoteTag {
                 remote: remote.clone(),
                 name: name.clone(),
-                id,
-            });
-            (format!("Undo delete tag {name} on {remote}"), ops)
+                id: id.clone(),
+            }));
+            (format!("Undo delete tag {name}"), ops)
         }
         Op::Stash { staged, .. } => {
             let top = stash::top(path).ok()??;
@@ -1248,6 +1249,16 @@ pub struct PushTarget {
 }
 
 /// A question to answer before something happens.
+/// One place a branch or tag can be deleted from, in the delete dialog.
+#[derive(Debug, Clone)]
+pub struct Place {
+    /// "Local", or the remote's name.
+    pub label: String,
+    /// The remote ("origin"), or `None` for here.
+    pub remote: Option<String>,
+    pub on: bool,
+}
+
 pub enum Dialog {
     /// "Are you sure?" before an operation. `danger` colours the button red.
     Confirm {
@@ -1279,6 +1290,12 @@ pub enum Dialog {
     RenameBranch {
         old: String,
         name: String,
+    },
+    /// Delete a branch or tag: ticked here and on which remotes.
+    Delete {
+        tag: bool,
+        name: String,
+        places: Vec<Place>,
     },
     /// Choose `branch`'s upstream ("origin/main"), or none.
     SetUpstream {
@@ -1764,7 +1781,7 @@ impl RepoView {
                 | Op::DeleteRemoteBranch(_)
                 | Op::DeleteRemoteBranches(_)
                 | Op::RestoreRemoteBranch { .. }
-                | Op::DeleteTagOn { .. }
+                | Op::DeleteTagIn { .. }
                 | Op::RestoreRemoteTag { .. }
                 | Op::DeleteBranchEverywhere { .. }
                 | Op::FetchInto { .. }
@@ -1960,19 +1977,10 @@ impl RepoView {
     /// merged anywhere; that refusal leads to a second, stronger question.
     /// Asks before deleting a branch on its remote.
     pub fn confirm_delete_remote_branch(&mut self, name: String) {
-        let remote = name
-            .split_once('/')
-            .map_or("the remote", |(r, _)| r)
-            .to_string();
-        self.dialog = Some(Dialog::Confirm {
-            title: format!("Delete {name}?"),
-            body: format!(
-                "The branch is deleted on {remote}, for everyone who uses it; your own branches and its commits here stay. Undo puts it back on {remote}."
-            ),
-            button: "Delete on the remote".into(),
-            danger: true,
-            op: Op::DeleteRemoteBranch(name),
-        });
+        if let Some((remote, branch)) = name.split_once('/') {
+            let remote = remote.to_string();
+            self.confirm_delete_branch_in(branch.to_string(), Some(&remote));
+        }
     }
 
     /// Asks before deleting several branches.
@@ -2007,13 +2015,7 @@ impl RepoView {
     }
 
     pub fn confirm_delete_branch(&mut self, name: String) {
-        self.dialog = Some(Dialog::Confirm {
-            title: format!("Delete branch {name}?"),
-            body: "Only the branch name is removed; its commits stay. Git won't delete it if it has commits that aren't on any other branch.".into(),
-            button: "Delete branch".into(),
-            danger: true,
-            op: Op::DeleteBranch { name, force: false },
-        });
+        self.confirm_delete_branch_in(name, None);
     }
 
     /// Shows the history or blame of `file` (as of commit `at`, or the
@@ -2444,67 +2446,50 @@ impl RepoView {
         });
     }
 
+    /// Asks where to delete a tag: here, and on which remotes.
     pub fn confirm_delete_tag(&mut self, name: String) {
-        self.dialog = Some(Dialog::Confirm {
-            title: format!("Delete tag {name}?"),
-            body: "Only the tag goes; the commit stays. If it was pushed, it stays on the remote."
-                .into(),
-            button: "Delete tag".into(),
-            danger: true,
-            op: Op::DeleteTag(name),
+        let mut places = vec![Place {
+            label: "Local".into(),
+            remote: None,
+            on: true,
+        }];
+        places.extend(self.refs.remotes.iter().map(|r| Place {
+            label: r.name.clone(),
+            remote: Some(r.name.clone()),
+            on: false,
+        }));
+        self.dialog = Some(Dialog::Delete {
+            tag: true,
+            name,
+            places,
         });
     }
 
-    /// Asks before deleting a tag on `remote`, and here too when `local`.
-    pub fn confirm_delete_tag_on(&mut self, name: String, remote: String, local: bool) {
-        let (title, body, button) = if local {
-            (
-                format!("Delete tag {name} here and on {remote}?"),
-                format!(
-                    "Gone for everyone who fetches from {remote}; the commit stays. Undo puts it back in both."
-                ),
-                "Delete in both".to_string(),
-            )
-        } else {
-            (
-                format!("Delete tag {name} on {remote}?"),
-                format!(
-                    "Gone for everyone who fetches from {remote}; kept here. Undo puts it back."
-                ),
-                format!("Delete on {remote}"),
-            )
-        };
-        self.dialog = Some(Dialog::Confirm {
-            title,
-            body,
-            button,
-            danger: true,
-            op: Op::DeleteTagOn {
-                name,
-                remote,
-                local,
-            },
-        });
-    }
-
-    /// Asks before deleting branch `name` here and its copy on a remote.
-    pub fn confirm_delete_branch_everywhere(&mut self, name: String, remote_branch: String) {
-        let remote = remote_branch
-            .split_once('/')
-            .map_or("the remote", |(r, _)| r)
-            .to_string();
-        self.dialog = Some(Dialog::Confirm {
-            title: format!("Delete {name} here and on {remote}?"),
-            body: format!(
-                "Both {name} and {remote_branch} go; their commits stay. Undo puts both back."
-            ),
-            button: "Delete in both".into(),
-            danger: true,
-            op: Op::DeleteBranchEverywhere {
-                name,
-                remote_branch,
-                force: false,
-            },
+    /// Asks where to delete branch `name`: here (if it's here), and on the
+    /// remotes that have it. `remote` starts ticked instead of here, for a
+    /// remote branch's own menu.
+    fn confirm_delete_branch_in(&mut self, name: String, remote: Option<&str>) {
+        let mut places = Vec::new();
+        if self.refs.local.iter().any(|b| b.name == name) {
+            places.push(Place {
+                label: "Local".into(),
+                remote: None,
+                on: remote.is_none(),
+            });
+        }
+        for r in &self.refs.remotes {
+            if r.branches.iter().any(|b| b.name == name) {
+                places.push(Place {
+                    label: r.name.clone(),
+                    remote: Some(r.name.clone()),
+                    on: remote == Some(r.name.as_str()),
+                });
+            }
+        }
+        self.dialog = Some(Dialog::Delete {
+            tag: false,
+            name,
+            places,
         });
     }
 
@@ -2688,18 +2673,18 @@ impl RepoView {
                 Error::NotMerged(_),
                 Op::DeleteBranchEverywhere {
                     name,
-                    remote_branch,
+                    remote_branches,
                     force: false,
                 },
             ) => {
                 self.dialog = Some(Dialog::Confirm {
                     title: format!("{name} has work that's nowhere else"),
-                    body: "Its commits aren't on any other branch or tag. Nothing was deleted. Deleting it here and on the remote anyway hides them from the graph (Undo brings them back).".into(),
-                    button: "Delete both anyway".into(),
+                    body: "Its commits aren't on any other branch or tag. Nothing was deleted. Deleting it everywhere anyway hides them from the graph (Undo brings them back).".into(),
+                    button: "Delete anyway".into(),
                     danger: true,
                     op: Op::DeleteBranchEverywhere {
                         name: name.clone(),
-                        remote_branch: remote_branch.clone(),
+                        remote_branches: remote_branches.clone(),
                         force: true,
                     },
                 });

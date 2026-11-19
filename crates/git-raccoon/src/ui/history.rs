@@ -777,7 +777,6 @@ pub fn show(
 
     let selected = repo.selected.as_ref().map(|s| s.id.clone());
     let head = repo.head_branch().map(str::to_string);
-    let remotes: Vec<String> = repo.refs.remotes.iter().map(|r| r.name.clone()).collect();
     let searching = repo.search.is_active();
     let mut clicked = None;
     let mut double_click = None;
@@ -863,9 +862,7 @@ pub fn show(
             if let Some(c) = commit {
                 let web = repo.web.commit(&c.id);
                 response.context_menu(|ui| {
-                    if let Some(action) =
-                        commit_menu(ui, c, web.as_ref(), (head.as_deref(), &remotes), None)
-                    {
+                    if let Some(action) = commit_menu(ui, c, web.as_ref(), head.as_deref(), None) {
                         clicked = Some(action);
                     }
                 });
@@ -1024,8 +1021,7 @@ pub fn show(
                 // Right-clicked, the commit's menu, with the label's own first.
                 let web = repo.web.commit(&c.id);
                 response.context_menu(|ui| {
-                    if let Some(action) =
-                        commit_menu(ui, c, web.as_ref(), (head.as_deref(), &remotes), Some(r))
+                    if let Some(action) = commit_menu(ui, c, web.as_ref(), head.as_deref(), Some(r))
                     {
                         clicked = Some(action);
                     }
@@ -1090,7 +1086,7 @@ pub fn show(
                     cell,
                     row,
                     c,
-                    (web.as_ref(), head.as_deref(), &remotes),
+                    (web.as_ref(), head.as_deref()),
                 );
                 overlay = Some((row, cell, area));
                 if action.is_some() {
@@ -1359,9 +1355,9 @@ fn all_labels(
     cell: Rect,
     row: usize,
     c: &GraphCommit,
-    // The commit's page on the forge, the checked-out branch and the
-    // remotes: for the right-click menu.
-    (web, head, remotes): (Option<&(String, String)>, Option<&str>, &[String]),
+    // The commit's page on the forge, and the checked-out branch: for the
+    // right-click menu.
+    (web, head): (Option<&(String, String)>, Option<&str>),
 ) -> (Rect, Option<Click>) {
     const GAP: f32 = 4.0;
     const PAD: f32 = 4.0;
@@ -1440,8 +1436,7 @@ fn all_labels(
                             response.on_hover_text(tip)
                         };
                         response.context_menu(|ui| {
-                            if let Some(chosen) = commit_menu(ui, c, web, (head, remotes), Some(r))
-                            {
+                            if let Some(chosen) = commit_menu(ui, c, web, head, Some(r)) {
                                 action = Some(chosen);
                             }
                         });
@@ -1466,7 +1461,7 @@ fn commit_menu(
     ui: &mut egui::Ui,
     c: &GraphCommit,
     web: Option<&(String, String)>,
-    (head, remotes): (Option<&str>, &[String]),
+    head: Option<&str>,
     label: Option<&RefLabel>,
 ) -> Option<Click> {
     let mut chosen = None;
@@ -1493,26 +1488,9 @@ fn commit_menu(
     if let Some(r) = label {
         use crate::ui::sidebar;
         let items = match r.kind {
-            RefKind::Local => {
-                // One label for it and its remote copies on this commit:
-                // their deletes too.
-                let copies: Vec<String> = c
-                    .refs
-                    .iter()
-                    .filter(|o| {
-                        o.kind == RefKind::Remote
-                            && o.name
-                                .split_once('/')
-                                .is_some_and(|(_, rest)| rest == r.name)
-                    })
-                    .map(|o| o.name.clone())
-                    .collect();
-                let mut items = sidebar::local_branch_items(&r.name, &c.id, r.is_head, head);
-                items.extend(sidebar::shared_branch_items(&r.name, &copies));
-                items
-            }
+            RefKind::Local => sidebar::local_branch_items(&r.name, &c.id, r.is_head, head),
             RefKind::Remote => sidebar::remote_branch_items(&r.name, &c.id, head),
-            RefKind::Tag => sidebar::tag_items(&r.name, &c.id, remotes),
+            RefKind::Tag => sidebar::tag_items(&r.name, &c.id),
             RefKind::Head | RefKind::Stash => Vec::new(),
         };
         let items: Vec<_> = items

@@ -1740,8 +1740,6 @@ fn right_clicking_a_label_on_the_graph_shows_its_menu() {
     let at = label(&h, "Merge branch 'feature/graph'");
     right_click_at(&mut h, at);
     h.get_by_label("Delete…");
-    h.get_by_label("Delete on origin…");
-    h.get_by_label("Delete here and on origin…");
     h.get_by_label_contains("Create tag here…").click();
     settle(&mut h);
     assert!(matches!(
@@ -1770,7 +1768,7 @@ fn right_clicking_a_label_on_the_graph_shows_its_menu() {
     assert!(
         matches!(
             h.state().repo().unwrap().dialog,
-            Some(git_raccoon::repo_view::Dialog::Confirm { .. })
+            Some(git_raccoon::repo_view::Dialog::Delete { .. })
         ),
         "asks before deleting release"
     );
@@ -2225,17 +2223,24 @@ fn deletes_a_tag_here_on_the_remote_or_both() {
     let mut h = harness(Settings::default());
     open(&mut h, sample.path());
     settle(&mut h);
-    let delete = |h: &mut Harness<'_, App>, item: &str, button: &str| {
-        menu_item(h, "v0.1.0", item);
-        h.get_by_role_and_label(Role::Button, button).click();
+    // Delete…, then tick where: Local starts ticked, the remotes don't.
+    let delete = |h: &mut Harness<'_, App>, toggle: &[&str]| {
+        menu_item(h, "v0.1.0", "Delete…");
+        for place in toggle {
+            h.get_by_role_and_label(Role::CheckBox, place).click();
+            h.run_ok();
+        }
+        h.get_by_role_and_label(Role::Button, "Delete").click();
         settle(h);
     };
 
     // Only on the remote: kept here.
-    menu_item(&mut h, "v0.1.0", "Delete on origin…");
+    menu_item(&mut h, "v0.1.0", "Delete…");
+    h.get_by_role_and_label(Role::CheckBox, "Local").click();
+    h.get_by_role_and_label(Role::CheckBox, "origin").click();
+    h.run_ok();
     screenshot(&mut h, "81-delete-tag");
-    h.get_by_role_and_label(Role::Button, "Delete on origin")
-        .click();
+    h.get_by_role_and_label(Role::Button, "Delete").click();
     settle(&mut h);
     assert!(!there(), "gone from origin");
     assert!(here(h.state()), "still here");
@@ -2245,14 +2250,14 @@ fn deletes_a_tag_here_on_the_remote_or_both() {
     assert!(there(), "back on origin");
 
     // Here and on the remote; undo brings both back.
-    delete(&mut h, "Delete here and on origin…", "Delete in both");
+    delete(&mut h, &["origin"]);
     assert!(!there() && !here(h.state()), "gone from both");
     h.get_by_label("Undo").click();
     settle(&mut h);
     assert!(there() && here(h.state()), "back in both");
 
     // Only here, as before.
-    delete(&mut h, "Delete…", "Delete tag");
+    delete(&mut h, &[]);
     assert!(there() && !here(h.state()));
     let _ = std::fs::remove_dir_all(&bare);
 }
@@ -2294,12 +2299,12 @@ fn a_branch_label_shared_with_its_remote_copy_deletes_either_or_both() {
     };
     // feature/graph and origin/feature/graph: one label, on "Colour lanes".
     open_menu(&mut h, "Colour lanes");
-    screenshot(&mut h, "82-shared-label-menu");
-    h.get_by_label_contains("Delete here and on origin…")
-        .click();
+    h.get_by_label("Delete…").click();
     h.run_ok();
-    h.get_by_role_and_label(Role::Button, "Delete in both")
-        .click();
+    h.get_by_role_and_label(Role::CheckBox, "origin").click();
+    h.run_ok();
+    screenshot(&mut h, "82-delete-branch");
+    h.get_by_role_and_label(Role::Button, "Delete").click();
     settle(&mut h);
     assert!(
         !here(h.state(), "feature/graph") && !there("feature/graph"),
@@ -2314,18 +2319,18 @@ fn a_branch_label_shared_with_its_remote_copy_deletes_either_or_both() {
 
     // Work that's on no other branch: asked again, nothing deleted yet.
     open_menu(&mut h, "Solo work");
-    h.get_by_label_contains("Delete here and on origin…")
-        .click();
+    h.get_by_label("Delete…").click();
     h.run_ok();
-    h.get_by_role_and_label(Role::Button, "Delete in both")
-        .click();
+    h.get_by_role_and_label(Role::CheckBox, "origin").click();
+    h.run_ok();
+    h.get_by_role_and_label(Role::Button, "Delete").click();
     settle(&mut h);
-    h.get_by_label("Delete both anyway");
+    h.get_by_label("Delete anyway");
     assert!(
         here(h.state(), "solo") && there("solo"),
         "nothing deleted yet"
     );
-    h.get_by_role_and_label(Role::Button, "Delete both anyway")
+    h.get_by_role_and_label(Role::Button, "Delete anyway")
         .click();
     settle(&mut h);
     assert!(!here(h.state(), "solo") && !there("solo"));
@@ -2815,7 +2820,8 @@ fn creates_checks_out_renames_and_deletes_branches_and_tags() {
 
     // Deleting unmerged work asks twice.
     menu_item(&mut h, "toolbar-glitch", "Delete");
-    h.get_by_label("Delete branch").click();
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Delete")
+        .click();
     wait_for(&mut h, "the second question", |app| {
         app.repo().unwrap().dialog.is_some()
     });
@@ -2827,7 +2833,8 @@ fn creates_checks_out_renames_and_deletes_branches_and_tags() {
     });
     // A merged branch goes after one question.
     menu_item(&mut h, "loader", "Delete");
-    h.get_by_label("Delete branch").click();
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Delete")
+        .click();
     wait_for(&mut h, "the delete", |app| {
         !has_branch(app, "feature/loader")
     });
@@ -2847,7 +2854,7 @@ fn creates_checks_out_renames_and_deletes_branches_and_tags() {
             .any(|t| t.name == "v0.0.1" && t.annotated)
     });
     menu_item(&mut h, "v0.1.0", "Delete…");
-    h.get_by_role_and_label(Role::Button, "Delete tag").click();
+    h.get_by_role_and_label(Role::Button, "Delete").click();
     wait_for(&mut h, "the tag delete", |app| {
         app.repo()
             .unwrap()
@@ -2929,7 +2936,8 @@ fn undoes_the_last_action() {
 
     // Undo deleting a branch.
     menu_item(&mut h, "graph", "Delete");
-    h.get_by_label("Delete branch").click();
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Delete")
+        .click();
     wait_for(&mut h, "the delete", |app| {
         !has_branch(app, "feature/graph")
     });
@@ -3107,10 +3115,9 @@ fn deletes_a_branch_on_the_remote_and_undoes_it() {
     assert!(remote_branches(h.state()).contains(&"topic".to_string()));
 
     // Right-click origin's topic in the sidebar; delete it there, after asking.
-    menu_item(&mut h, "topic", "Delete on the remote");
-    h.get_by_label("Delete origin/topic?");
-    h.get_by_role_and_label(Role::Button, "Delete on the remote")
-        .click();
+    menu_item(&mut h, "topic", "Delete…");
+    h.get_by_label("Delete branch topic");
+    h.get_by_role_and_label(Role::Button, "Delete").click();
     wait_for(&mut h, "the delete", |app| {
         !remote_branches(app).contains(&"topic".to_string())
     });
