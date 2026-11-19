@@ -172,13 +172,14 @@ After most actions, the toolbar shows exactly what **Undo** would do ("Undo comm
 
 ## Themes and settings
 
-**Settings** (the gear, or Ctrl+,) has:
+**Settings** (the gear, or Ctrl+,) is in sections down the side; type in **Search settings** (Ctrl+F while it's open) to find any setting by name or by what it's about. Changes apply as you make them, and **Reset to defaults** puts a section back as it started.
 
-- **Theme:** a look (Raccoon, the default, Classic, Pastel, Forest, Paper or High contrast), each **Dark** or **Light**, or **System** to follow your computer's light and dark.
-- **Interface size**, from 90% to 150%. Anywhere in the app, Ctrl+scroll or Ctrl+plus and Ctrl+minus zoom in and out (from 50% to 200%), and Ctrl+0 goes back to normal; the size is remembered.
-- **Diffs:** unified or side by side.
-- **Terminal:** the command "Open a terminal here" runs, if not the system's own; `{path}` stands for the repository's folder (for example `alacritty --working-directory "{path}"`).
-- **Updates:** whether to check automatically.
+- **Appearance:** light, dark or **Match system** (following your computer); the look (Raccoon, the default, Classic, Pastel, Forest, Paper or High contrast); the **interface size**, from 90% to 150% (anywhere in the app, Ctrl+scroll or Ctrl+plus and Ctrl+minus zoom from 50% to 200%, and Ctrl+0 goes back to normal); whether the sidebar shows; and putting the graph's columns back in their usual order and widths.
+- **Git:** what Pull does when both sides have new commits (ask each time, merge, or rebase your commits on top) and with uncommitted changes; whether Fetch removes remote branches deleted on the remote, and lets fetched branches and tags replace local ones; diffs unified or side by side; changed files by path or in folders.
+- **Accounts:** the GitHub and GitLab accounts you're signed in to, and adding one.
+- **Tools:** the terminal "Open a terminal here" runs (if not the system's own; `{path}` stands for the repository's folder, as in `alacritty --working-directory "{path}"`), and the folder new clones go in.
+- **Updates and privacy:** whether to check for updates, and clearing the list of recent repositories.
+- **About:** the version and what's new in it, sending feedback, and the licenses.
 
 ## Updates and crash reports
 

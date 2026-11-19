@@ -3027,6 +3027,8 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
 
     // Signing in with a token, through the window.
     press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    h.get_by_role_and_label(Role::Button, "Accounts").click();
+    h.run_ok();
     h.get_by_label("Add account…").click();
     h.run_ok();
     h.get_by_label("Self-managed GitLab").click();
@@ -3043,6 +3045,8 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
 
     // And with the browser, through the server's own app.
     press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    h.get_by_role_and_label(Role::Button, "Accounts").click();
+    h.run_ok();
     h.get_by_label("Add account…").click();
     h.run_ok();
     h.get_by_label("Self-managed GitLab").click();
@@ -4347,7 +4351,7 @@ fn switches_theme_and_size_in_settings() {
     assert_eq!(h.state().settings().theme, ThemeChoice::Raccoon);
     assert_eq!(h.state().settings().theme_mode, ThemeMode::Light);
     assert!(h.ctx.theme() == egui::Theme::Light);
-    h.get_by_label("Done").click();
+    h.get_by_label("Close settings").click();
     settle(&mut h);
     screenshot(&mut h, "35-light-diff");
     press(&mut h, egui::Modifiers::NONE, Key::Escape);
@@ -4491,7 +4495,7 @@ fn renders_every_theme() {
                     &format!("38-theme-picker-{}", mode_name.to_lowercase()),
                 );
             }
-            h.get_by_label("Done").click();
+            h.get_by_label("Close settings").click();
             settle(&mut h);
             screenshot(
                 &mut h,
@@ -4505,7 +4509,7 @@ fn renders_every_theme() {
         }
     }
     // Following the system.
-    h.get_by_label("System").click();
+    h.get_by_label("Match system").click();
     h.run_ok();
     assert_eq!(h.state().settings().theme_mode, ThemeMode::System);
     screenshot(&mut h, "38-theme-picker-system");
@@ -4820,10 +4824,70 @@ fn offers_crash_reports_without_sending_them() {
 }
 
 #[test]
+fn settings_are_in_sections_and_can_be_searched() {
+    use egui::accesskit::Role;
+    use git_raccoon::settings::{PullStrategy, ThemeMode};
+    let mut h = harness(Settings::default());
+    h.run_ok();
+    press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    // It opens on Appearance.
+    h.get_by_label("Light or dark");
+    assert!(
+        h.query_by_label("Terminal command").is_none(),
+        "one section at a time"
+    );
+    // Git: choose rebasing, then put the section back as it was.
+    h.get_by_role_and_label(Role::Button, "Git").click();
+    h.run_ok();
+    h.get_by_label("Rebase my commits on top").click();
+    h.run_ok();
+    assert_eq!(h.state().settings().pull.strategy, PullStrategy::Rebase);
+    h.get_by_label("Side by side").click();
+    h.run_ok();
+    assert!(h.state().settings().split_diff);
+    screenshot(&mut h, "63-settings-git");
+    h.get_by_label("Reset Git to defaults").click();
+    h.run_ok();
+    assert_eq!(
+        h.state().settings().pull.strategy,
+        PullStrategy::FastForwardOnly
+    );
+    assert!(!h.state().settings().split_diff);
+    // Searching finds a setting in any section.
+    type_into(&mut h, "Search settings", "terminal");
+    h.get_by_label("Terminal command");
+    assert!(h.query_by_label("Light or dark").is_none());
+    screenshot(&mut h, "64-settings-search");
+    h.get_by_label("Search settings").click();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+    h.get_by_label("Search settings")
+        .type_text("no such setting");
+    h.run_ok();
+    h.get_by_label_contains("No settings match");
+    // Clearing it goes back to the section it was on (Git).
+    h.get_by_label("Search settings").click();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+    h.key_press(Key::Backspace);
+    h.run_ok();
+    h.get_by_label("When both sides have new commits");
+    h.get_by_role_and_label(Role::Button, "Appearance").click();
+    h.run_ok();
+    h.get_by_label("Match system").click();
+    h.run_ok();
+    assert_eq!(h.state().settings().theme_mode, ThemeMode::System);
+    h.get_by_label("Close settings").click();
+    h.run_ok();
+    assert!(h.query_by_label("Search settings").is_none(), "closed");
+}
+
+#[test]
 fn shows_the_licenses() {
     let mut h = harness(Settings::default());
     h.run_ok();
     press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "About")
+        .click();
+    h.run_ok();
     h.get_by_label("Licenses…").click();
     h.run_ok();
     h.get_by_label_contains("is open source, licensed under either of the MIT license");

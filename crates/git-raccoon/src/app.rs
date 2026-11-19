@@ -2242,6 +2242,22 @@ impl eframe::App for App {
                     self.settings_open = false;
                     self.licenses = Some(crate::ui::licenses::Tab::GitRaccoon);
                 }
+                Some(crate::ui::settings::Action::WhatsNew) => {
+                    self.settings_open = false;
+                    self.run_command(&ctx, Command::WhatsNew);
+                }
+                Some(crate::ui::settings::Action::Feedback) => {
+                    self.settings_open = false;
+                    self.run_command(&ctx, Command::Feedback);
+                }
+                Some(crate::ui::settings::Action::BrowseCloneDir) => {
+                    if let Some(dir) = rfd::FileDialog::new()
+                        .set_title("Where clones go")
+                        .pick_folder()
+                    {
+                        self.settings.clone_dir = Some(dir.to_string_lossy().into_owned());
+                    }
+                }
                 None => {}
             }
         }
