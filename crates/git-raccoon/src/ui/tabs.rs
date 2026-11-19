@@ -87,7 +87,7 @@ pub fn show(ui: &mut egui::Ui, tabs: &[(u64, String)], active: usize) -> Option<
                 dragged = Some((*id, p.x - rect.left()));
             }
             if response.dragged() {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                crate::ui::cursors::grabbing(ui.ctx());
             }
             if response.drag_stopped() {
                 if let (Some(from), Some(to)) = (from, to)

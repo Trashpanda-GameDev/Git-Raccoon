@@ -936,7 +936,8 @@ fn drop_target(ui: &egui::Ui, response: &egui::Response, name: &str) -> Option<A
     })
 }
 
-/// While a branch is dragged, a label follows the pointer.
+/// While a branch (or tag) is dragged, a label follows the pointer, held
+/// in a closed hand.
 pub fn drag_label(ctx: &egui::Context) {
     let (Some(dragged), Some(pos)) = (
         egui::DragAndDrop::payload::<DragBranch>(ctx),
@@ -944,6 +945,7 @@ pub fn drag_label(ctx: &egui::Context) {
     ) else {
         return;
     };
+    crate::ui::cursors::grabbing(ctx);
     let painter = ctx.layer_painter(egui::LayerId::new(
         egui::Order::Tooltip,
         egui::Id::new("drag-branch"),

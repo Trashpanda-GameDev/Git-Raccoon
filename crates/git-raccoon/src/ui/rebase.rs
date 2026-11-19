@@ -182,7 +182,9 @@ fn row(ui: &mut egui::Ui, planner: &mut Planner, i: usize, count: usize) -> Opti
                 },
             );
             response.dnd_set_drag_payload(DragRow(i));
-            let response = response.on_hover_cursor(egui::CursorIcon::Grab);
+            if response.hovered() && !response.dragged() {
+                crate::ui::cursors::grab(ui.ctx());
+            }
             let name = format!("Drag {summary}");
             ui.ctx()
                 .accesskit_node_builder(response.id, |n| n.set_label(name));
@@ -292,6 +294,7 @@ fn drag_label(ctx: &egui::Context, planner: &Planner) {
     ) else {
         return;
     };
+    crate::ui::cursors::grabbing(ctx);
     let Some(r) = planner.rows.get(dragged.0) else {
         return;
     };

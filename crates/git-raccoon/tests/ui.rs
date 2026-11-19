@@ -2195,6 +2195,49 @@ fn the_side_panels_are_as_wide_as_you_drag_them() {
 }
 
 #[test]
+fn a_dragged_branch_is_held_in_a_hand() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    settle(&mut h);
+    let cursor = |h: &Harness<'_, App>| {
+        let out = &h.output().platform_output;
+        (out.cursor_icon, out.cursor_image.is_some())
+    };
+    // A branch in the sidebar, picked up and carried towards main.
+    let from = h.get_by_label("toolbar-glitch").rect().center();
+    let to = h.get_all_by_label("main").next().unwrap().rect().center();
+    h.event(egui::Event::PointerMoved(from));
+    h.run_ok();
+    h.event(egui::Event::PointerButton {
+        pos: from,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_ok();
+    for i in 1..=6 {
+        #[expect(clippy::cast_precision_loss, reason = "a few steps")]
+        h.event(egui::Event::PointerMoved(
+            from + (to - from) * (i as f32 / 10.0),
+        ));
+        h.step();
+    }
+    h.step();
+    // A closed hand (an image: the system's grab cursor is four arrows on
+    // Windows), not the arrows.
+    assert_eq!(cursor(&h), (egui::CursorIcon::Grabbing, true));
+    screenshot(&mut h, "80-dragging-branch");
+    h.event(egui::Event::PointerButton {
+        pos: from,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_ok();
+}
+
+#[test]
 fn moves_columns_by_dragging_their_headings() {
     use git_raccoon::settings::Column;
     let sample = Sample::build();

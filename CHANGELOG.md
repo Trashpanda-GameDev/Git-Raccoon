@@ -3,6 +3,10 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.16
+
+- **A hand holds what you drag**: dragging a branch (in the sidebar or by its label on the graph), a tab, or a commit in the interactive rebase planner shows a closed hand, as dragging a column heading already did, instead of the four-arrows pointer Windows shows. Commits in the planner show an open hand when you point at them.
+
 ## 0.5.15
 
 - **Fetches in the background**, every 10 minutes to start with: new commits on the remotes show up without pressing Fetch. Settings › Git › *Fetch automatically* sets how often (1 to 60 minutes), or 0 to turn it off. It never asks for a password: a remote that needs one is left for you to fetch, and the Fetch button's tip says when it last fetched (or why it couldn't).
