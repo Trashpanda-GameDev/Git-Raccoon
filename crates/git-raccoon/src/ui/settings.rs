@@ -1196,6 +1196,16 @@ fn control(
             });
         }
         "Corner roundness" => {
+            // A track wide enough to read as a slider, filled in the accent
+            // up to the value, with a round handle.
+            ui.spacing_mut().slider_width = 180.0;
+            ui.spacing_mut().slider_rail_height = 6.0;
+            let visuals = ui.visuals_mut();
+            visuals.selection.bg_fill = theme::accent();
+            visuals.handle_shape = egui::style::HandleShape::Circle;
+            visuals.widgets.inactive.bg_fill = theme::border();
+            visuals.widgets.inactive.fg_stroke.color = theme::text();
+            visuals.widgets.hovered.fg_stroke.color = theme::text();
             let slider = ui.add(
                 egui::Slider::new(
                     &mut settings.branch_lines.corner,
@@ -1203,6 +1213,7 @@ fn control(
                 )
                 .step_by(1.0)
                 .fixed_decimals(0)
+                .trailing_fill(true)
                 .suffix(" px"),
             );
             ui.ctx()

@@ -6389,6 +6389,12 @@ fn draws_branch_lines_the_chosen_way() {
     h.get_by_role_and_label(Role::Slider, "Corner roundness")
         .scroll_to_me();
     h.run_ok();
+    screenshot(&mut h, "68b-corner-roundness");
+    // A slider you can see: a track wide enough to read as one.
+    let track = h
+        .get_by_role_and_label(Role::Slider, "Corner roundness")
+        .rect();
+    assert!(track.width() >= 150.0, "{track:?}");
     h.get_by_role_and_label(Role::Slider, "Corner roundness")
         .focus();
     h.run_ok();
