@@ -243,7 +243,9 @@ mod tests {
         let kept = discard_with(app.path(), &files, bin.keep()).unwrap();
         assert!(kept.is_empty(), "nothing went to the trash");
         assert_eq!(head("HEAD"), recorded, "back on the recorded commit");
-        assert_eq!(std::fs::read_to_string(sub.join("f.txt")).unwrap(), "one\n");
+        // (Checked out with the platform's line endings.)
+        let text = std::fs::read_to_string(sub.join("f.txt")).unwrap();
+        assert_eq!(text.replace("\r\n", "\n"), "one\n");
         // Its own commit is still there.
         assert_eq!(head(&format!("{newer}^{{commit}}")), newer);
         assert!(
