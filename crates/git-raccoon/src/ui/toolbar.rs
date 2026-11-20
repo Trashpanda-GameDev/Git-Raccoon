@@ -234,6 +234,27 @@ pub fn show(
             {
                 action = Some(Action::Feedback);
             }
+            // Agents connected now (see Settings › Agents).
+            let agents: crate::app::AgentsStatus = ui
+                .ctx()
+                .data(|d| d.get_temp(crate::app::agents_status_id()))
+                .unwrap_or_default();
+            if !agents.clients.is_empty() {
+                let tip = format!(
+                    "Connected: {}. They read freely, and ask before changing anything.",
+                    agents.clients.join(", ")
+                );
+                let button = ui.add(
+                    egui::Button::new(RichText::new(icon::ROBOT).size(16.0).color(theme::accent()))
+                        .frame(false),
+                );
+                ui.ctx()
+                    .accesskit_node_builder(button.id, |n| n.set_label("Agents connected"));
+                if button.on_hover_text(tip).clicked() {
+                    crate::ui::settings::open_on_agents(ui.ctx());
+                    action = Some(Action::Settings);
+                }
+            }
             if let Some(version) = update {
                 let button = egui::Button::new(
                     RichText::new(format!("{}  Restart to update to {version}", icon::ARROW_CIRCLE_UP))

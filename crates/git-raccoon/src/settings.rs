@@ -193,6 +193,9 @@ pub struct Settings {
     pub pinned_branches: std::collections::BTreeMap<String, Vec<String>>,
     /// Review comments not sent yet, by request (see `ForgeView::drafts_key`).
     pub review_drafts: std::collections::BTreeMap<String, Vec<crate::forge::review::Draft>>,
+    /// AI agents may connect (over MCP, through `git-raccoon mcp`). Off
+    /// unless turned on.
+    pub agents: bool,
     /// Which defaults these settings were saved with (see `upgrade`):
     /// 0 when missing, from a version before there was this field.
     #[serde(default)]
@@ -371,6 +374,7 @@ impl Default for Settings {
             sidebar_hidden: Vec::new(),
             review_drafts: std::collections::BTreeMap::new(),
             pinned_branches: std::collections::BTreeMap::new(),
+            agents: false,
             columns: Column::ALL.to_vec(),
             themes: Vec::new(),
             branch_lines: BranchLines::default(),

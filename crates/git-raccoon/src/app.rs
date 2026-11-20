@@ -84,7 +84,20 @@ pub struct App {
     sign_in_work: Option<SignInWork>,
     /// Reports of earlier crashes, offered one at a time.
     crash_reports: Vec<crate::crash::Report>,
+    /// Letting agents in (while the setting is on), and why it couldn't.
+    agent: Option<crate::agent::Server>,
+    agent_error: Option<String>,
+    /// Where it says how to reach it (`None`: nowhere, as in tests).
+    agent_file: Option<PathBuf>,
+    /// An agent's change the person is asked about, and those running.
+    agent_asking: Option<agent_calls::Asking>,
+    agent_waiting: Vec<agent_calls::Waiting>,
+    /// Connections allowed to make changes for the rest of their session.
+    agent_trusted: std::collections::HashSet<u64>,
 }
+
+mod agent_calls;
+pub(crate) use agent_calls::{AgentsStatus, status_id as agents_status_id};
 
 /// A repository being opened: its path, the load, and its tab's id.
 type Opening = (String, Task<Result<Loaded, String>>, u64);
@@ -168,6 +181,7 @@ impl App {
         if let Some(dir) = crate::crash::folder() {
             app.load_crash_reports(&dir);
         }
+        app.agent_file = crate::agent::connection_file();
         app.restore_tabs(&cc.egui_ctx);
         app
     }
@@ -216,6 +230,12 @@ impl App {
             updater: crate::updates::Updater::new(),
             restart_to_update: false,
             crash_reports: Vec::new(),
+            agent: None,
+            agent_error: None,
+            agent_file: None,
+            agent_asking: None,
+            agent_waiting: Vec::new(),
+            agent_trusted: std::collections::HashSet::new(),
             licenses: None,
             new_request: None,
             new_request_post: None,
@@ -743,8 +763,26 @@ impl App {
     }
 
     /// The new pull/merge request window's form, if it's open.
+    /// Where agents connect, and the token, while they may (for tests).
+    #[doc(hidden)]
+    pub fn agent_address(&self) -> Option<(u16, String)> {
+        self.agent.as_ref().map(crate::agent::Server::address)
+    }
+
+    /// What an agent asks the person about now, if anything (for tests).
+    #[doc(hidden)]
+    pub fn agent_question_shown(&self) -> bool {
+        self.agent_asking.is_some()
+    }
+
     pub fn new_request_form(&self) -> Option<&crate::ui::forge::NewForm> {
         self.new_request.as_ref()
+    }
+
+    /// The settings, to change (for tests).
+    #[doc(hidden)]
+    pub fn settings_mut(&mut self) -> &mut Settings {
+        &mut self.settings
     }
 
     pub fn settings(&self) -> &Settings {
@@ -2496,6 +2534,7 @@ impl eframe::App for App {
             }
         }
         self.poll_clone(ctx);
+        self.agents(ctx);
         if let Some(repo) = &mut self.repo {
             repo.whole_file = self.settings.whole_file;
             repo.auto_fetch(

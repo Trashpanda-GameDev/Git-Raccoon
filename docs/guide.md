@@ -15,6 +15,7 @@ Git Raccoon shows your project's history as a graph, and lets you do everyday Gi
 - [Looking back: file history and blame](#looking-back-file-history-and-blame)
 - [Undo](#undo)
 - [Tabs, submodules and worktrees](#tabs-submodules-and-worktrees)
+- [AI agents](#ai-agents)
 - [Keyboard and the command palette](#keyboard-and-the-command-palette)
 - [Themes and settings](#themes-and-settings)
 - [Updates, feedback and crash reports](#updates-feedback-and-crash-reports)
@@ -340,6 +341,22 @@ It covers commits, amends, checkouts, merges, rebases, cherry-picks, reverts, re
 - **Submodules:** listed in the sidebar. Right-click to open one in a tab, or update it. **+** adds one: give its URL, and the folder to put it in. It's cloned there and staged with `.gitmodules`, ready to commit.
 - **Worktrees** (extra working folders of the same repository): **+** adds one; right-click to open or remove it.
 - **Git LFS:** repositories using it show an *LFS* badge (amber if git-lfs isn't installed).
+
+## AI agents
+
+Agents such as Claude Code, Claude Desktop or Cursor can work with Git Raccoon through MCP (the Model Context Protocol). It's off unless you turn it on.
+
+1. **Turn it on:** *Settings › Agents › Let AI agents connect.*
+2. **Add Git Raccoon to the agent:** the same page has the command (for Claude Code) and the config (for the others), with copy buttons. The agent runs `git-raccoon mcp`, which reaches the app while it's open.
+
+What an agent can do:
+
+- **Read, freely:** the repositories open here, what you're looking at, status, history and search, commits and diffs, branches, tags and stashes, and pull/merge requests with their threads.
+- **Show you things:** select a commit, open a request or a repository, or start a new request filled in for you to check and open.
+- **Change things, once you allow it:** stage, commit, branches, checkout, stash, tags, merge, fetch, pull and push. Each change asks you: *Allow*, *Allow for this session*, or *Deny*. Discarding changes asks every time. Pushes never force, and pulls never throw changes away.
+- **Comment on requests, as drafts:** comments and replies go into your drafts; you send them when you finish your review. Resolving a thread asks you first.
+
+A robot in the toolbar shows while an agent is connected. Agents can only connect from this computer, with a key the app keeps beside its settings.
 
 ## Keyboard and the command palette
 

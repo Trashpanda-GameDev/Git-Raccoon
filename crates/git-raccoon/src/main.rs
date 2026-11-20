@@ -9,6 +9,10 @@ fn main() -> eframe::Result {
     if let Some(code) = git_raccoon_core::askpass::run_if_asked() {
         std::process::exit(code);
     }
+    // `git-raccoon mcp`: started by an AI agent, to reach the running app.
+    if std::env::args_os().nth(1).is_some_and(|a| a == "mcp") {
+        std::process::exit(git_raccoon::agent::run_bridge());
+    }
     // Velopack's install, update and uninstall steps run here (and exit).
     velopack::VelopackApp::build().run();
     // Git, not libgit2, decides which folders are safe to open.

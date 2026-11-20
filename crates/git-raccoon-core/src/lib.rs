@@ -36,3 +36,9 @@ pub mod words;
 pub mod working;
 
 pub use error::{Error, Result};
+
+/// Runs `git` with `args` in the repository at `path` and returns what it
+/// printed (for queries that read, such as `log` or `diff`).
+pub fn git_output(path: &str, args: &[&str]) -> Result<String> {
+    cli::run(path, args, None)
+}

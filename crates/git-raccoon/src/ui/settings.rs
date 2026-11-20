@@ -43,16 +43,18 @@ pub enum Section {
     Git,
     Accounts,
     Tools,
+    Agents,
     Updates,
     About,
 }
 
 impl Section {
-    const ALL: [Section; 6] = [
+    const ALL: [Section; 7] = [
         Section::Appearance,
         Section::Git,
         Section::Accounts,
         Section::Tools,
+        Section::Agents,
         Section::Updates,
         Section::About,
     ];
@@ -63,6 +65,7 @@ impl Section {
             Section::Git => "Git",
             Section::Accounts => "Accounts",
             Section::Tools => "Tools",
+            Section::Agents => "Agents",
             Section::Updates => "Updates and privacy",
             Section::About => "About",
         }
@@ -74,6 +77,7 @@ impl Section {
             Section::Git => icon::GIT_BRANCH,
             Section::Accounts => icon::USER_CIRCLE,
             Section::Tools => icon::TERMINAL_WINDOW,
+            Section::Agents => icon::ROBOT,
             Section::Updates => icon::ARROWS_CLOCKWISE,
             Section::About => icon::INFO,
         }
@@ -89,6 +93,9 @@ impl Section {
                 "GitHub and GitLab accounts, for pull requests, issues and cloning."
             }
             Section::Tools => "Other programs Git Raccoon works with.",
+            Section::Agents => {
+                "AI agents, such as Claude Code, working with Git Raccoon: they read freely, and ask before changing anything."
+            }
             Section::Updates => "Updates, and what Git Raccoon remembers.",
             Section::About => "This version, its licenses, and telling us what you think.",
         }
@@ -120,6 +127,7 @@ impl Section {
                 settings.terminal = d.terminal;
                 settings.clone_dir = d.clone_dir;
             }
+            Section::Agents => settings.agents = d.agents,
             Section::Updates => settings.no_update_checks = d.no_update_checks,
             Section::Accounts | Section::About => {}
         }
@@ -246,6 +254,18 @@ const ROWS: &[Row] = &[
         words: "clone folder directory default",
     },
     Row {
+        section: Section::Agents,
+        name: "Agent access",
+        hint: "Off unless you turn it on.",
+        words: "ai agent mcp claude cursor assistant connect model context protocol",
+    },
+    Row {
+        section: Section::Agents,
+        name: "Connect an agent",
+        hint: "Add Git Raccoon to the agent's MCP servers.",
+        words: "ai agent mcp claude code desktop cursor setup config command",
+    },
+    Row {
         section: Section::Updates,
         name: "Updates",
         hint: "",
@@ -310,6 +330,16 @@ pub fn open_on_updates(ctx: &egui::Context) {
     let id = egui::Id::new("settings-window");
     let mut view: View = ctx.data(|d| d.get_temp(id)).unwrap_or_default();
     view.section = Section::Updates;
+    view.search.clear();
+    view.editing = None;
+    ctx.data_mut(|d| d.insert_temp(id, view));
+}
+
+/// Opens the settings window on the Agents page next time it's shown.
+pub fn open_on_agents(ctx: &egui::Context) {
+    let id = egui::Id::new("settings-window");
+    let mut view: View = ctx.data(|d| d.get_temp(id)).unwrap_or_default();
+    view.section = Section::Agents;
     view.search.clear();
     view.editing = None;
     ctx.data_mut(|d| d.insert_temp(id, view));
@@ -1123,6 +1153,81 @@ fn draw(
     ui.add_space(10.0);
 }
 
+/// The switch for agents, and how they stand.
+fn agent_access(ui: &mut egui::Ui, settings: &mut Settings) {
+    let toggle = ui.checkbox(&mut settings.agents, "Let AI agents connect");
+    ui.ctx()
+        .accesskit_node_builder(toggle.id, |n| n.set_label("Let AI agents connect"));
+    hint(
+        ui,
+        "Agents can read the repositories open here (history, changes, branches, pull/merge requests). Anything that changes a repository asks you first; comments they write stay drafts until you send them.",
+    );
+    let status: crate::app::AgentsStatus = ui
+        .ctx()
+        .data(|d| d.get_temp(crate::app::agents_status_id()))
+        .unwrap_or_default();
+    if let Some(e) = &status.error {
+        ui.label(RichText::new(e).size(12.0).color(theme::danger()));
+    } else if settings.agents && !status.on {
+        ui.label(RichText::new("Starting…").size(12.0).color(theme::muted()));
+    } else if settings.agents {
+        let (text, colour) = if status.clients.is_empty() {
+            ("No agent is connected.".to_string(), theme::muted())
+        } else {
+            (
+                format!("{}  Connected: {}", icon::ROBOT, status.clients.join(", ")),
+                theme::add(),
+            )
+        };
+        ui.label(RichText::new(text).size(12.0).color(colour));
+    }
+}
+
+/// How to add Git Raccoon to an agent: its command, ready to copy.
+fn connect_agent(ui: &mut egui::Ui) {
+    let exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "git-raccoon".into());
+    let config = serde_json::to_string_pretty(&serde_json::json!({
+        "mcpServers": { "git-raccoon": { "command": exe, "args": ["mcp"] } }
+    }))
+    .unwrap_or_default();
+    let snippets = [
+        (
+            "Claude Code",
+            format!("claude mcp add git-raccoon -- \"{exe}\" mcp"),
+        ),
+        (
+            "Claude Desktop, Cursor and others (their MCP config)",
+            config,
+        ),
+    ];
+    for (for_whom, text) in snippets {
+        ui.label(RichText::new(for_whom).size(12.0).color(theme::muted()));
+        ui.horizontal(|ui| {
+            egui::Frame::new()
+                .fill(theme::bg_raised())
+                .corner_radius(4)
+                .inner_margin(egui::Margin::symmetric(8, 6))
+                .show(ui, |ui| {
+                    ui.set_max_width(440.0);
+                    ui.add(egui::Label::new(RichText::new(&text).font(theme::mono(12.0))).wrap());
+                });
+            let copy = ui.button(icon::COPY).on_hover_text("Copy");
+            ui.ctx()
+                .accesskit_node_builder(copy.id, |n| n.set_label(format!("Copy for {for_whom}")));
+            if copy.clicked() {
+                ui.ctx().copy_text(text.clone());
+            }
+        });
+        ui.add_space(4.0);
+    }
+    hint(
+        ui,
+        "Git Raccoon has to be open, with agent access on, for an agent to reach it.",
+    );
+}
+
 fn hint(ui: &mut egui::Ui, text: impl Into<String>) {
     ui.add(egui::Label::new(RichText::new(text.into()).size(12.0).color(theme::muted())).wrap());
 }
@@ -1438,6 +1543,8 @@ fn control(
                 "For another terminal, its command, like alacritty --working-directory \"{path}\"; {path} is the repository's folder.",
             );
         }
+        "Agent access" => agent_access(ui, settings),
+        "Connect an agent" => connect_agent(ui),
         "Clone into" => {
             ui.horizontal(|ui| {
                 let mut dir = settings.clone_dir.clone().unwrap_or_default();

@@ -3667,6 +3667,7 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     .unwrap();
     let mut h = harness(Settings {
         accounts: vec![account],
+        agents: true,
         ..Settings::default()
     });
     open(&mut h, sample.path());
@@ -4009,6 +4010,51 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
             );
         }
     }
+    // An agent reads the request, drafts a comment, and reopens a thread.
+    let mut agent = AgentLink::connect(&mut h);
+    let (list, error) = agent.call(&mut h, "list_requests", serde_json::json!({}));
+    assert!(
+        !error && list.contains("Pipeline cache") && list.contains("Slow start"),
+        "{list}"
+    );
+    let (request, error) = agent.call(&mut h, "get_request", serde_json::json!({}));
+    assert!(
+        !error && request.contains("\"id\": \"d2\"") && request.contains("Why another?"),
+        "{request}"
+    );
+    let (done, error) = agent.call_asking(
+        &mut h,
+        "draft_comment",
+        serde_json::json!({ "body": "From the agent", "path": "README.md", "line": 3 }),
+        "Allow",
+    );
+    assert!(!error, "{done}");
+    let draft = h
+        .state()
+        .settings()
+        .review_drafts
+        .values()
+        .flatten()
+        .find(|d| d.body == "From the agent")
+        .cloned()
+        .expect("a draft");
+    assert_eq!(
+        draft.at.map(|a| (a.path, a.line.new)),
+        Some(("README.md".into(), Some(3)))
+    );
+    let (_, error) = agent.call_asking(
+        &mut h,
+        "resolve_thread",
+        serde_json::json!({ "thread": "d2", "resolved": false }),
+        "Allow",
+    );
+    assert!(!error);
+    assert!(seen.lock().unwrap().iter().any(|(r, _)| {
+        r == &format!("PUT {api}/merge_requests/12/discussions/d2?resolved=false")
+    }));
+    // (The draft goes, so what follows starts as before.)
+    h.state_mut().settings_mut().review_drafts.clear();
+    h.run_ok();
     // Merging.
     h.get_by_label("Merge…").click();
     h.run_ok();
@@ -6687,4 +6733,306 @@ fn shows_the_licenses() {
     h.get_by_label("Close licenses").click();
     h.run_ok();
     assert!(h.query_by_label("Syntax themes").is_none(), "closed");
+}
+
+/// An agent connected to the app, as `git-raccoon mcp` would be.
+struct AgentLink {
+    out: std::net::TcpStream,
+    lines: std::sync::mpsc::Receiver<String>,
+    next: u64,
+}
+
+impl AgentLink {
+    fn connect(h: &mut Harness<'_, App>) -> Self {
+        use std::io::{BufRead as _, Write as _};
+        h.run_ok();
+        let (port, token) = h.state().agent_address().expect("letting agents in");
+        let mut out = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        out.write_all(format!("{token}\n").as_bytes()).unwrap();
+        let reader = std::io::BufReader::new(out.try_clone().unwrap());
+        let (send, lines) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for line in reader.lines() {
+                let Ok(line) = line else { break };
+                if send.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        let mut link = AgentLink {
+            out,
+            lines,
+            next: 1,
+        };
+        let init = link.request(
+            h,
+            "initialize",
+            serde_json::json!({ "protocolVersion": "2025-06-18", "clientInfo": { "name": "test-agent" }, "capabilities": {} }),
+        );
+        assert_eq!(init["result"]["serverInfo"]["name"], "git-raccoon");
+        link
+    }
+
+    /// Sends a request, without waiting for the answer.
+    fn send(&mut self, method: &str, params: serde_json::Value) {
+        use std::io::Write as _;
+        let message = serde_json::json!({ "jsonrpc": "2.0", "id": self.next, "method": method, "params": params });
+        self.next += 1;
+        self.out
+            .write_all(format!("{message}\n").as_bytes())
+            .unwrap();
+    }
+
+    /// Waits for the next answer, stepping the app meanwhile.
+    fn answer(&mut self, h: &mut Harness<'_, App>) -> serde_json::Value {
+        let start = Instant::now();
+        loop {
+            if let Ok(line) = self.lines.try_recv() {
+                return serde_json::from_str(&line).unwrap();
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(30),
+                "no answer from the app"
+            );
+            h.step();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn request(
+        &mut self,
+        h: &mut Harness<'_, App>,
+        method: &str,
+        params: serde_json::Value,
+    ) -> serde_json::Value {
+        self.send(method, params);
+        self.answer(h)
+    }
+
+    /// Calls a tool: its text, and whether it's an error.
+    fn call(
+        &mut self,
+        h: &mut Harness<'_, App>,
+        tool: &str,
+        args: serde_json::Value,
+    ) -> (String, bool) {
+        let a = self.request(
+            h,
+            "tools/call",
+            serde_json::json!({ "name": tool, "arguments": args }),
+        );
+        Self::result(&a)
+    }
+
+    fn result(a: &serde_json::Value) -> (String, bool) {
+        (
+            a["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+            a["result"]["isError"].as_bool().unwrap_or(true),
+        )
+    }
+
+    /// Calls a tool that asks the person, answers with `button`, and
+    /// returns how it went.
+    fn call_asking(
+        &mut self,
+        h: &mut Harness<'_, App>,
+        tool: &str,
+        args: serde_json::Value,
+        button: &str,
+    ) -> (String, bool) {
+        self.send(
+            "tools/call",
+            serde_json::json!({ "name": tool, "arguments": args }),
+        );
+        let start = Instant::now();
+        while !h.state().agent_question_shown() {
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "{tool} didn't ask"
+            );
+            h.step();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        h.run_ok();
+        h.get_by_label(button).click();
+        let a = self.answer(h);
+        Self::result(&a)
+    }
+}
+
+#[test]
+fn agents_stay_out_unless_let_in() {
+    let mut h = harness(Settings::default());
+    h.run_ok();
+    assert!(h.state().agent_address().is_none(), "off unless turned on");
+}
+
+#[test]
+fn agents_read_freely_and_change_with_permission() {
+    let sample = Sample::build();
+    let mut h = harness(Settings {
+        agents: true,
+        ..Settings::default()
+    });
+    open(&mut h, sample.path());
+    let bin = sample.dir.with_extension("bin");
+    h.state_mut().repo_mut().unwrap().trash_override = Some(bin.clone());
+    let mut agent = AgentLink::connect(&mut h);
+    let root = sample.path().trim_end_matches(['/', '\\']).to_string();
+
+    // Reading.
+    let (repos, error) = agent.call(&mut h, "list_repositories", serde_json::json!({}));
+    assert!(
+        !error && repos.contains(&root) && repos.contains("\"in_front\": true"),
+        "{repos}"
+    );
+    let (status, _) = agent.call(&mut h, "get_status", serde_json::json!({}));
+    let status: serde_json::Value = serde_json::from_str(&status).unwrap();
+    assert_eq!(status["branch"], "main");
+    let (log, _) = agent.call(&mut h, "get_log", serde_json::json!({ "limit": 2 }));
+    let log: serde_json::Value = serde_json::from_str(&log).unwrap();
+    assert_eq!(log.as_array().unwrap().len(), 2);
+    let head = log[0]["id"].as_str().unwrap().to_string();
+    let (commit, _) = agent.call(&mut h, "get_commit", serde_json::json!({ "id": head }));
+    assert!(commit.contains(&head), "{commit}");
+    let (diff, _) = agent.call(&mut h, "get_diff", serde_json::json!({ "commit": head }));
+    assert!(diff.contains("diff --git"), "{diff}");
+    let (found, _) = agent.call(
+        &mut h,
+        "search_commits",
+        serde_json::json!({ "query": "colour lanes" }),
+    );
+    assert!(found.contains("Colour lanes"), "{found}");
+    let (refs, _) = agent.call(&mut h, "get_refs", serde_json::json!({}));
+    assert!(
+        refs.contains("feature/graph") && refs.contains("v0.1.0"),
+        "{refs}"
+    );
+    // Revisions that Git would read as options are refused.
+    let (_, error) = agent.call(
+        &mut h,
+        "get_log",
+        serde_json::json!({ "revision": "--output=/tmp/x" }),
+    );
+    assert!(error);
+    // Not open here: said so.
+    let (why, error) = agent.call(
+        &mut h,
+        "get_status",
+        serde_json::json!({ "repository": "/nowhere" }),
+    );
+    assert!(error && why.contains("isn't open"), "{why}");
+    // Showing a commit selects it.
+    let older = log[1]["id"].as_str().unwrap().to_string();
+    let (_, error) = agent.call(&mut h, "show_commit", serde_json::json!({ "id": older }));
+    assert!(!error);
+    assert_eq!(
+        h.state()
+            .repo()
+            .unwrap()
+            .selected
+            .as_ref()
+            .map(|s| s.id.clone()),
+        Some(older)
+    );
+    let (view, _) = agent.call(&mut h, "get_view", serde_json::json!({}));
+    assert!(view.contains("selected_commit"), "{view}");
+
+    // A change asks first: no.
+    sample.write("notes.txt", "from the agent\n");
+    wait_for(&mut h, "the new file", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.unstaged.iter().any(|f| f.path == "notes.txt"))
+    });
+    screenshot(&mut h, "90-agent-before");
+    let (why, error) = agent.call_asking(
+        &mut h,
+        "stage",
+        serde_json::json!({ "paths": ["notes.txt"] }),
+        "Deny",
+    );
+    assert!(error && why.contains("said no"), "{why}");
+    // Yes, for the session.
+    let (done, error) = agent.call_asking(
+        &mut h,
+        "stage",
+        serde_json::json!({ "paths": ["notes.txt"] }),
+        "Allow for this session",
+    );
+    assert!(!error, "{done}");
+    wait_for(&mut h, "it staged", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.staged.iter().any(|f| f.path == "notes.txt"))
+    });
+    // Then changes go ahead, and what's typed in the commit box stays.
+    h.state_mut().repo_mut().unwrap().draft.summary = "My own message".into();
+    let (done, error) = agent.call(
+        &mut h,
+        "commit",
+        serde_json::json!({ "message": "Add notes\n\nWritten by an agent." }),
+    );
+    assert!(!error, "{done}");
+    assert!(!h.state().agent_question_shown());
+    let (log, _) = agent.call(&mut h, "get_log", serde_json::json!({ "limit": 1 }));
+    assert!(log.contains("Add notes"), "{log}");
+    assert_eq!(h.state().repo().unwrap().draft.summary, "My own message");
+
+    // Discarding asks every time, even now.
+    sample.write("notes.txt", "changed again\n");
+    wait_for(&mut h, "the change", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.unstaged.iter().any(|f| f.path == "notes.txt"))
+    });
+    agent.send(
+        "tools/call",
+        serde_json::json!({ "name": "discard", "arguments": { "paths": ["notes.txt"] } }),
+    );
+    let start = Instant::now();
+    while !h.state().agent_question_shown() {
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "discard didn't ask"
+        );
+        h.step();
+    }
+    h.run_ok();
+    assert!(
+        h.query_by_label("Allow for this session").is_none(),
+        "asked every time"
+    );
+    screenshot(&mut h, "91-agent-asks");
+    h.get_by_label("Allow").click();
+    let (done, error) = AgentLink::result(&agent.answer(&mut h));
+    assert!(!error, "{done}");
+    assert_eq!(
+        read(&sample, "notes.txt").as_deref(),
+        Some("from the agent\n")
+    );
+
+    // The Agents page says who's connected (the toolbar's robot opens it).
+    h.get_by_label("Agents connected").click();
+    h.run_ok();
+    h.get_by_label_contains("Connected: test-agent");
+    h.get_by_label("Copy for Claude Code");
+    screenshot(&mut h, "92-agents-settings");
+    h.key_press(Key::Escape);
+    h.run_ok();
+
+    // Turning access off lets it go.
+    h.state_mut().settings_mut().agents = false;
+    h.run_ok();
+    assert!(h.state().agent_address().is_none());
+    let _ = std::fs::remove_dir_all(bin);
 }

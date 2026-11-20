@@ -3,6 +3,14 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.23
+
+- **Let AI agents work with Git Raccoon** (Settings › Agents, off unless you turn it on): Claude Code, Claude Desktop, Cursor and others connect over MCP through `git-raccoon mcp`, with the setup ready to copy.
+  - They read freely: status, history, commits and diffs, branches, and pull/merge requests with their threads.
+  - They can show you things: a commit, a request, a new request filled in for you to open.
+  - Changes ask you first (*Allow*, *Allow for this session*, *Deny*); discarding asks every time. Comments they write are drafts you send with your review.
+  - A robot in the toolbar shows while one is connected.
+
 ## 0.5.22
 
 - **Add a submodule from the sidebar**: *Submodules* is always there now (hide it like any section, by right-clicking a section's heading), and its **+** adds one from a URL, into the folder you choose. It's cloned and staged with `.gitmodules`, ready to commit.

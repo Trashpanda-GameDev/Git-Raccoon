@@ -1411,6 +1411,11 @@ pub struct RepoView {
     /// pull/merge request for (once the push is done: then `true`).
     pub offer_request: Option<(String, bool)>,
     committing: Option<Task<Result<Option<Undoable>, String>>>,
+    /// Who hears how the operation or commit running now went (an agent's):
+    /// `Ok` or Git's error.
+    report: Option<std::sync::mpsc::Sender<Result<(), String>>>,
+    /// The commit running is an agent's: the commit box stays as it is.
+    commit_for_agent: bool,
     /// How to undo the last action, if it can be.
     pub undo: Option<Undoable>,
     /// The conflicted file being resolved, if one is open.
@@ -1523,6 +1528,8 @@ impl RepoView {
             open_when_done: None,
             offer_request: None,
             committing: None,
+            report: None,
+            commit_for_agent: false,
             undo: None,
             conflict: None,
             planner: None,
@@ -1606,6 +1613,45 @@ impl RepoView {
             let made = commit::commit(&path, &message, amend).map_err(|e| e.to_string())?;
             Ok(undo_commit(&path, &made, amend, &message))
         }));
+    }
+
+    /// Runs `op` for an agent, and says how it went on `report` once done.
+    /// `false` (and nothing run) while something else is running.
+    pub fn run_reporting(
+        &mut self,
+        ctx: &egui::Context,
+        op: Op,
+        report: std::sync::mpsc::Sender<Result<(), String>>,
+    ) -> bool {
+        if self.op.is_some() || self.committing.is_some() {
+            return false;
+        }
+        self.report = Some(report);
+        self.start(ctx, op, None);
+        true
+    }
+
+    /// Commits (or amends) with `message` for an agent, leaving the commit
+    /// box as it is, and says how it went on `report`. `false` (and nothing
+    /// done) while something else is running.
+    pub fn commit_reporting(
+        &mut self,
+        ctx: &egui::Context,
+        message: String,
+        amend: bool,
+        report: std::sync::mpsc::Sender<Result<(), String>>,
+    ) -> bool {
+        if self.op.is_some() || self.committing.is_some() {
+            return false;
+        }
+        let path = self.path().to_string();
+        self.report = Some(report);
+        self.commit_for_agent = true;
+        self.committing = Some(Task::spawn(ctx, move || {
+            let made = commit::commit(&path, &message, amend).map_err(|e| e.to_string())?;
+            Ok(undo_commit(&path, &made, amend, &message))
+        }));
+        true
     }
 
     /// Switches amending on or off. Turning it on fills in the last commit's
@@ -2949,9 +2995,16 @@ impl RepoView {
             && let Some(result) = task.poll()
         {
             self.committing = None;
+            let for_agent = std::mem::take(&mut self.commit_for_agent);
+            if let Some(report) = self.report.take() {
+                let _ = report.send(result.as_ref().map(drop).map_err(Clone::clone));
+            }
             match result {
                 Ok(undo) => {
-                    self.draft = CommitDraft::default();
+                    // An agent's commit leaves what's typed in the box.
+                    if !for_agent {
+                        self.draft = CommitDraft::default();
+                    }
                     self.undo = undo;
                     self.refresh(ctx);
                 }
@@ -2963,6 +3016,9 @@ impl RepoView {
         {
             let (op, message) = (running.op.clone(), running.message.clone());
             self.op = None;
+            if let Some(report) = self.report.take() {
+                let _ = report.send(result.as_ref().map(drop).map_err(ToString::to_string));
+            }
             self.picked.clear();
             self.pick_anchor = None;
             match result {
