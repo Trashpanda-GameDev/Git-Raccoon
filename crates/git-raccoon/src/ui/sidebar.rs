@@ -884,6 +884,8 @@ pub enum Action {
     /// Open a new pull/merge request.
     /// List the next page of requests (`true`) or issues.
     LoadMore(bool),
+    /// Pin a local branch to the top of the list, or unpin it.
+    Pin(String, bool),
     /// A new pull/merge request: from this branch, or the checked-out one.
     NewRequest(Option<String>),
     /// Open a page on the forge.
@@ -1278,6 +1280,8 @@ pub struct Shown<'a> {
     pub web: &'a crate::forge::Web,
     /// Sections hidden (by key).
     pub hidden: &'a [String],
+    /// Local branches pinned to the top.
+    pub pinned: &'a [String],
 }
 
 pub fn show(
@@ -1294,6 +1298,7 @@ pub fn show(
         forge,
         web,
         hidden,
+        pinned,
     } = shown;
     ui.add_space(8.0);
     ui.horizontal(|ui| {
@@ -1455,100 +1460,120 @@ pub fn show(
                     if local.is_empty() {
                         empty(ui, if none.is_empty() { "No branches" } else { none });
                     }
-                    let nodes =
-                        build_tree(local.iter().copied(), |b: &LocalBranch| b.name.as_str());
-                    tree(
-                        ui,
-                        c,
-                        &nodes,
-                        "local",
-                        0,
-                        &mut |ui, c, b: &LocalBranch, name, depth| {
-                            let mut badges = Vec::new();
-                            let tooltip = match &b.upstream {
-                                Some(up) if up.gone => {
+                    // Pinned branches first, by name, then the rest in
+                    // their folders.
+                    let mut leaf = |ui: &mut egui::Ui,
+                                    c: &mut Ctx<'_>,
+                                    b: &LocalBranch,
+                                    name: &str,
+                                    depth: usize| {
+                        let mut badges = Vec::new();
+                        let tooltip = match &b.upstream {
+                            Some(up) if up.gone => {
+                                badges.push(Badge {
+                                    text: "gone".into(),
+                                    colour: theme::muted(),
+                                });
+                                format!("{}\nUpstream {} is gone", b.name, up.name)
+                            }
+                            Some(up) => {
+                                if up.ahead > 0 {
                                     badges.push(Badge {
-                                        text: "gone".into(),
-                                        colour: theme::muted(),
+                                        text: format!("{} {}", icon::ARROW_UP, up.ahead),
+                                        colour: theme::add(),
                                     });
-                                    format!("{}\nUpstream {} is gone", b.name, up.name)
                                 }
-                                Some(up) => {
-                                    if up.ahead > 0 {
-                                        badges.push(Badge {
-                                            text: format!("{} {}", icon::ARROW_UP, up.ahead),
-                                            colour: theme::add(),
-                                        });
-                                    }
-                                    if up.behind > 0 {
-                                        badges.push(Badge {
-                                            text: format!("{} {}", icon::ARROW_DOWN, up.behind),
-                                            colour: theme::modified(),
-                                        });
-                                    }
-                                    format!(
-                                        "{}\nTracking {}: {} ahead, {} behind",
-                                        b.name, up.name, up.ahead, up.behind
-                                    )
+                                if up.behind > 0 {
+                                    badges.push(Badge {
+                                        text: format!("{} {}", icon::ARROW_DOWN, up.behind),
+                                        colour: theme::modified(),
+                                    });
                                 }
-                                None => format!("{}\nNo upstream", b.name),
-                            };
-                            let glyph = if b.is_head {
-                                icon::CHECK
-                            } else {
-                                icon::GIT_BRANCH
-                            };
-                            let response = row(
-                                ui,
-                                depth,
-                                glyph,
-                                name,
-                                &badges,
-                                c.selected == Some(b.target.as_str())
-                                    || c.is_picked(&Picked::Local(b.name.clone())),
+                                format!(
+                                    "{}\nTracking {}: {} ahead, {} behind",
+                                    b.name, up.name, up.ahead, up.behind
+                                )
+                            }
+                            None => format!("{}\nNo upstream", b.name),
+                        };
+                        let is_pinned = pinned.contains(&b.name);
+                        let glyph = if b.is_head {
+                            icon::CHECK
+                        } else if is_pinned {
+                            icon::PUSH_PIN
+                        } else {
+                            icon::GIT_BRANCH
+                        };
+                        let response = row(
+                            ui,
+                            depth,
+                            glyph,
+                            name,
+                            &badges,
+                            c.selected == Some(b.target.as_str())
+                                || c.is_picked(&Picked::Local(b.name.clone())),
+                            b.is_head,
+                            &tooltip,
+                            b.is_head.then(|| {
+                                b.upstream
+                                    .as_ref()
+                                    .is_some_and(|u| !u.gone && u.ahead == 0 && u.behind == 0)
+                            }),
+                        );
+                        let me = Picked::Local(b.name.clone());
+                        if response.double_clicked() {
+                            c.action = Some(Action::Checkout(b.name.clone()));
+                        } else if c.pick(ui, &response, me.clone()) {
+                        } else if response.clicked() {
+                            c.action = Some(Action::Jump(b.target.clone()));
+                        }
+                        drag_source(&response, &b.name);
+                        if let Some(a) = drop_target(ui, &response, &b.name) {
+                            c.action = Some(a);
+                        }
+                        // On the forge, as its upstream.
+                        let page = b
+                            .upstream
+                            .as_ref()
+                            .filter(|u| !u.gone)
+                            .and_then(|u| web.branch(&u.name));
+                        response.context_menu(|ui| {
+                            if c.picked_menu(ui, &me, head) {
+                                return;
+                            }
+                            copy_name(ui, &b.name);
+                            web_items(ui, &mut c.action, page.as_ref());
+                            let noun = request_noun(ui.ctx());
+                            let items = local_branch_items(
+                                &b.name,
+                                &b.target,
                                 b.is_head,
-                                &tooltip,
-                                b.is_head.then(|| {
-                                    b.upstream
-                                        .as_ref()
-                                        .is_some_and(|u| !u.gone && u.ahead == 0 && u.behind == 0)
-                                }),
+                                head,
+                                noun.as_deref(),
                             );
-                            let me = Picked::Local(b.name.clone());
-                            if response.double_clicked() {
-                                c.action = Some(Action::Checkout(b.name.clone()));
-                            } else if c.pick(ui, &response, me.clone()) {
-                            } else if response.clicked() {
-                                c.action = Some(Action::Jump(b.target.clone()));
+                            menu(ui, &mut c.action, items);
+                            ui.separator();
+                            let label = if is_pinned { "Unpin" } else { "Pin to top" };
+                            if ui.button(label).clicked() {
+                                c.action = Some(Action::Pin(b.name.clone(), !is_pinned));
+                                ui.close();
                             }
-                            drag_source(&response, &b.name);
-                            if let Some(a) = drop_target(ui, &response, &b.name) {
-                                c.action = Some(a);
-                            }
-                            // On the forge, as its upstream.
-                            let page = b
-                                .upstream
-                                .as_ref()
-                                .filter(|u| !u.gone)
-                                .and_then(|u| web.branch(&u.name));
-                            response.context_menu(|ui| {
-                                if c.picked_menu(ui, &me, head) {
-                                    return;
-                                }
-                                copy_name(ui, &b.name);
-                                web_items(ui, &mut c.action, page.as_ref());
-                                let noun = request_noun(ui.ctx());
-                                let items = local_branch_items(
-                                    &b.name,
-                                    &b.target,
-                                    b.is_head,
-                                    head,
-                                    noun.as_deref(),
-                                );
-                                menu(ui, &mut c.action, items);
-                            });
-                        },
+                        });
+                    };
+                    let mut pins: Vec<&LocalBranch> = local
+                        .iter()
+                        .copied()
+                        .filter(|b| pinned.contains(&b.name))
+                        .collect();
+                    pins.sort_by_key(|b| b.name.to_lowercase());
+                    for b in &pins {
+                        leaf(ui, c, b, &b.name, 0);
+                    }
+                    let nodes = build_tree(
+                        local.iter().copied().filter(|b| !pinned.contains(&b.name)),
+                        |b: &LocalBranch| b.name.as_str(),
                     );
+                    tree(ui, c, &nodes, "local", 0, &mut leaf);
                 });
             }
 

@@ -189,6 +189,8 @@ pub struct Settings {
     /// Sidebar sections not shown (by key: "local", "remotes", "requests",
     /// "issues", "tags", "stashes", "worktrees", "submodules").
     pub sidebar_hidden: Vec<String>,
+    /// Local branches pinned to the top of the sidebar, by repository path.
+    pub pinned_branches: std::collections::BTreeMap<String, Vec<String>>,
     /// Review comments not sent yet, by request (see `ForgeView::drafts_key`).
     pub review_drafts: std::collections::BTreeMap<String, Vec<crate::forge::review::Draft>>,
     /// Which defaults these settings were saved with (see `upgrade`):
@@ -368,6 +370,7 @@ impl Default for Settings {
             terminal: String::new(),
             sidebar_hidden: Vec::new(),
             review_drafts: std::collections::BTreeMap::new(),
+            pinned_branches: std::collections::BTreeMap::new(),
             columns: Column::ALL.to_vec(),
             themes: Vec::new(),
             branch_lines: BranchLines::default(),

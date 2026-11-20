@@ -2053,6 +2053,12 @@ impl App {
                     let selected = repo.selected.as_ref().map(|s| s.id.clone());
                     let root = repo.path().to_string();
                     let hidden = self.settings.sidebar_hidden.clone();
+                    let pinned = self
+                        .settings
+                        .pinned_branches
+                        .get(root.trim_end_matches(['/', '\\']))
+                        .cloned()
+                        .unwrap_or_default();
                     sidebar::show(
                         ui,
                         &repo.refs,
@@ -2065,6 +2071,7 @@ impl App {
                             forge: repo.forge.as_ref(),
                             web: &repo.web,
                             hidden: &hidden,
+                            pinned: &pinned,
                         },
                     )
                 })
@@ -2089,6 +2096,22 @@ impl App {
                             &f.project,
                             &self.settings.accounts,
                         ));
+                    }
+                }
+                Some(sidebar::Action::Pin(name, on)) => {
+                    // By the repository's folder, without a trailing slash.
+                    let key = repo.path().trim_end_matches(['/', '\\']).to_string();
+                    let list = self
+                        .settings
+                        .pinned_branches
+                        .entry(key.clone())
+                        .or_default();
+                    list.retain(|b| *b != name);
+                    if on {
+                        list.push(name);
+                    }
+                    if list.is_empty() {
+                        self.settings.pinned_branches.remove(&key);
                     }
                 }
                 Some(sidebar::Action::LoadMore(requests)) => {
@@ -2712,6 +2735,7 @@ fn repo_action(repo: &mut RepoView, ctx: &egui::Context, action: sidebar::Action
         | sidebar::Action::SignInToForge
         | sidebar::Action::NewRequest(_)
         | sidebar::Action::LoadMore(_)
+        | sidebar::Action::Pin(..)
         | sidebar::Action::ToggleSection(_)
         | sidebar::Action::ShowAllSections
         | sidebar::Action::Terminal(_) => {}

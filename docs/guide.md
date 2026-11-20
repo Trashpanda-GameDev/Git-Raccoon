@@ -101,6 +101,7 @@ Moving around:
 - **Click** an item to jump to its commit. The **filter** box at the top narrows the lists.
 - **Click a heading** to collapse its section; **drag the line** between sections to resize them.
 - **Right-click a heading** to hide sections you don't use (also in Settings › Appearance › Sidebar).
+- **Right-click a local branch › Pin to top** to keep it at the top of *Local* (pinned branches are listed by name, with a pin); *Unpin* puts it back.
 
 ### Columns and panes
 

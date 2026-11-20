@@ -2066,6 +2066,63 @@ fn sidebar_sections_share_the_height_and_collapse_in_place() {
 }
 
 #[test]
+fn branches_can_be_pinned_to_the_top() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    let top = |h: &Harness<'_, App>, label: &str| h.get_by_label(label).rect().top();
+    // Pin two: they move to the top of Local, by name, and out of their
+    // folders.
+    for name in ["toolbar-glitch", "graph"] {
+        h.get_by_label(name).click_secondary();
+        h.run_ok();
+        h.get_by_label("Pin to top").click();
+        h.run_ok();
+    }
+    let pinned = h
+        .state()
+        .settings()
+        .pinned_branches
+        .get(sample.path())
+        .cloned();
+    assert_eq!(
+        pinned,
+        Some(vec![
+            "fix/ui/toolbar-glitch".to_string(),
+            "feature/graph".to_string()
+        ])
+    );
+    assert!(
+        top(&h, "feature/graph") < top(&h, "fix/ui/toolbar-glitch"),
+        "by name"
+    );
+    let main = h
+        .get_all_by_label("main")
+        .map(|n| n.rect().top())
+        .fold(f32::MAX, f32::min);
+    assert!(top(&h, "fix/ui/toolbar-glitch") < main);
+    assert!(
+        h.query_by_label("toolbar-glitch").is_none(),
+        "not in its folder too"
+    );
+    screenshot(&mut h, "85-pinned-branches");
+    // Unpinned: back in its folder.
+    h.get_by_label("feature/graph").click_secondary();
+    h.run_ok();
+    h.get_by_label("Unpin").click();
+    h.run_ok();
+    h.get_by_label("graph");
+    assert_eq!(
+        h.state()
+            .settings()
+            .pinned_branches
+            .get(sample.path())
+            .cloned(),
+        Some(vec!["fix/ui/toolbar-glitch".to_string()])
+    );
+}
+
+#[test]
 fn sidebar_sections_can_be_hidden() {
     let sample = Sample::build();
     let mut h = harness(Settings::default());

@@ -3,6 +3,10 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.21
+
+- **Pin branches to the top**: right-click a local branch in the sidebar › *Pin to top*. Pinned branches sit at the top of *Local*, in alphabetical order, with a pin; *Unpin* puts one back in its folder. Pins are kept per repository.
+
 ## 0.5.20
 
 - **A request opens even when the forge fails on part of it.** A self-managed GitLab answering an error (a 500) for, say, the approvals or the diffs used to stop the whole view; now the rest shows, and a note says what's missing and why, with *Try again*. A server error is retried once by itself, errors say which call failed, and diffs fall back to GitLab's older way of listing them.
