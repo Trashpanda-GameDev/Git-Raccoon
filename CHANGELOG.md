@@ -13,6 +13,7 @@ release page). Newest first; a version's heading is just its number.
 - **A request's side-by-side diff scrolls like any other**: each side's code scrolls sideways under its own scrollbar, the two together, with the line numbers staying put. It scrolled the whole view, numbers and all.
 - **A request's file list keeps its width**: long paths are cut short with "…" (the whole path on hover) instead of widening the list.
 - Going to a comment scrolls only up or down, not sideways.
+- **Hovering a line in a request's diff no longer pushes the lines below it down**: its + (to comment) now sits over the line instead of taking room.
 - **The status under an open request fits the sidebar**: when the words don't fit, it shows only the icons and the thread count, with the words on hover. They wrapped to the panel's edge.
 - **Markdown looks right** in requests, issues and comments:
   - Links line up with the text and show in the link colour. They sat higher than the words around them.

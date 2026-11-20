@@ -3815,6 +3815,22 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     h.run_ok();
     h.get_by_label("Select line: Another");
     h.get_by_label("Why another?");
+    // Hovering a line shows its + over it: nothing below it moves, at any
+    // zoom.
+    for zoom in [1.0, 1.1, 1.25, 1.5, 0.9] {
+        h.ctx.set_zoom_factor(zoom);
+        h.hover_at(egui::pos2(0.0, 0.0));
+        h.run_ok();
+        let below = h.get_by_label("Select line: Another").rect();
+        let line = h.get_by_label("Select line: New line").rect();
+        h.hover_at(egui::pos2(line.left() + 160.0, line.center().y));
+        h.run_ok();
+        h.get_by_label("Comment on this line");
+        let now = h.get_by_label("Select line: Another").rect();
+        assert_eq!(now, below, "at zoom {zoom}");
+    }
+    h.ctx.set_zoom_factor(1.0);
+    h.run_ok();
     // Next (here Alt+↓) goes to the (only) thread, and marks it.
     h.get_by_label("1 thread");
     h.key_press_modifiers(egui::Modifiers::ALT, Key::ArrowDown);

@@ -601,7 +601,7 @@ fn hunk_button(ui: &mut egui::Ui, header: Rect, hunk: usize, lines: &Lines<'_>) 
     let response = ui
         .scope(|ui| {
             ui.spacing_mut().interact_size.y = LINE - 4.0;
-            ui.put(rect.shrink2(egui::vec2(0.0, 1.0)), button)
+            ui.place(rect.shrink2(egui::vec2(0.0, 1.0)), button)
         })
         .inner;
     (response.clicked() && !lines.busy()).then_some(Action::StageHunk(hunk))

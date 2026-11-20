@@ -2075,12 +2075,19 @@ fn line_input(
             Pos2::new(rect.left() + code + 9.0, rect.center().y),
             egui::vec2(16.0, 16.0),
         );
-        let b = ui.put(
-            plus,
-            egui::Button::new(RichText::new("+").strong().color(theme::on_accent()))
-                .fill(theme::accent_fill())
-                .corner_radius(3),
-        );
+        // Over the line, without taking room: nothing below it moves.
+        let b = ui
+            .scope(|ui| {
+                ui.spacing_mut().interact_size = egui::vec2(16.0, 16.0);
+                ui.place(
+                    plus,
+                    egui::Button::new(RichText::new("+").strong().color(theme::on_accent()))
+                        .fill(theme::accent_fill())
+                        .corner_radius(3)
+                        .small(),
+                )
+            })
+            .inner;
         ui.ctx()
             .accesskit_node_builder(b.id, |n| n.set_label("Comment on this line"));
         if b.on_hover_text("Comment on this line").clicked() {
