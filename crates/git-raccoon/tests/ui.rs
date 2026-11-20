@@ -3605,7 +3605,9 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
         )),
         ("GET /api/v4/projects/team%2Fapp/merge_requests/12/approvals", r#"{"approved_by": [{"user": {"username": "rocky"}}]}"#.into()),
         ("GET /api/v4/projects/team%2Fapp/merge_requests/12/diffs", r#"[{"old_path": "README.md", "new_path": "README.md",
-            "diff": "@@ -1,2 +1,3 @@\n # Sample\n-Old line\n+New line\n+Another\n"}]"#.into()),
+            "diff": "@@ -1,2 +1,4 @@\n # Sample\n-Old line\n+New line\n+Another\n+Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide\n"},
+            {"old_path": "src/a-rather-long-folder-name/a-rather-long-folder-name/a-rather-long-folder-name/a-rather-long-folder-name/and-a-file-with-a-long-name-too.rs", "new_path": "src/a-rather-long-folder-name/a-rather-long-folder-name/a-rather-long-folder-name/a-rather-long-folder-name/and-a-file-with-a-long-name-too.rs",
+            "diff": "@@ -1 +1 @@\n-a\n+b\n"}]"#.into()),
         ("GET /api/v4/projects/team%2Fapp/merge_requests/12/commits", format!(r#"[{{"id": "{main}", "title": "Cache the pipeline",
             "author_name": "Ada", "created_at": "2026-11-01T00:00:00Z"}}]"#)),
         ("GET /api/v4/projects/team%2Fapp/merge_requests/12/discussions", r#"[
@@ -3830,6 +3832,37 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
             .as_deref(),
         Some("d2")
     );
+    // A long path doesn't widen the file list: it's cut short to fit.
+    let long = h.get_by_label("src/a-rather-long-folder-name/a-rather-long-folder-name/a-rather-long-folder-name/a-rather-long-folder-name/and-a-file-with-a-long-name-too.rs").rect();
+    // (The list starts 260 wide.)
+    assert!(long.width() < 262.0, "the list keeps its width: {long:?}");
+    // Side by side, each side's code scrolls sideways as in any diff (the
+    // sideways wheel over it), its numbers staying put.
+    h.get_by_label("Split").click();
+    h.run_ok();
+    let sideways = |h: &Harness<'_, App>| {
+        h.ctx.data(|d| {
+            d.get_temp::<f32>(egui::Id::new((
+                "request-split-sideways",
+                "README.md".to_string(),
+            )))
+        })
+    };
+    let over = h.get_by_label("Select line: Another").rect().center();
+    h.hover_at(over);
+    h.run_ok();
+    h.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(-200.0, 0.0),
+        modifiers: egui::Modifiers::NONE,
+        phase: egui::TouchPhase::Move,
+    });
+    h.run_ok();
+    let moved = sideways(&h).unwrap_or_default();
+    assert!(moved > 0.0, "the code scrolled sideways: {moved}");
+    screenshot(&mut h, "59b-request-split-sideways");
+    h.get_by_label("Unified").click();
+    h.run_ok();
     // The whole file, side by side, with blame: from its commits, here.
     wait_for(&mut h, "its commits", |app| {
         app.repo()
@@ -3881,8 +3914,7 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
             .any(|(r, _)| r == &format!("PUT {api}/merge_requests/12/discussions/d2?resolved=true"))
     );
     // Suggesting a change: the picked line, ready to edit.
-    h.get_by_label("Select line: New line").click_secondary();
-    h.run_ok();
+    right_click_line(&mut h, "New line");
     h.get_by_label("Suggest a change").click();
     h.run_ok();
     let body = h
@@ -3901,8 +3933,7 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     h.get_by_label("Cancel").click();
     h.run_ok();
     // A comment on a line: a draft, until the review is finished.
-    h.get_by_label("Select line: Old line").click_secondary();
-    h.run_ok();
+    right_click_line(&mut h, "Old line");
     // The menu's (the line's + is labelled the same).
     h.get_all_by_label("Comment on this line")
         .last()
@@ -5039,6 +5070,24 @@ fn conflicted(app: &App) -> usize {
 }
 
 /// Drags one sidebar row onto another with the pointer.
+/// Right-clicks a request's diff line on its code (the row is as wide as
+/// the longest line, so its middle can be off screen).
+fn right_click_line(h: &mut Harness<'_, App>, text: &str) {
+    let row = h.get_by_label(&format!("Select line: {text}")).rect();
+    let at = egui::pos2(row.left() + 160.0, row.center().y);
+    h.hover_at(at);
+    h.run_ok();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.run_ok();
+}
+
 /// Drags the line between a split diff's sides 150 points left, checks it
 /// followed, and puts it back to half each.
 fn moves_the_split_line(h: &mut Harness<'_, App>) {

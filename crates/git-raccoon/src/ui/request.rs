@@ -18,7 +18,7 @@ use crate::forge::{Request, Review};
 use crate::forge_view::{Composer, Finishing, ForgeView, Merging, RequestState, Tab};
 use crate::highlight::{RenderedDiff, Row, SplitRow};
 use crate::theme;
-use crate::ui::diff::{LINE, NUMBER};
+use crate::ui::diff::{LINE, MARKER, NUMBER};
 use crate::ui::file_view::{self, GUTTER};
 use crate::ui::widgets;
 use git_raccoon_core::file_history::Blame;
@@ -1542,56 +1542,69 @@ fn changes(
                             Change::Renamed => ("R", theme::accent()),
                             Change::Modified => ("M", theme::modified()),
                         };
+                        // As wide as the panel, however long the path: the
+                        // counts at the right, the name and folder cut short
+                        // (with "…") to fit, the whole path on hover.
+                        let width = ui.available_width();
                         let row = ui
-                            .horizontal(|ui| {
-                                ui.set_width(ui.available_width());
-                                ui.label(
-                                    RichText::new(letter)
-                                        .font(theme::mono(12.0))
-                                        .color(colour)
-                                        .strong(),
-                                );
-                                ui.label(RichText::new(name).color(if on {
-                                    theme::text()
-                                } else {
-                                    theme::text().gamma_multiply(0.9)
-                                }));
-                                if !dir.is_empty() {
-                                    ui.add(
-                                        egui::Label::new(
-                                            RichText::new(dir).size(11.0).color(theme::muted()),
+                            .allocate_ui_with_layout(
+                                egui::vec2(width, 0.0),
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.set_width(width);
+                                    if drafts > 0 {
+                                        ui.label(
+                                            RichText::new(format!("{drafts}"))
+                                                .size(11.0)
+                                                .color(theme::modified()),
                                         )
-                                        .truncate(),
-                                    );
-                                }
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if drafts > 0 {
-                                            ui.label(
-                                                RichText::new(format!("{drafts}"))
-                                                    .size(11.0)
-                                                    .color(theme::modified()),
-                                            )
-                                            .on_hover_text("Your draft comments");
-                                        }
-                                        if open > 0 {
-                                            ui.label(
-                                                RichText::new(format!(
-                                                    "{}{open}",
-                                                    icon::CHAT_CIRCLE
-                                                ))
+                                        .on_hover_text("Your draft comments");
+                                    }
+                                    if open > 0 {
+                                        ui.label(
+                                            RichText::new(format!("{}{open}", icon::CHAT_CIRCLE))
                                                 .size(11.0)
                                                 .color(theme::accent()),
-                                            )
-                                            .on_hover_text("Open threads");
-                                        }
-                                    },
-                                );
-                            })
+                                        )
+                                        .on_hover_text("Open threads");
+                                    }
+                                    ui.with_layout(
+                                        egui::Layout::left_to_right(egui::Align::Center),
+                                        |ui| {
+                                            ui.label(
+                                                RichText::new(letter)
+                                                    .font(theme::mono(12.0))
+                                                    .color(colour)
+                                                    .strong(),
+                                            );
+                                            ui.add(
+                                                egui::Label::new(RichText::new(name).color(
+                                                    if on {
+                                                        theme::text()
+                                                    } else {
+                                                        theme::text().gamma_multiply(0.9)
+                                                    },
+                                                ))
+                                                .truncate(),
+                                            );
+                                            if !dir.is_empty() {
+                                                ui.add(
+                                                    egui::Label::new(
+                                                        RichText::new(dir)
+                                                            .size(11.0)
+                                                            .color(theme::muted()),
+                                                    )
+                                                    .truncate(),
+                                                );
+                                            }
+                                        },
+                                    );
+                                },
+                            )
                             .response;
-                        let row =
-                            ui.interact(row.rect, ui.id().with(("file", &f.path)), Sense::click());
+                        let row = ui
+                            .interact(row.rect, ui.id().with(("file", &f.path)), Sense::click())
+                            .on_hover_text(&f.path);
                         row.widget_info(|| {
                             egui::WidgetInfo::selected(
                                 egui::WidgetType::SelectableLabel,
@@ -1904,21 +1917,27 @@ fn diff_with_threads(
     };
     let lead = if blame.is_some() { GUTTER } else { 0.0 };
     let blamed = blame.flatten().map(|b| (b, file_view::ages(b)));
-    egui::ScrollArea::both()
+    // As in any diff: unified, the whole view scrolls sideways; side by
+    // side, the sides share the view as the line between them was dragged,
+    // and each one's code scrolls sideways under its own scrollbar (the two
+    // together), its numbers staying put.
+    let area = if split {
+        egui::ScrollArea::vertical()
+    } else {
+        egui::ScrollArea::both()
+    };
+    let sideways_id = egui::Id::new(("request-split-sideways", &path));
+    let sideways = crate::ui::diff::sideways_offset(ui, sideways_id);
+    let share = crate::ui::diff::split_share(ui.ctx());
+    let output = area
         .id_salt(("request-diff", &path, split))
         .auto_shrink([false, false])
         .show(ui, |ui| {
             let view_width = ui.available_width();
-            // Side by side, the sides share the room as the line between them
-            // was dragged: the view, or more (to scroll sideways) when it
-            // takes that for half each to fit the code.
-            let share = crate::ui::diff::split_share(ui.ctx());
-            let inner = (view_width - lead).max(2.0 * (NUMBER + 18.0 + code_width));
-            let (old, new) = (inner * share, inner * (1.0 - share));
             let width = if split {
-                lead + old + new
+                view_width
             } else {
-                (lead + 2.0 * NUMBER + 18.0 + code_width).max(view_width)
+                (lead + 2.0 * NUMBER + MARKER + code_width).max(view_width)
             };
             ui.spacing_mut().item_spacing.y = 0.0;
             // The blame's commit on the row above, for where a run starts.
@@ -1975,17 +1994,13 @@ fn diff_with_threads(
                         vec![at]
                     }
                     Shown::Pair(a, b) => {
-                        let l = Rect::from_min_size(body.min, egui::vec2(old, LINE));
-                        let r = Rect::from_min_size(
-                            Pos2::new(body.left() + old, body.top()),
-                            egui::vec2(new, LINE),
-                        );
-                        crate::ui::diff::side(ui.painter(), l, d, a, (false, 0.0), &state.picked);
-                        crate::ui::diff::side(ui.painter(), r, d, b, (true, 0.0), &state.picked);
-                        ui.painter().vline(
-                            l.right(),
-                            l.y_range(),
-                            Stroke::new(1.0, theme::border()),
+                        let (l, r) = crate::ui::diff::pair_row(
+                            ui.painter(),
+                            body,
+                            d,
+                            (a, b),
+                            (share, sideways),
+                            &state.picked,
                         );
                         for (at, half_rect, salt) in [(a, l, 0u8), (b, r, 1)] {
                             if let Some(at) = at {
@@ -2005,12 +2020,21 @@ fn diff_with_threads(
                 let from = content.left() + lead;
                 crate::ui::diff::split_handle(
                     ui,
-                    from + old,
+                    from + (content.width() - lead) * share,
                     content.y_range(),
-                    egui::Rangef::new(from, from + inner),
+                    egui::Rangef::new(from, content.right()),
                 );
             }
         });
+    if split {
+        crate::ui::diff::split_scrollbars(
+            ui,
+            sideways_id,
+            (output.inner_rect, lead),
+            share,
+            code_width,
+        );
+    }
     // Dragging over lines picks them all, from where it started.
     let drag = egui::Id::new("request-line-drag");
     if !ui.input(|i| i.pointer.primary_down()) {
@@ -2212,7 +2236,10 @@ fn under_row(
                     );
                     if state.scroll_to_thread {
                         state.scroll_to_thread = false;
-                        ui.scroll_to_rect(rect, Some(egui::Align::Center));
+                        // Up or down only: not sideways, off the numbers.
+                        let seen = ui.clip_rect().x_range();
+                        let to = Rect::from_x_y_ranges(seen, rect.y_range());
+                        ui.scroll_to_rect(to, Some(egui::Align::Center));
                     }
                 }
             }

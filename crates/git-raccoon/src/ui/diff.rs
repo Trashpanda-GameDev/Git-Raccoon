@@ -19,7 +19,8 @@ use git_raccoon_core::file_history::{Blame, Change};
 
 pub(crate) const LINE: f32 = 20.0;
 pub(crate) const NUMBER: f32 = 52.0;
-const MARKER: f32 = 18.0;
+/// The +/− before a line's code.
+pub(crate) const MARKER: f32 = 18.0;
 const IMAGE_BOX: f32 = 220.0;
 
 pub enum Action {
@@ -404,9 +405,7 @@ fn body(
         egui::ScrollArea::both()
     };
     let sideways_id = egui::Id::new("diff-split-sideways");
-    let sideways = ui
-        .data(|d| d.get_temp::<f32>(sideways_id))
-        .unwrap_or_default();
+    let sideways = sideways_offset(ui, sideways_id);
 
     let share = split_share(ui.ctx());
     // Where the last line drawn ends, if it's on screen.
@@ -487,11 +486,8 @@ fn body(
                         }
                     }
                     SplitRow::Pair(a, b) => {
-                        let old = rect.width() * share;
-                        let l = Rect::from_min_size(rect.min, egui::vec2(old, LINE));
-                        let r = Rect::from_min_max(Pos2::new(rect.left() + old, top), rect.max);
-                        side(painter, l, d, a, (false, sideways), lines.picked);
-                        side(painter, r, d, b, (true, sideways), lines.picked);
+                        let (l, r) =
+                            pair_row(painter, rect, d, (a, b), (share, sideways), lines.picked);
                         for (at, half_rect, salt) in [(a, l, 0), (b, r, 1)] {
                             if let Some(at) = at
                                 && let Some(picked) =
@@ -500,7 +496,6 @@ fn body(
                                 action = Some(picked);
                             }
                         }
-                        painter.vline(l.right(), l.y_range(), Stroke::new(1.0, theme::border()));
                     }
                 }
             } else {
@@ -555,33 +550,8 @@ fn body(
     // Side by side, the two halves go on down to the bottom of the view,
     // past the last line.
     let view = output.inner_rect;
-    // Each half's code has a scrollbar of its own, and the two move
-    // together: either one (or the wheel over either half) scrolls both.
     if split {
-        let line = view.left() + lead + (width - lead) * share;
-        let code = |i: f32| {
-            let (from, to) = if i == 0.0 {
-                (view.left() + lead, line)
-            } else {
-                (line, view.right())
-            };
-            Rect::from_x_y_ranges(from + NUMBER + MARKER..=to, view.y_range())
-        };
-        let mut x = sideways;
-        for which in [0u8, 1] {
-            x = widgets::sideways_scrollbar(
-                ui,
-                sideways_id.with(which),
-                (code(f32::from(which)), view),
-                x,
-                code_width,
-            );
-        }
-        ui.data_mut(|d| d.insert_temp(sideways_id, x));
-        if x != sideways {
-            // The bar drawn first shows where they are next frame.
-            ui.ctx().request_repaint();
-        }
+        split_scrollbars(ui, sideways_id, (view, lead), share, code_width);
     }
     if split && let Some(end) = end.filter(|&end| end < view.bottom()) {
         ui.painter().with_clip_rect(view).vline(
@@ -782,6 +752,66 @@ pub(crate) fn split_handle(ui: &mut egui::Ui, x: f32, ys: egui::Rangef, span: eg
     {
         let share = ((at.x - span.min) / span.span()).clamp(0.15, 0.85);
         ui.data_mut(|d| d.insert_persisted(id, share));
+        ui.ctx().request_repaint();
+    }
+}
+
+/// A line of a diff, if there is one: (hunk, line).
+type At = Option<(usize, usize)>;
+
+/// A side-by-side row: the old line and the new in `rect`'s two halves (the
+/// old side `share` of it), their code `shift` scrolled sideways, and the
+/// line between them. Gives the two halves.
+pub(crate) fn pair_row(
+    painter: &egui::Painter,
+    rect: Rect,
+    d: &RenderedDiff,
+    (a, b): (At, At),
+    (share, shift): (f32, f32),
+    picked: &BTreeSet<(usize, usize)>,
+) -> (Rect, Rect) {
+    let old = rect.width() * share;
+    let l = Rect::from_min_size(rect.min, egui::vec2(old, rect.height()));
+    let r = Rect::from_min_max(Pos2::new(rect.left() + old, rect.top()), rect.max);
+    side(painter, l, d, a, (false, shift), picked);
+    side(painter, r, d, b, (true, shift), picked);
+    painter.vline(l.right(), l.y_range(), Stroke::new(1.0, theme::border()));
+    (l, r)
+}
+
+/// How far a side-by-side diff's code is scrolled sideways (kept under `id`).
+pub(crate) fn sideways_offset(ui: &egui::Ui, id: egui::Id) -> f32 {
+    ui.data(|d| d.get_temp::<f32>(id)).unwrap_or_default()
+}
+
+/// Side by side, each half's code has a scrollbar of its own, under its
+/// code (its numbers stay put), and the two move together: either bar, or
+/// the sideways wheel over either half, scrolls both. `view` is where the
+/// lines are shown, with `lead` (blame) at its left.
+pub(crate) fn split_scrollbars(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    (view, lead): (Rect, f32),
+    share: f32,
+    code_width: f32,
+) {
+    let sideways = sideways_offset(ui, id);
+    let line = view.left() + lead + (view.width() - lead) * share;
+    let code = |old: bool| {
+        let (from, to) = if old {
+            (view.left() + lead, line)
+        } else {
+            (line, view.right())
+        };
+        Rect::from_x_y_ranges(from + NUMBER + MARKER..=to, view.y_range())
+    };
+    let mut x = sideways;
+    for (which, old) in [(0u8, true), (1, false)] {
+        x = widgets::sideways_scrollbar(ui, id.with(which), (code(old), view), x, code_width);
+    }
+    ui.data_mut(|d| d.insert_temp(id, x));
+    if x != sideways {
+        // The bar drawn first shows where they are next frame.
         ui.ctx().request_repaint();
     }
 }
