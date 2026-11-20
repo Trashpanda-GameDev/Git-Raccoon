@@ -6,7 +6,7 @@ use eframe::egui;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
-use crate::forge::review::{Anchor, Finish, Method, Overview};
+use crate::forge::review::{Anchor, Draft, Finish, Method, Overview};
 use crate::forge::{self, Account, Issue, Project, Request};
 use crate::highlight::RenderedDiff;
 use crate::task::Task;
@@ -108,6 +108,15 @@ pub struct RequestState {
     pub blame: bool,
     /// Checking out met uncommitted changes: ask what to do.
     pub changes_in_the_way: bool,
+    /// Your pending review on GitHub (its id), which drafts go in.
+    pub pending_review: Option<String>,
+    /// Drafts to keep on the forge, in order, the one going now, and how
+    /// those done went (for the app to note their ids).
+    pub syncs: std::collections::VecDeque<Sync>,
+    syncing: Option<Task<Synced>>,
+    pub synced: Vec<Synced>,
+    /// The view was (re)loaded: the forge's drafts are to be merged in.
+    pub merge_pending: bool,
     /// Its commits fetched here (without a branch), which the whole file and
     /// blame need: `None` until that's done.
     pub local: Option<Result<(), String>>,
@@ -116,6 +125,20 @@ pub struct RequestState {
     pub wholes: HashMap<String, Result<Arc<RenderedDiff>, String>>,
     pub blames: HashMap<String, Result<Arc<Blame>, String>>,
     loading: Vec<(String, Task<Result<Loaded, String>>)>,
+}
+
+/// Keeping a draft on the forge: saving (or changing) it, or deleting it.
+pub enum Sync {
+    Save(Draft),
+    Delete(String),
+}
+
+/// How keeping a draft on the forge went: the draft (by its local id), its
+/// id there, and the pending review's (GitHub).
+pub struct Synced {
+    pub local: u64,
+    pub remote: Result<Option<String>, String>,
+    pub review: Option<String>,
 }
 
 /// A file loaded from the request's commits.
@@ -333,6 +356,65 @@ impl ForgeView {
         }
     }
 
+    /// Keeps drafts on the forge, one at a time (GitHub's pending review is
+    /// made by the first).
+    pub fn keep_drafts(&mut self, ctx: &egui::Context) {
+        let Some(Opened::Request(number)) = self.open else {
+            return;
+        };
+        if let Some(task) = &self.state.syncing
+            && let Some(done) = task.poll()
+        {
+            if done.review.is_some() {
+                self.state.pending_review = done.review.clone();
+            }
+            self.state.synced.push(done);
+            self.state.syncing = None;
+        }
+        if self.state.syncing.is_some() {
+            return;
+        }
+        let (Some(account), Some((_, o))) = (self.account.clone(), self.viewed().cloned()) else {
+            return;
+        };
+        let Some(job) = self.state.syncs.pop_front() else {
+            return;
+        };
+        let project = self.project.clone();
+        let review = self.state.pending_review.clone();
+        self.state.syncing = Some(Task::spawn(ctx, move || {
+            let session = match forge::accounts::session(&account, &project) {
+                Ok(s) => s,
+                Err(e) => {
+                    return Synced {
+                        local: 0,
+                        remote: Err(e),
+                        review: None,
+                    };
+                }
+            };
+            match job {
+                Sync::Save(d) => match session.save_draft(number, &o, review, &d) {
+                    Ok((remote, review)) => Synced {
+                        local: d.local,
+                        remote: Ok(remote),
+                        review,
+                    },
+                    Err(e) => Synced {
+                        local: d.local,
+                        remote: Err(e),
+                        review: None,
+                    },
+                },
+                Sync::Delete(remote) => Synced {
+                    local: 0,
+                    remote: session.delete_draft(number, &remote).map(|()| None),
+                    review: None,
+                },
+            }
+        }));
+    }
+
     /// Fetches the open request's commits here, once its view is loaded,
     /// and loads the open file whole, or blamed, when that's shown.
     pub fn keep_local(&mut self, ctx: &egui::Context, root: &str) {
@@ -499,8 +581,10 @@ impl ForgeView {
         if let Some((n, task)) = &self.details_task
             && let Some(result) = task.poll()
         {
-            if result.is_ok() {
+            if let Ok((_, o)) = &result {
                 self.state.rendered.clear();
+                self.state.pending_review = o.pending_review.clone();
+                self.state.merge_pending = true;
             }
             // A reload that failed keeps what was shown.
             if result.is_ok() || self.details.as_ref().is_none_or(|(m, _)| m != n) {
@@ -525,6 +609,7 @@ impl ForgeView {
                 if matches!(what, Sent::Review) {
                     self.state.finishing = None;
                     self.state.reviewed = true;
+                    self.state.pending_review = None;
                 }
                 if merged {
                     self.state.merging = None;

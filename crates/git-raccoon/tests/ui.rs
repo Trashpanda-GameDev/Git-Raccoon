@@ -3549,7 +3549,9 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
         ("GET /api/v4/projects/team%2Fapp/merge_requests/13/discussions", "[]".into()),
         ("GET /api/v4/projects/team%2Fapp", r#"{"default_branch": "main", "squash_option": "default_off"}"#.into()),
         // Reviewing and merging.
-        ("POST /api/v4/projects/team%2Fapp/merge_requests/12/draft_notes", "{}".into()),
+        ("POST /api/v4/projects/team%2Fapp/merge_requests/12/draft_notes", r#"{"id": 91}"#.into()),
+        ("POST /api/v4/projects/team%2Fapp/merge_requests/12/draft_notes/bulk_publish", "{}".into()),
+        ("GET /api/v4/projects/team%2Fapp/merge_requests/12/draft_notes", "[]".into()),
         ("PUT /api/v4/projects/team%2Fapp/merge_requests/12", "{}".into()),
         ("PUT /api/v4/suggestions/batch_apply", "[]".into()),
         ("DELETE /api/v4/projects/team%2Fapp/merge_requests/12/notes", "{}".into()),
@@ -3826,6 +3828,14 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
             .sum::<usize>()
     };
     assert_eq!(drafts(h.state()), 1);
+    // Kept on GitLab straight away, as a draft note.
+    wait_for(&mut h, "the draft note", |app| {
+        app.settings()
+            .review_drafts
+            .values()
+            .flatten()
+            .any(|d| d.remote.as_deref() == Some("91"))
+    });
     h.get_by_label("Why drop it?");
     h.get_by_label("Finish review (1)").click();
     h.run_ok();
@@ -3845,6 +3855,11 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
             "{}",
             note.1
         );
+        let posted = seen
+            .iter()
+            .filter(|(r, _)| r == &format!("POST {api}/merge_requests/12/draft_notes"))
+            .count();
+        assert_eq!(posted, 1, "sent once, when it was written");
         for end in ["draft_notes/bulk_publish", "approve"] {
             assert!(
                 seen.iter()

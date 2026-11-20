@@ -337,6 +337,24 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
             comments: notes.iter().map(|n| note(n)).collect(),
         });
     }
+    // Your draft notes (only you see them).
+    let drafts = all(
+        s,
+        &format!("/merge_requests/{number}/draft_notes?per_page=100"),
+        &mut o.cut_short,
+    )?;
+    o.pending = drafts
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|n| Draft {
+            at: anchor(&n["position"]),
+            reply_to: n["discussion_id"].as_str().map(str::to_string),
+            body: text(n, "note"),
+            remote: n["id"].as_u64().map(|id| id.to_string()),
+            local: 0,
+        })
+        .collect();
     o.events.extend((0..o.threads.len()).map(Event::Thread));
     o.sort();
     let project = get(s, "")?;
@@ -408,26 +426,55 @@ fn position(at: &Anchor, refs: &DiffRefs) -> Value {
     p
 }
 
-/// Sends a review: each draft as a GitLab draft note, all published at
-/// once, then the summary and the approval.
+/// Keeps a draft as a GitLab draft note (or changes it there). Returns
+/// its id there.
+pub fn save_draft(s: &Session, number: u64, o: &Overview, d: &Draft) -> Result<String, String> {
+    let auth = Auth::Bearer(&s.token);
+    let base = format!("{}/merge_requests/{number}/draft_notes", api(s));
+    if let Some(id) = &d.remote {
+        http::put(
+            FORGE,
+            &format!("{base}/{id}"),
+            &auth,
+            &json!({"note": d.body}),
+        )?;
+        return Ok(id.clone());
+    }
+    let mut body = json!({"note": d.body});
+    if let Some(to) = &d.reply_to {
+        body["in_reply_to_discussion_id"] = json!(to);
+    } else if let Some(at) = &d.at {
+        body["position"] = position(at, &o.refs);
+    }
+    let made = http::post(FORGE, &base, &auth, &body)?;
+    made["id"]
+        .as_u64()
+        .map(|id| id.to_string())
+        .ok_or_else(|| format!("{FORGE} didn't say what it kept the draft as"))
+}
+
+/// Deletes a draft note.
+pub fn delete_draft(s: &Session, number: u64, remote: &str) -> Result<(), String> {
+    http::delete(
+        FORGE,
+        &format!("{}/merge_requests/{number}/draft_notes/{remote}", api(s)),
+        &Auth::Bearer(&s.token),
+    )?;
+    Ok(())
+}
+
+/// Sends a review: drafts not on GitLab yet go there, then all of them are
+/// published at once, then the summary and the approval.
 pub fn submit(
     s: &Session,
     number: u64,
-    refs: &DiffRefs,
-    drafts: &[Draft],
-    summary: &str,
-    finish: Finish,
+    o: &Overview,
+    (drafts, summary, finish): (&[Draft], &str, Finish),
 ) -> Result<(), String> {
     let auth = Auth::Bearer(&s.token);
     let base = format!("{}/merge_requests/{number}", api(s));
-    for d in drafts {
-        let mut body = json!({"note": d.body});
-        if let Some(to) = &d.reply_to {
-            body["in_reply_to_discussion_id"] = json!(to);
-        } else if let Some(at) = &d.at {
-            body["position"] = position(at, refs);
-        }
-        http::post(FORGE, &format!("{base}/draft_notes"), &auth, &body)?;
+    for d in drafts.iter().filter(|d| d.remote.is_none()) {
+        save_draft(s, number, o, d)?;
     }
     if !drafts.is_empty() {
         http::post(
@@ -443,39 +490,6 @@ pub fn submit(
     if finish == Finish::Approve {
         http::post(FORGE, &format!("{base}/approve"), &auth, &json!({}))?;
     }
-    Ok(())
-}
-
-/// The ids of users, by username.
-fn user_ids(s: &Session, names: &[String]) -> Result<Vec<u64>, String> {
-    names
-        .iter()
-        .map(|name| {
-            let found = http::get(
-                FORGE,
-                &format!("{}/api/v4/users?username={}", s.project.base, encode(name)),
-                &Auth::Bearer(&s.token),
-            )?;
-            found[0]["id"]
-                .as_u64()
-                .ok_or_else(|| format!("{FORGE} doesn't know {name}"))
-        })
-        .collect()
-}
-
-/// Applies suggestions, in one commit on the request's branch.
-pub fn apply(s: &Session, ids: &[String], message: &str) -> Result<(), String> {
-    let ids: Vec<u64> = ids.iter().filter_map(|i| i.parse().ok()).collect();
-    let mut body = json!({"ids": ids});
-    if !message.trim().is_empty() {
-        body["commit_message"] = json!(message.trim());
-    }
-    http::put(
-        FORGE,
-        &format!("{}/api/v4/suggestions/batch_apply", s.project.base),
-        &Auth::Bearer(&s.token),
-        &body,
-    )?;
     Ok(())
 }
 
@@ -509,6 +523,39 @@ pub fn delete_comment(s: &Session, number: u64, c: &Comment) -> Result<(), Strin
         &Auth::Bearer(&s.token),
     )?;
     Ok(())
+}
+
+/// Applies suggestions, in one commit on the request's branch.
+pub fn apply(s: &Session, ids: &[String], message: &str) -> Result<(), String> {
+    let ids: Vec<u64> = ids.iter().filter_map(|i| i.parse().ok()).collect();
+    let mut body = json!({"ids": ids});
+    if !message.trim().is_empty() {
+        body["commit_message"] = json!(message.trim());
+    }
+    http::put(
+        FORGE,
+        &format!("{}/api/v4/suggestions/batch_apply", s.project.base),
+        &Auth::Bearer(&s.token),
+        &body,
+    )?;
+    Ok(())
+}
+
+/// The ids of users, by username.
+fn user_ids(s: &Session, names: &[String]) -> Result<Vec<u64>, String> {
+    names
+        .iter()
+        .map(|name| {
+            let found = http::get(
+                FORGE,
+                &format!("{}/api/v4/users?username={}", s.project.base, encode(name)),
+                &Auth::Bearer(&s.token),
+            )?;
+            found[0]["id"]
+                .as_u64()
+                .ok_or_else(|| format!("{FORGE} doesn't know {name}"))
+        })
+        .collect()
 }
 
 /// A comment on the whole request.
@@ -777,10 +824,17 @@ mod tests {
                         "position":{"old_path":"a.rs","new_path":"a.rs","old_line":null,"new_line":1}}]}]"#
                     .into(),
             ),
+            // A draft note of yours, kept there.
+            (
+                200,
+                r#"[{"id":55,"note":"Not sure","discussion_id":null,
+                    "position":{"old_path":"a.rs","new_path":"a.rs","old_line":null,"new_line":1}}]"#
+                    .into(),
+            ),
             (200, r#"{"squash_option":"default_off","merge_method":"ff"}"#.into()),
             // The review: two drafts, publishing, the summary, approving.
-            (201, "{}".into()),
-            (201, "{}".into()),
+            (201, r#"{"id": 56}"#.into()),
+            (201, r#"{"id": 57}"#.into()),
             (204, String::new()),
             (201, "{}".into()),
             (201, "{}".into()),
@@ -789,6 +843,9 @@ mod tests {
             // Rebasing it, editing a comment and deleting it.
             (202, r#"{"rebase_in_progress":true}"#.into()),
             (200, "{}".into()),
+            (204, String::new()),
+            // Changing that draft note, and deleting it.
+            (200, r#"{"id":55}"#.into()),
             (204, String::new()),
         ]);
         let s = session(&base);
@@ -844,43 +901,61 @@ mod tests {
                 }),
                 reply_to: None,
                 body: "Hm".into(),
+                ..Draft::default()
             },
             Draft {
                 at: None,
                 reply_to: Some("d3".into()),
                 body: "Because.".into(),
+                ..Draft::default()
             },
         ];
-        s.submit(12, &o.refs, &drafts, "Thanks", Finish::Approve)
+        // The draft note already there isn't sent again.
+        assert_eq!(o.pending.len(), 1);
+        assert_eq!(o.pending[0].remote.as_deref(), Some("55"));
+        assert_eq!(o.pending[0].at.as_ref().and_then(|a| a.line.new), Some(1));
+        let all: Vec<Draft> = o.pending.iter().cloned().chain(drafts).collect();
+        s.submit(12, &o, None, (&all, "Thanks", Finish::Approve))
             .unwrap();
         s.apply(&["77".into()], "Use z").unwrap();
         s.update(&r, &o.refs.head).unwrap();
         let mine = &o.threads[0].comments[0];
         s.edit_comment(12, mine, "Why z?").unwrap();
         s.delete_comment(12, mine).unwrap();
+        let mut kept = o.pending[0].clone();
+        kept.body = "Sure now".into();
+        assert_eq!(
+            s.save_draft(12, &o, None, &kept).unwrap().0.as_deref(),
+            Some("55")
+        );
+        s.delete_draft(12, "55").unwrap();
         let seen = seen.lock().unwrap();
         let api = "/api/v4/projects/team%2Fsub%2Fapp/merge_requests/12";
         assert_eq!(
             seen[2].0,
             "GET /api/v4/projects/team%2Fsub%2Fapp/pipelines/99/jobs?per_page=100"
         );
-        assert_eq!(seen[7].0, format!("POST {api}/draft_notes"));
-        let first: Value = serde_json::from_str(&seen[7].2).unwrap();
+        assert_eq!(seen[8].0, format!("POST {api}/draft_notes"));
+        let first: Value = serde_json::from_str(&seen[8].2).unwrap();
         assert_eq!(first["position"]["head_sha"], "h");
         assert_eq!(first["position"]["new_line"], 1);
         assert_eq!(first["position"]["line_range"]["start"]["type"], "old");
-        let reply: Value = serde_json::from_str(&seen[8].2).unwrap();
+        let reply: Value = serde_json::from_str(&seen[9].2).unwrap();
         assert_eq!(reply["in_reply_to_discussion_id"], "d3");
-        assert_eq!(seen[9].0, format!("POST {api}/draft_notes/bulk_publish"));
-        assert_eq!(seen[10].0, format!("POST {api}/notes"));
-        assert_eq!(seen[11].0, format!("POST {api}/approve"));
-        assert_eq!(seen[12].0, "PUT /api/v4/suggestions/batch_apply");
-        assert_eq!(seen[13].0, format!("PUT {api}/rebase"));
-        assert_eq!(seen[14].0, format!("PUT {api}/notes/3"));
-        assert_eq!(seen[14].2, r#"{"body":"Why z?"}"#);
-        assert_eq!(seen[15].0, format!("DELETE {api}/notes/3"));
+        assert_eq!(seen[10].0, format!("POST {api}/draft_notes/bulk_publish"));
+        assert_eq!(seen[11].0, format!("POST {api}/notes"));
+        assert_eq!(seen[12].0, format!("POST {api}/approve"));
+        assert_eq!(seen[13].0, "PUT /api/v4/suggestions/batch_apply");
+        assert_eq!(seen[14].0, format!("PUT {api}/rebase"));
+        assert_eq!(seen[15].0, format!("PUT {api}/notes/3"));
+        assert_eq!(seen[15].2, r#"{"body":"Why z?"}"#);
+        assert_eq!(seen[16].0, format!("DELETE {api}/notes/3"));
+        assert_eq!(seen[6].0, format!("GET {api}/draft_notes?per_page=100"));
+        assert_eq!(seen[17].0, format!("PUT {api}/draft_notes/55"));
+        assert_eq!(seen[17].2, r#"{"note":"Sure now"}"#);
+        assert_eq!(seen[18].0, format!("DELETE {api}/draft_notes/55"));
         assert_eq!(
-            serde_json::from_str::<Value>(&seen[12].2).unwrap(),
+            serde_json::from_str::<Value>(&seen[13].2).unwrap(),
             json!({"ids": [77], "commit_message": "Use z"})
         );
     }

@@ -1213,6 +1213,52 @@ impl App {
             let root = repo.path().to_string();
             if let Some(f) = &mut repo.forge {
                 f.keep_local(ctx, &root);
+                f.keep_drafts(ctx);
+                if let Some(crate::forge_view::Opened::Request(n)) = f.open {
+                    let key = f.drafts_key(n);
+                    let drafts = self.settings.review_drafts.entry(key.clone()).or_default();
+                    // Drafts kept on the forge: their ids.
+                    for done in std::mem::take(&mut f.state.synced) {
+                        match done.remote {
+                            Ok(remote) => {
+                                if let Some(d) = drafts.iter_mut().find(|d| d.local == done.local) {
+                                    d.remote.clone_from(&remote);
+                                }
+                                // Picked up from the forge meanwhile: once.
+                                if remote.is_some() {
+                                    drafts.retain(|d| d.local == done.local || d.remote != remote);
+                                }
+                            }
+                            Err(e) => {
+                                f.state.sent = Some(Err(format!(
+                                    "a draft is kept here, but not on {}: {e}",
+                                    f.project.kind.name()
+                                )));
+                            }
+                        }
+                    }
+                    // Drafts found on the forge (made elsewhere, or before):
+                    // added here; ones gone from there, gone here too.
+                    if std::mem::take(&mut f.state.merge_pending)
+                        && let Some((_, o)) = f.viewed()
+                    {
+                        drafts.retain(|d| {
+                            d.remote.as_ref().is_none_or(|r| {
+                                o.pending.iter().any(|p| p.remote.as_ref() == Some(r))
+                            })
+                        });
+                        for p in &o.pending {
+                            if !drafts.iter().any(|d| d.remote == p.remote) {
+                                let mut p = p.clone();
+                                p.local = new_draft_id();
+                                drafts.push(p);
+                            }
+                        }
+                    }
+                    if drafts.is_empty() {
+                        self.settings.review_drafts.remove(&key);
+                    }
+                }
             }
         }
     }
@@ -2909,6 +2955,22 @@ fn check_out_op(forge: &crate::forge_view::ForgeView, number: u64) -> Option<Op>
     }
 }
 
+/// A new id for a draft, ours (unique enough: the time, in nanoseconds).
+fn new_draft_id() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static LAST: AtomicU64 = AtomicU64::new(0);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(1, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX));
+    // Never the same twice, even within a nanosecond.
+    let last = LAST.fetch_max(now, Ordering::Relaxed);
+    if now > last {
+        now
+    } else {
+        LAST.fetch_add(1, Ordering::Relaxed) + 1
+    }
+}
+
 /// While a request's commits are marked in the graph: how many are here,
 /// and going back to it (`Some(Some(n))`) or clearing them (`Some(None)`).
 fn highlight_bar(ui: &mut egui::Ui, repo: &RepoView) -> Option<Option<u64>> {
@@ -3004,17 +3066,35 @@ fn request_action(
         Action::Close => f.open = None,
         Action::Open(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
         Action::Reload => f.reloading = true,
-        Action::SaveDraft(draft, at) => {
+        Action::SaveDraft(mut draft, at) => {
             let list = drafts.entry(key).or_default();
             match at.and_then(|i| list.get_mut(i)) {
-                Some(old) => *old = draft,
-                None => list.push(draft),
+                // A change to one: the same draft, on the forge too.
+                Some(old) => {
+                    draft.local = old.local;
+                    draft.remote = old.remote.clone();
+                    *old = draft.clone();
+                }
+                None => {
+                    draft.local = new_draft_id();
+                    list.push(draft.clone());
+                }
+            }
+            if draft.goes_in_review(f.project.kind == crate::forge::Kind::GitLab) {
+                f.state
+                    .syncs
+                    .push_back(crate::forge_view::Sync::Save(draft));
             }
         }
         Action::DeleteDraft(i) => {
             if let Some(list) = drafts.get_mut(&key) {
                 if i < list.len() {
-                    list.remove(i);
+                    let gone = list.remove(i);
+                    if let Some(remote) = gone.remote {
+                        f.state
+                            .syncs
+                            .push_back(crate::forge_view::Sync::Delete(remote));
+                    }
                 }
                 if list.is_empty() {
                     drafts.remove(&key);
@@ -3024,8 +3104,9 @@ fn request_action(
         Action::Submit { summary, finish } => {
             let Some((_, o)) = viewed else { return Ok(()) };
             let mine = drafts.get(&key).cloned().unwrap_or_default();
+            let review = f.state.pending_review.clone();
             f.send(ctx, Sent::Review, move |s| {
-                s.submit(n, &o.refs, &mine, &summary, finish)
+                s.submit(n, &o, review, (&mine, &summary, finish))
             });
         }
         Action::Resolve(thread, to) => {

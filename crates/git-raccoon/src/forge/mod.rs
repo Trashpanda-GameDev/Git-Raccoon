@@ -387,18 +387,43 @@ impl Session {
         }
     }
 
+    /// Keeps a draft on the forge too (GitLab's draft notes, GitHub's
+    /// pending review), or changes it there. Returns its id there (`None`
+    /// if the forge can't hold it) and, on GitHub, the pending review's.
+    pub fn save_draft(
+        &self,
+        number: u64,
+        o: &review::Overview,
+        pending_review: Option<String>,
+        draft: &review::Draft,
+    ) -> Result<(Option<String>, Option<String>), String> {
+        match self.project.kind {
+            Kind::GitHub => github::save_draft(self, o, pending_review, draft),
+            Kind::GitLab => gitlab::save_draft(self, number, o, draft).map(|id| (Some(id), None)),
+        }
+    }
+
+    /// Takes a draft off the forge.
+    pub fn delete_draft(&self, number: u64, remote: &str) -> Result<(), String> {
+        match self.project.kind {
+            Kind::GitHub => github::delete_draft(self, remote),
+            Kind::GitLab => gitlab::delete_draft(self, number, remote),
+        }
+    }
+
     /// Sends a review: its drafts, a summary, and how it ends.
     pub fn submit(
         &self,
         number: u64,
-        refs: &review::DiffRefs,
-        drafts: &[review::Draft],
-        summary: &str,
-        finish: review::Finish,
+        o: &review::Overview,
+        pending_review: Option<String>,
+        (drafts, summary, finish): (&[review::Draft], &str, review::Finish),
     ) -> Result<(), String> {
         match self.project.kind {
-            Kind::GitHub => github::submit(self, number, &refs.head, drafts, summary, finish),
-            Kind::GitLab => gitlab::submit(self, number, refs, drafts, summary, finish),
+            Kind::GitHub => {
+                github::submit(self, number, o, pending_review, (drafts, summary, finish))
+            }
+            Kind::GitLab => gitlab::submit(self, number, o, (drafts, summary, finish)),
         }
     }
 
@@ -408,14 +433,6 @@ impl Session {
         match self.project.kind {
             Kind::GitHub => Err("GitHub can't apply suggestions through its API".into()),
             Kind::GitLab => gitlab::apply(self, ids, message),
-        }
-    }
-
-    /// Brings a request up to date with its target, on the forge.
-    pub fn update(&self, request: &Request, head: &str) -> Result<(), String> {
-        match self.project.kind {
-            Kind::GitHub => github::update(self, request, head),
-            Kind::GitLab => gitlab::update(self, request.number),
         }
     }
 
@@ -437,6 +454,14 @@ impl Session {
         match self.project.kind {
             Kind::GitHub => github::delete_comment(self, comment),
             Kind::GitLab => gitlab::delete_comment(self, number, comment),
+        }
+    }
+
+    /// Brings a request up to date with its target, on the forge.
+    pub fn update(&self, request: &Request, head: &str) -> Result<(), String> {
+        match self.project.kind {
+            Kind::GitHub => github::update(self, request, head),
+            Kind::GitLab => gitlab::update(self, request.number),
         }
     }
 

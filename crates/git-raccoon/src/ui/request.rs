@@ -697,6 +697,7 @@ fn composer_box(ui: &mut egui::Ui, composer: &mut Option<Composer>) -> Option<Ac
                             at: c.at.clone(),
                             reply_to: c.reply_to.clone(),
                             body: c.body.trim().to_string(),
+                            ..Draft::default()
                         },
                         c.editing,
                     ));
@@ -1329,6 +1330,7 @@ fn conversation(
                                     at: None,
                                     reply_to: None,
                                     body: state.comment.trim().to_string(),
+                                    ..Draft::default()
                                 },
                                 None,
                             ));

@@ -353,6 +353,11 @@ pub struct Overview {
     pub refs: DiffRefs,
     /// A list was too long to fetch all of (more than 5,000).
     pub cut_short: bool,
+    /// GitHub's id for the request (GraphQL), and your pending review there.
+    pub node_id: String,
+    pub pending_review: Option<String>,
+    /// Your draft comments kept on the forge.
+    pub pending: Vec<Draft>,
 }
 
 impl Overview {
@@ -383,11 +388,25 @@ impl Overview {
 /// A comment not sent yet: on a line or range, a reply to a thread, or on
 /// the whole request.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Draft {
     pub at: Option<Anchor>,
     /// The thread it answers (its id).
     pub reply_to: Option<String>,
     pub body: String,
+    /// Its id on the forge, once it's kept there too (a GitLab draft note,
+    /// a comment in GitHub's pending review).
+    pub remote: Option<String>,
+    /// Ours, to match it up with the forge's answer.
+    pub local: u64,
+}
+
+impl Draft {
+    /// Kept as part of the review on the forge (code comments and replies;
+    /// GitHub keeps comments on the whole request out of reviews).
+    pub fn goes_in_review(&self, gitlab: bool) -> bool {
+        gitlab || self.at.is_some() || self.reply_to.is_some()
+    }
 }
 
 /// How a review ends.

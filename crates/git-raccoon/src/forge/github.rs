@@ -430,6 +430,28 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
             created: timestamp(review["submitted_at"].as_str().unwrap_or_default()),
         });
     }
+    // Your pending review (only you see it): its comments are your drafts.
+    o.node_id = text(&v, "node_id");
+    if let Some(p) = reviews
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|r| r["state"].as_str() == Some("PENDING"))
+    {
+        o.pending_review = Some(text(p, "node_id"));
+        let id = p["id"].as_u64().unwrap_or_default();
+        let comments = all(
+            s,
+            &format!("/pulls/{number}/reviews/{id}/comments?per_page=100"),
+            &mut o.cut_short,
+        )?;
+        o.pending = comments
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(pending_draft)
+            .collect();
+    }
     o.threads = threads(s, number, &mut o.cut_short)?
         .iter()
         .map(thread)
@@ -501,77 +523,191 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
     Ok((r, o))
 }
 
-fn review_comment(d: &Draft) -> Option<Value> {
-    let at = d.at.as_ref()?;
-    let place = |l: &Line| match (l.new, l.old) {
+/// A comment in your pending review, as a draft.
+fn pending_draft(c: &Value) -> Draft {
+    let line = |n: &Value, side: &Value| line_on(side.as_str(), n.as_u64());
+    let reply_to = c["in_reply_to_id"].as_u64().map(|id| id.to_string());
+    let at = if reply_to.is_some() {
+        None
+    } else {
+        line(&c["line"], &c["side"]).map(|l| Anchor {
+            path: text(c, "path"),
+            old_path: None,
+            line: l,
+            start: line(&c["start_line"], &c["start_side"]).filter(|s| *s != l),
+        })
+    };
+    Draft {
+        at,
+        reply_to,
+        body: text(c, "body"),
+        remote: Some(text(c, "node_id")),
+        local: 0,
+    }
+}
+
+/// Your pending review's id, making one if there isn't one yet.
+fn ensure_review(s: &Session, o: &Overview, review: Option<String>) -> Result<String, String> {
+    if let Some(id) = review {
+        return Ok(id);
+    }
+    let v = query(
+        s,
+        "mutation($pr: ID!, $head: GitObjectID) {
+          addPullRequestReview(input: {pullRequestId: $pr, commitOID: $head}) { pullRequestReview { id } }
+        }",
+        json!({"pr": o.node_id, "head": o.refs.head}),
+    )?;
+    let id = text(
+        &v["data"]["addPullRequestReview"]["pullRequestReview"],
+        "id",
+    );
+    if id.is_empty() {
+        Err(format!("{FORGE} didn't start a review"))
+    } else {
+        Ok(id)
+    }
+}
+
+fn side_of(l: &Line) -> (&'static str, u32) {
+    match (l.new, l.old) {
         (Some(n), _) => ("RIGHT", n),
         (None, Some(n)) => ("LEFT", n),
         (None, None) => ("RIGHT", 0),
-    };
-    let (side, line) = place(&at.line);
-    let mut c = json!({"path": at.path, "body": d.body, "line": line, "side": side});
-    if let Some(start) = &at.start {
-        let (start_side, start_line) = place(start);
-        c["start_line"] = json!(start_line);
-        c["start_side"] = json!(start_side);
     }
-    Some(c)
 }
 
-/// Sends a review: replies, comments on the request, then the review with
-/// its line comments and verdict.
+/// Keeps a draft in your pending review (making one if needed), or
+/// changes it there. Returns its id there (`None` for a comment on the
+/// whole request, which a review can't hold) and the review's id.
+pub fn save_draft(
+    s: &Session,
+    o: &Overview,
+    review: Option<String>,
+    d: &Draft,
+) -> Result<(Option<String>, Option<String>), String> {
+    if let Some(remote) = &d.remote {
+        query(
+            s,
+            "mutation($id: ID!, $body: String!) {
+              updatePullRequestReviewComment(input: {pullRequestReviewCommentId: $id, body: $body}) {
+                pullRequestReviewComment { id }
+              }
+            }",
+            json!({"id": remote, "body": d.body}),
+        )?;
+        return Ok((Some(remote.clone()), review));
+    }
+    if !d.goes_in_review(false) {
+        return Ok((None, review));
+    }
+    let review = ensure_review(s, o, review)?;
+    let id = if let Some(to) = &d.reply_to {
+        let thread = o
+            .threads
+            .iter()
+            .find(|t| t.reply == *to)
+            .map(|t| t.id.clone())
+            .ok_or("the thread isn't there any more")?;
+        let v = query(
+            s,
+            "mutation($review: ID!, $thread: ID!, $body: String!) {
+              addPullRequestReviewThreadReply(input: {pullRequestReviewId: $review,
+                pullRequestReviewThreadId: $thread, body: $body}) { comment { id } }
+            }",
+            json!({"review": review, "thread": thread, "body": d.body}),
+        )?;
+        text(
+            &v["data"]["addPullRequestReviewThreadReply"]["comment"],
+            "id",
+        )
+    } else {
+        let at = d.at.as_ref().ok_or("nowhere to put it")?;
+        let (side, line) = side_of(&at.line);
+        let mut vars = json!({"review": review, "path": at.path, "line": line, "side": side,
+            "body": d.body, "startLine": null, "startSide": null});
+        if let Some(start) = &at.start {
+            let (start_side, start_line) = side_of(start);
+            vars["startLine"] = json!(start_line);
+            vars["startSide"] = json!(start_side);
+        }
+        let v = query(
+            s,
+            "mutation($review: ID!, $path: String!, $line: Int!, $side: DiffSide!,
+                $startLine: Int, $startSide: DiffSide, $body: String!) {
+              addPullRequestReviewThread(input: {pullRequestReviewId: $review, path: $path,
+                line: $line, side: $side, startLine: $startLine, startSide: $startSide,
+                body: $body}) { thread { comments(first: 1) { nodes { id } } } }
+            }",
+            vars,
+        )?;
+        text(
+            &v["data"]["addPullRequestReviewThread"]["thread"]["comments"]["nodes"][0],
+            "id",
+        )
+    };
+    Ok(((!id.is_empty()).then_some(id), Some(review)))
+}
+
+/// Takes a draft out of your pending review.
+pub fn delete_draft(s: &Session, remote: &str) -> Result<(), String> {
+    query(
+        s,
+        "mutation($id: ID!) {
+          deletePullRequestReviewComment(input: {id: $id}) { pullRequestReview { id } }
+        }",
+        json!({"id": remote}),
+    )?;
+    Ok(())
+}
+
+/// Sends a review: comments on the whole request, then the pending review
+/// (with any drafts not in it yet) and its verdict.
 pub fn submit(
     s: &Session,
     number: u64,
-    head: &str,
-    drafts: &[Draft],
-    summary: &str,
-    finish: Finish,
+    o: &Overview,
+    review: Option<String>,
+    (drafts, summary, finish): (&[Draft], &str, Finish),
 ) -> Result<(), String> {
-    let auth = Auth::Bearer(&s.token);
-    for d in drafts {
-        if let Some(to) = &d.reply_to {
-            http::post(
-                FORGE,
-                &format!("{}/pulls/{number}/comments/{to}/replies", api(s)),
-                &auth,
-                &json!({"body": d.body}),
-            )?;
-        } else if d.at.is_none() {
-            comment(s, number, &d.body)?;
-        }
+    for d in drafts.iter().filter(|d| !d.goes_in_review(false)) {
+        comment(s, number, &d.body)?;
     }
-    let comments: Vec<Value> = drafts
+    // Drafts the pending review doesn't have yet (kept only here).
+    let mut review = review;
+    for d in drafts
         .iter()
-        .filter(|d| d.reply_to.is_none())
-        .filter_map(review_comment)
-        .collect();
-    if finish == Finish::Comment && comments.is_empty() && summary.trim().is_empty() {
-        return Ok(());
+        .filter(|d| d.goes_in_review(false) && d.remote.is_none())
+    {
+        review = save_draft(s, o, review, d)?.1;
     }
     let event = match finish {
         Finish::Comment => "COMMENT",
         Finish::Approve => "APPROVE",
         Finish::RequestChanges => "REQUEST_CHANGES",
     };
-    http::post(
-        FORGE,
-        &format!("{}/pulls/{number}/reviews", api(s)),
-        &auth,
-        &json!({"commit_id": head, "body": summary, "event": event, "comments": comments}),
-    )?;
-    Ok(())
-}
-
-/// Brings a request up to date with its target: GitHub merges the target
-/// into its branch.
-pub fn update(s: &Session, r: &Request, head: &str) -> Result<(), String> {
-    http::put(
-        FORGE,
-        &format!("{}/pulls/{}/update-branch", api(s), r.number),
-        &Auth::Bearer(&s.token),
-        &json!({"expected_head_sha": head}),
-    )?;
+    match review {
+        Some(id) => {
+            query(
+                s,
+                "mutation($id: ID!, $event: PullRequestReviewEvent!, $body: String) {
+                  submitPullRequestReview(input: {pullRequestReviewId: $id, event: $event, body: $body}) {
+                    pullRequestReview { id }
+                  }
+                }",
+                json!({"id": id, "event": event, "body": summary}),
+            )?;
+        }
+        None if finish == Finish::Comment && summary.trim().is_empty() => {}
+        None => {
+            http::post(
+                FORGE,
+                &format!("{}/pulls/{number}/reviews", api(s)),
+                &Auth::Bearer(&s.token),
+                &json!({"commit_id": o.refs.head, "body": summary, "event": event}),
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -595,6 +731,18 @@ pub fn edit_comment(s: &Session, c: &Comment, body: &str) -> Result<(), String> 
 /// Deletes a comment.
 pub fn delete_comment(s: &Session, c: &Comment) -> Result<(), String> {
     http::delete(FORGE, &comment_url(s, c), &Auth::Bearer(&s.token))?;
+    Ok(())
+}
+
+/// Brings a request up to date with its target: GitHub merges the target
+/// into its branch.
+pub fn update(s: &Session, r: &Request, head: &str) -> Result<(), String> {
+    http::put(
+        FORGE,
+        &format!("{}/pulls/{}/update-branch", api(s), r.number),
+        &Auth::Bearer(&s.token),
+        &json!({"expected_head_sha": head}),
+    )?;
     Ok(())
 }
 
@@ -897,7 +1045,8 @@ mod tests {
             (
                 200,
                 r#"[{"user":{"login":"rocky"},"state":"APPROVED","body":"Nice","submitted_at":"2026-11-03T00:00:00Z"},
-                    {"user":{"login":"milo"},"state":"COMMENTED","body":"","submitted_at":"2026-11-04T00:00:00Z"}]"#
+                    {"user":{"login":"milo"},"state":"COMMENTED","body":"","submitted_at":"2026-11-04T00:00:00Z"},
+                    {"id":9,"node_id":"R0","user":{"login":"me"},"state":"PENDING","body":""}]"#
                     .into(),
             ),
             (200, r#"{"check_runs":[{"name":"build","status":"completed","conclusion":"failure","html_url":"c"}]}"#.into()),
@@ -918,6 +1067,11 @@ mod tests {
                 r#"[{"id":5,"user":{"login":"milo"},"body":"**Looks** good","created_at":"2026-11-02T00:00:00Z"}]"#
                     .into(),
             ),
+            // The pending review's comment.
+            (
+                200,
+                r#"[{"node_id":"PC1","body":"Hm","path":"src/map.rs","line":2,"side":"RIGHT"}]"#.into(),
+            ),
             (
                 200,
                 r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[
@@ -928,9 +1082,11 @@ mod tests {
                     .into(),
             ),
             (200, r#"{"allow_merge_commit":true,"allow_squash_merge":true,"allow_rebase_merge":false}"#.into()),
-            // The review.
-            (201, "{}".into()),
-            (201, "{}".into()),
+            // The review: one draft (and pending review) already on GitHub,
+            // two to add to it, then it's submitted, and a thread resolved.
+            (201, json!({"data": {"addPullRequestReviewThread": {"thread": {"comments": {"nodes": [{"id": "C1"}]}}}}}).to_string()),
+            (201, json!({"data": {"addPullRequestReviewThreadReply": {"comment": {"id": "C2"}}}}).to_string()),
+            (200, json!({"data": {"submitPullRequestReview": {"pullRequestReview": {"id": "R0"}}}}).to_string()),
             (200, "{}".into()),
             // Merging, and deleting the branch.
             (200, r#"{"merged":true}"#.into()),
@@ -991,15 +1147,28 @@ mod tests {
                 }),
                 reply_to: None,
                 body: "Gone?".into(),
+                ..Draft::default()
             },
             Draft {
                 at: None,
                 reply_to: Some("42".into()),
                 body: "Because.".into(),
+                ..Draft::default()
             },
         ];
-        s.submit(7, &o.refs, &drafts, "Close", Finish::RequestChanges)
-            .unwrap();
+        // The draft already in the pending review.
+        assert_eq!(o.pending_review.as_deref(), Some("R0"));
+        assert_eq!(o.pending.len(), 1);
+        assert_eq!(o.pending[0].remote.as_deref(), Some("PC1"));
+        assert_eq!(o.pending[0].at.as_ref().map(|a| a.line.new), Some(Some(2)));
+        let all: Vec<Draft> = o.pending.iter().cloned().chain(drafts).collect();
+        s.submit(
+            7,
+            &o,
+            o.pending_review.clone(),
+            (&all, "Close", Finish::RequestChanges),
+        )
+        .unwrap();
         s.resolve(7, "T1", true).unwrap();
         // Its branch is deleted after (it's not from a fork, now).
         let own = Request {
@@ -1017,34 +1186,49 @@ mod tests {
         .unwrap();
 
         let seen = seen.lock().unwrap();
-        assert_eq!(seen[7].0, "POST /api/graphql");
         assert_eq!(
-            seen[9].0,
-            "POST /api/v3/repos/rocky/stash-box/pulls/7/comments/42/replies"
+            seen[7].0,
+            "GET /api/v3/repos/rocky/stash-box/pulls/7/reviews/9/comments?per_page=100"
+        );
+        assert_eq!(seen[8].0, "POST /api/graphql");
+        // The new line comment, and the reply, go into the pending review.
+        let line: Value = serde_json::from_str(&seen[10].2).unwrap();
+        assert!(
+            line["query"]
+                .as_str()
+                .unwrap()
+                .contains("addPullRequestReviewThread(")
         );
         assert_eq!(
-            seen[10].0,
-            "POST /api/v3/repos/rocky/stash-box/pulls/7/reviews"
+            line["variables"],
+            json!({"review": "R0", "path": "src/map.rs", "line": 1, "side": "LEFT",
+                "body": "Gone?", "startLine": null, "startSide": null})
         );
-        let review: Value = serde_json::from_str(&seen[10].2).unwrap();
-        assert_eq!(review["event"], "REQUEST_CHANGES");
-        assert_eq!(review["commit_id"], "abc");
-        assert_eq!(
-            review["comments"],
-            json!([{"path": "src/map.rs", "body": "Gone?", "line": 1, "side": "LEFT"}])
+        let reply: Value = serde_json::from_str(&seen[11].2).unwrap();
+        assert_eq!(reply["variables"]["thread"], "T1");
+        let submit: Value = serde_json::from_str(&seen[12].2).unwrap();
+        assert!(
+            submit["query"]
+                .as_str()
+                .unwrap()
+                .contains("submitPullRequestReview")
         );
-        assert!(seen[11].2.contains("resolveReviewThread"));
         assert_eq!(
-            seen[12].0,
+            submit["variables"],
+            json!({"id": "R0", "event": "REQUEST_CHANGES", "body": "Close"})
+        );
+        assert!(seen[13].2.contains("resolveReviewThread"));
+        assert_eq!(
+            seen[14].0,
             "PUT /api/v3/repos/rocky/stash-box/pulls/7/merge"
         );
-        let merge: Value = serde_json::from_str(&seen[12].2).unwrap();
+        let merge: Value = serde_json::from_str(&seen[14].2).unwrap();
         assert_eq!(
             merge,
             json!({"merge_method": "squash", "commit_title": "Faster lookups (#7)", "commit_message": "Uses a hash map."})
         );
         assert_eq!(
-            seen[13].0,
+            seen[15].0,
             "DELETE /api/v3/repos/rocky/stash-box/git/refs/heads/index"
         );
     }
