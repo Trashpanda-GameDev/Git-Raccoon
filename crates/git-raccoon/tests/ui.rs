@@ -6199,6 +6199,43 @@ fn extras_state(app: &App) -> (usize, Option<git_raccoon_core::modules::Submodul
 }
 
 #[test]
+fn adds_a_submodule_from_the_sidebar() {
+    let lib = Sample::build();
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    // The section is there with none (its heading, taking no room), its +
+    // to add one.
+    h.get_by_label("Submodules");
+    h.get_by_label("Add submodule").click();
+    h.run_ok();
+    h.get_by_label("Submodule URL").type_text(lib.path());
+    h.run_ok();
+    h.get_by_label("Submodule folder").click();
+    h.run_ok();
+    h.get_by_label("Submodule folder").type_text("vendor/lib");
+    h.run_ok();
+    screenshot(&mut h, "41b-add-submodule");
+    // The window's button (the section's + is labelled the same).
+    h.get_all_by_label("Add submodule").last().unwrap().click();
+    wait_for(&mut h, "the submodule", |app| {
+        app.repo().unwrap().extras.submodules.len() == 1
+    });
+    h.run_ok();
+    h.get_by_label("vendor/lib");
+    let staged = std::process::Command::new("git")
+        .args(["diff", "--cached", "--name-only"])
+        .current_dir(sample.path())
+        .output()
+        .unwrap();
+    let staged = String::from_utf8_lossy(&staged.stdout);
+    assert!(
+        staged.contains(".gitmodules") && staged.contains("vendor/lib"),
+        "{staged}"
+    );
+}
+
+#[test]
 fn shows_submodules_worktrees_and_lfs() {
     use git_raccoon_core::modules::SubmoduleState;
     let lib = Sample::build();

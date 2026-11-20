@@ -337,7 +337,7 @@ It covers commits, amends, checkouts, merges, rebases, cherry-picks, reverts, re
 ## Tabs, submodules and worktrees
 
 - **Tabs:** each repository opens in its own tab. Ctrl+T opens one, Ctrl+W closes it, Ctrl+Tab switches. Drag tabs to reorder them.
-- **Submodules:** listed in the sidebar. Right-click to open one in a tab, or update it.
+- **Submodules:** listed in the sidebar. Right-click to open one in a tab, or update it. **+** adds one: give its URL, and the folder to put it in. It's cloned there and staged with `.gitmodules`, ready to commit.
 - **Worktrees** (extra working folders of the same repository): **+** adds one; right-click to open or remove it.
 - **Git LFS:** repositories using it show an *LFS* badge (amber if git-lfs isn't installed).
 

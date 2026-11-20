@@ -89,6 +89,31 @@ pub fn update_submodule(
     .map(drop)
 }
 
+/// Adds the repository at `url` as a submodule in `folder` (relative to the
+/// repository; empty: a folder named after it), cloning it there. The new
+/// submodule and `.gitmodules` are staged, ready to commit.
+pub fn add_submodule(
+    path: &str,
+    url: &str,
+    folder: &str,
+    on: &mut dyn FnMut(Progress),
+    cancel: &AtomicBool,
+) -> Result<()> {
+    // Git won't clone a submodule from a folder on this computer unless
+    // allowed (against repositories that bring such submodules along);
+    // here it's the one asked for.
+    let local = (!url.contains("://") && !url.contains('@')) || url.starts_with("file://");
+    let mut args = Vec::new();
+    if local {
+        args.extend(["-c", "protocol.file.allow=always"]);
+    }
+    args.extend(["submodule", "add", "--progress", "--", url]);
+    if !folder.trim().is_empty() {
+        args.push(folder.trim());
+    }
+    cli::run_with_progress(path, &args, &mut |l| on(Progress::parse(l)), cancel).map(drop)
+}
+
 /// A working tree of the repository.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Worktree {
@@ -275,6 +300,34 @@ mod tests {
         git(&t, &["add", "."]);
         git(&t, &["commit", "-q", "-m", "first"]);
         t
+    }
+
+    #[test]
+    fn adds_a_submodule() {
+        let lib = with_identity();
+        let app = with_identity();
+        let cancel = AtomicBool::new(false);
+        add_submodule(app.path(), lib.path(), "vendor/lib", &mut |_| {}, &cancel).unwrap();
+        let subs = submodules(app.path()).unwrap();
+        assert_eq!(subs.len(), 1);
+        assert_eq!(subs[0].path, "vendor/lib");
+        assert_eq!(subs[0].state, SubmoduleState::UpToDate);
+        assert!(
+            std::path::Path::new(app.path())
+                .join("vendor/lib/f.txt")
+                .exists()
+        );
+        // Staged, with .gitmodules, ready to commit.
+        let staged = cli::run(app.path(), &["diff", "--cached", "--name-only"], None).unwrap();
+        assert!(
+            staged.contains(".gitmodules") && staged.contains("vendor/lib"),
+            "{staged}"
+        );
+        // A bad address says why.
+        let err = add_submodule(app.path(), "/no/such/repo", "", &mut |_| {}, &cancel)
+            .unwrap_err()
+            .to_string();
+        assert!(!err.is_empty());
     }
 
     #[test]

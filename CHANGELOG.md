@@ -3,6 +3,10 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.22
+
+- **Add a submodule from the sidebar**: *Submodules* is always there now (hide it like any section, by right-clicking a section's heading), and its **+** adds one from a URL, into the folder you choose. It's cloned and staged with `.gitmodules`, ready to commit.
+
 ## 0.5.21
 
 - **Corner roundness looks like a slider again** (Settings › Appearance): a wider track, filled in the accent colour up to the value, with a round handle. It looked like a button.

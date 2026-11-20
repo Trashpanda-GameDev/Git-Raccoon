@@ -2735,6 +2735,7 @@ fn repo_action(repo: &mut RepoView, ctx: &egui::Context, action: sidebar::Action
         sidebar::Action::OpenPath(p) => repo.open_request = Some(p),
         sidebar::Action::UpdateSubmodule(p) => repo.run(ctx, Op::UpdateSubmodule(p)),
         sidebar::Action::AddWorktree => repo.new_worktree(),
+        sidebar::Action::AddSubmodule => repo.new_submodule(),
         sidebar::Action::RemoveWorktree(p) => repo.confirm_remove_worktree(p),
         // The app's.
         sidebar::Action::OpenRequest(_)

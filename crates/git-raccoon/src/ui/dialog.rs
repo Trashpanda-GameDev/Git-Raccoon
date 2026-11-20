@@ -21,6 +21,40 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
                 heading(ui, title, Some(body));
                 (String::new(), false, true)
             }
+            Dialog::Submodule { url, folder } => {
+                heading(
+                    ui,
+                    "Add submodule",
+                    Some("Another repository, kept in a folder of this one at a commit of your choosing. It's cloned there, and staged with .gitmodules for you to commit."),
+                );
+                let mut enter = field(
+                    ui,
+                    url,
+                    "URL, e.g. https://github.com/owner/repo.git",
+                    "Submodule URL",
+                    None,
+                );
+                ui.add_space(4.0);
+                let named = submodule_folder(url);
+                let hint = if named.is_empty() {
+                    "Folder (default: named after the repository)".to_string()
+                } else {
+                    format!("Folder (default: {named})")
+                };
+                let f = ui.add(
+                    egui::TextEdit::singleline(folder)
+                        .hint_text(hint)
+                        .desired_width(f32::INFINITY),
+                );
+                ui.ctx()
+                    .accesskit_node_builder(f.id, |n| n.set_label("Submodule folder"));
+                enter |= f.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let ready = !url.trim().is_empty();
+                if enter && ready {
+                    answer = Some(Some(0));
+                }
+                ("Add submodule".into(), false, ready)
+            }
             Dialog::Worktree {
                 folder,
                 branch,
@@ -294,6 +328,10 @@ pub fn show(ctx: &egui::Context, open: &mut Option<Dialog>, refs: &Refs) -> Opti
         }
         Some(chosen) => match open.take()? {
             Dialog::Choice { choices, .. } => choices.into_iter().nth(chosen).map(|c| c.2),
+            Dialog::Submodule { url, folder } => Some(Op::AddSubmodule {
+                url: url.trim().to_string(),
+                folder: folder.trim().to_string(),
+            }),
             Dialog::Worktree {
                 folder,
                 branch,
@@ -442,6 +480,14 @@ fn field(
     response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
 }
 
+/// The folder Git names a submodule after when none is given: the URL's
+/// last part, without ".git".
+fn submodule_folder(url: &str) -> String {
+    let url = url.trim().trim_end_matches(['/', '\\']);
+    let last = url.rsplit(['/', '\\', ':']).next().unwrap_or_default();
+    last.strip_suffix(".git").unwrap_or(last).to_string()
+}
+
 /// Why a new local branch name can't be used; empty for "nothing typed yet".
 fn branch_problem(name: &str, refs: &Refs, renaming: Option<&str>) -> Option<&'static str> {
     let name = name.trim();
@@ -485,5 +531,21 @@ fn remote_problem(name: &str, refs: &Refs, editing: Option<&str>) -> Option<&'st
         Some("A remote with this name already exists.")
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::submodule_folder;
+
+    #[test]
+    fn names_a_submodule_after_its_repository() {
+        assert_eq!(submodule_folder("https://github.com/owner/lib.git"), "lib");
+        assert_eq!(submodule_folder("https://github.com/owner/lib/"), "lib");
+        assert_eq!(submodule_folder("git@github.com:owner/lib.git"), "lib");
+        assert_eq!(submodule_folder("git@host:lib.git"), "lib");
+        assert_eq!(submodule_folder(r"C:\code\lib"), "lib");
+        assert_eq!(submodule_folder("/home/me/lib.git"), "lib");
+        assert_eq!(submodule_folder("  "), "");
     }
 }

@@ -924,6 +924,8 @@ pub enum Action {
     OpenPath(String),
     /// Update the submodule at this path (relative to the repository).
     UpdateSubmodule(String),
+    /// Add a submodule.
+    AddSubmodule,
     AddWorktree,
     RemoveWorktree(String),
     /// Open a terminal in this folder (a worktree or submodule).
@@ -1384,18 +1386,19 @@ pub fn show(
         ("stashes", "Stashes".into()),
         ("worktrees", "Worktrees".into()),
     ]);
-    if !extras.submodules.is_empty() {
-        all_sections.push(("submodules", "Submodules".into()));
-    }
+    all_sections.push(("submodules", "Submodules".into()));
     let shown_keys: Vec<&str> = all_sections
         .iter()
         .map(|(k, _)| *k)
         .filter(|k| !hidden.iter().any(|h| h == k))
         .collect();
+    // With no submodules, that section is just its heading (and its +):
+    // it takes no room from the others.
+    let empty = |k: &str| k == "submodules" && extras.submodules.is_empty();
     let open: Vec<&str> = shown_keys
         .iter()
         .copied()
-        .filter(|k| filtering || !collapsed.contains(*k))
+        .filter(|k| (filtering || !collapsed.contains(*k)) && !empty(k))
         .collect();
     let (shares_id, measured_id) = (
         egui::Id::new("sidebar-section-shares"),
@@ -1846,21 +1849,23 @@ pub fn show(
                 });
             }
 
-            // Submodules, if there are any.
-            if !extras.submodules.is_empty() {
-                let open = c.is_open("submodules");
-                if section_header(
+            // Submodules.
+            {
+                let open = c.is_open("submodules") && !extras.submodules.is_empty();
+                let (toggled, add) = section_header(
                     ui,
                     &mut c,
                     "submodules",
                     "Submodules",
                     extras.submodules.len(),
                     open,
-                    None,
-                )
-                .0
-                {
+                    Some("Add submodule"),
+                );
+                if toggled {
                     c.toggle("submodules");
+                }
+                if add {
+                    c.action = Some(Action::AddSubmodule);
                 }
                 if open {
                     body(ui, &mut c, "submodules", "Submodules", |ui, c| {

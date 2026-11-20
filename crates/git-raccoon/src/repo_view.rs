@@ -344,6 +344,12 @@ pub enum Op {
     RemoveRemote(String),
     /// Clone (if needed) and check out a submodule's recorded commit.
     UpdateSubmodule(String),
+    /// Add the repository at `url` as a submodule in `folder` (empty: named
+    /// after it).
+    AddSubmodule {
+        url: String,
+        folder: String,
+    },
     AddWorktree {
         folder: String,
         branch: String,
@@ -577,6 +583,9 @@ impl Op {
             Op::SetRemoteUrl { name, url } => remote::set_url(path, &name, &url),
             Op::RemoveRemote(name) => remote::remove(path, &name),
             Op::UpdateSubmodule(sub) => modules::update_submodule(path, &sub, report, &ctl.cancel),
+            Op::AddSubmodule { url, folder } => {
+                modules::add_submodule(path, &url, &folder, report, &ctl.cancel)
+            }
             Op::AddWorktree {
                 folder,
                 branch,
@@ -653,6 +662,7 @@ impl Op {
             Op::RenameRemote { .. } | Op::SetRemoteUrl { .. } => "change the remote",
             Op::RemoveRemote(_) => "remove the remote",
             Op::UpdateSubmodule(_) => "update the submodule",
+            Op::AddSubmodule { .. } => "add the submodule",
             Op::AddWorktree { .. } => "add the worktree",
             Op::RemoveWorktree { .. } => "remove the worktree",
             Op::Merge { .. } => "merge",
@@ -1329,6 +1339,11 @@ pub enum Dialog {
         name: String,
         url: String,
     },
+    /// Add the repository at `url` as a submodule, in `folder`.
+    Submodule {
+        url: String,
+        folder: String,
+    },
     /// Add a worktree in `folder` with `branch` (new from HEAD, or existing).
     Worktree {
         folder: String,
@@ -1812,6 +1827,7 @@ impl RepoView {
                 | Op::Push { .. }
                 | Op::PushBranch { .. }
                 | Op::UpdateSubmodule(_)
+                | Op::AddSubmodule { .. }
                 | Op::DeleteRemoteBranch(_)
                 | Op::DeleteRemoteBranches(_)
                 | Op::RestoreRemoteBranch { .. }
@@ -2408,6 +2424,13 @@ impl RepoView {
     }
 
     /// Opens the dialog to add a worktree, next to this repository.
+    pub fn new_submodule(&mut self) {
+        self.dialog = Some(Dialog::Submodule {
+            url: String::new(),
+            folder: String::new(),
+        });
+    }
+
     pub fn new_worktree(&mut self) {
         let root = std::path::Path::new(self.path().trim_end_matches(['/', '\\']));
         let name = root
