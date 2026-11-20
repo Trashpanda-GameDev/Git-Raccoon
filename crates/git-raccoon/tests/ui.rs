@@ -4157,7 +4157,7 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
         .diff
         .path
         .clone();
-    h.get_by_label_contains("file changed").click();
+    h.get_by_label("Changes tab").click();
     h.run_ok();
     h.get_all_by_label(&file).last().unwrap().click();
     h.run_ok();

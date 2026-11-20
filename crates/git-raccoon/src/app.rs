@@ -66,6 +66,8 @@ pub struct App {
     /// The new pull/merge request window, and its request on the way.
     new_request: Option<crate::ui::forge::NewForm>,
     new_request_post: Option<crate::task::Task<Result<crate::forge::Request, String>>>,
+    /// What the new request's view asked for this frame.
+    new_request_action: Option<crate::ui::forge::NewAction>,
     /// Who can review a new request, and its labels, being listed.
     new_request_choices: Option<crate::task::Task<Result<crate::forge::Choices, String>>>,
     /// The notes shown in "What's new", while it's open.
@@ -212,6 +214,7 @@ impl App {
             new_request: None,
             new_request_post: None,
             new_request_choices: None,
+            new_request_action: None,
             whats_new,
             feedback: None,
             feedback_post: None,
@@ -1327,7 +1330,7 @@ impl App {
                 Err(e) => form.error = Some(e),
             }
         }
-        match crate::ui::forge::new_request(ctx, form) {
+        match self.new_request_action.take() {
             Some(NewAction::PushAndCreate) => {
                 form.pushing = true;
                 form.error = None;
@@ -1623,6 +1626,12 @@ impl App {
         let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
         // Esc with a menu open only closes the menu.
         if escape && self.menu_was_open {
+            return;
+        }
+        if escape && self.new_request.is_some() {
+            self.new_request = None;
+            self.new_request_post = None;
+            self.new_request_choices = None;
             return;
         }
         if escape {
@@ -2045,6 +2054,7 @@ impl App {
                 .inner;
             match jump {
                 Some(sidebar::Action::OpenRequest(n)) => {
+                    self.new_request = None;
                     repo.deselect();
                     if let Some(f) = &mut repo.forge {
                         f.open_request(&ctx, n);
@@ -2236,6 +2246,11 @@ impl App {
         egui::CentralPanel::no_frame()
             .frame(Frame::new().fill(theme::bg()))
             .show(ui, |ui| {
+                // A new pull/merge request being written, in place of the graph.
+                if let Some(form) = &mut self.new_request {
+                    self.new_request_action = crate::ui::forge::new_request(ui, form);
+                    return;
+                }
                 // A pull/merge request, in place of the graph.
                 if let Some(action) = request_view(ui, repo, &self.settings.review_drafts, now) {
                     let pull = self.settings.pull;
@@ -2856,6 +2871,7 @@ fn new_form(repo: &RepoView, branch: Option<&str>) -> Option<crate::ui::forge::N
         remove_source: false,
         squash: false,
         pushing: false,
+        tab: crate::ui::forge::NewTab::default(),
         sending: false,
         error: None,
     };

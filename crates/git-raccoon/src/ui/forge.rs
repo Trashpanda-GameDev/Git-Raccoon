@@ -128,6 +128,8 @@ pub struct NewForm {
     pub squash: bool,
     /// Pushing, to open it once that's done.
     pub pushing: bool,
+    /// The tab shown.
+    pub tab: NewTab,
     pub sending: bool,
     pub error: Option<String>,
 }
@@ -284,86 +286,13 @@ fn picker(
     }
 }
 
-/// The files a new request changes, with how many lines each adds and
-/// removes; click one to see its diff.
-fn changed_files(
-    ui: &mut egui::Ui,
-    files: &[std::sync::Arc<crate::highlight::RenderedDiff>],
-    open: &mut Option<usize>,
-) {
-    use git_raccoon_core::details::LineKind;
-    egui::ScrollArea::vertical()
-        .id_salt("request-file-list")
-        .max_height(320.0)
-        .show(ui, |ui| {
-            for (i, d) in files.iter().enumerate() {
-                let lines = d.diff.hunks[..d.changes].iter().flat_map(|h| &h.lines);
-                let (added, removed) = lines.fold((0, 0), |(a, r), l| match l.kind {
-                    LineKind::Add => (a + 1, r),
-                    LineKind::Delete => (a, r + 1),
-                    _ => (a, r),
-                });
-                let on = *open == Some(i);
-                let row = ui.horizontal(|ui| {
-                    let caret = if on {
-                        icon::CARET_DOWN
-                    } else {
-                        icon::CARET_RIGHT
-                    };
-                    ui.label(RichText::new(caret).color(theme::muted()));
-                    ui.label(&d.diff.path);
-                    ui.label(RichText::new(format!("+{added}")).color(theme::add()));
-                    ui.label(RichText::new(format!("−{removed}")).color(theme::del()));
-                });
-                let row = ui
-                    .interact(
-                        row.response.rect,
-                        ui.id().with(("new-file", i)),
-                        egui::Sense::click(),
-                    )
-                    .on_hover_text("Show its changes");
-                row.widget_info(|| {
-                    egui::WidgetInfo::selected(
-                        egui::WidgetType::SelectableLabel,
-                        true,
-                        on,
-                        &d.diff.path,
-                    )
-                });
-                if row.clicked() {
-                    *open = if on { None } else { Some(i) };
-                }
-                if on {
-                    if d.diff.binary {
-                        ui.label(RichText::new("Binary file.").color(theme::muted()));
-                    }
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    for row in &d.unified {
-                        let (rect, _) = ui.allocate_exact_size(
-                            egui::vec2(ui.available_width(), crate::ui::diff::LINE),
-                            egui::Sense::hover(),
-                        );
-                        match *row {
-                            crate::highlight::Row::Header(h) => {
-                                crate::ui::diff::header(
-                                    ui.painter(),
-                                    rect,
-                                    &d.diff.hunks[h].header,
-                                );
-                            }
-                            crate::highlight::Row::Line(h, l) => crate::ui::diff::unified_line(
-                                ui.painter(),
-                                rect,
-                                &d.diff.hunks[h].lines[l],
-                                &d.jobs[h][l],
-                                false,
-                            ),
-                        }
-                    }
-                    ui.spacing_mut().item_spacing.y = 4.0;
-                }
-            }
-        });
+/// The tabs of a new request's view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NewTab {
+    #[default]
+    Description,
+    Commits,
+    Changes,
 }
 
 pub enum NewAction {
@@ -373,238 +302,460 @@ pub enum NewAction {
     Close,
 }
 
-pub fn new_request(ctx: &egui::Context, f: &mut NewForm) -> Option<NewAction> {
+/// A new pull/merge request, in place of the graph: where it goes and
+/// opening it, then its description, commits and changes, in tabs.
+pub fn new_request(ui: &mut egui::Ui, f: &mut NewForm) -> Option<NewAction> {
     let mut action = None;
-    let modal = egui::Modal::new(egui::Id::new("new-request")).show(ctx, |ui| {
-        ui.set_width(560.0);
-        ui.label(
-            RichText::new(format!("New {}", f.kind.request().to_lowercase()))
-                .strong()
-                .size(16.0),
-        );
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("{}  into", f.source)).color(theme::muted()));
-            if f.targets.is_empty() {
-                // No branches known for the remote (not fetched yet): type one.
-                let target = ui.add(egui::TextEdit::singleline(&mut f.target).desired_width(200.0));
-                ui.ctx()
-                    .accesskit_node_builder(target.id, |n| n.set_label("Target branch"));
-            } else {
-                let combo = egui::ComboBox::from_id_salt("request-target")
-                    .selected_text(f.target.as_str())
-                    .width(220.0)
-                    .height(320.0)
-                    .show_ui(ui, |ui| {
-                        for t in &f.targets {
-                            ui.selectable_value(&mut f.target, t.clone(), t);
-                        }
-                    });
-                ui.ctx()
-                    .accesskit_node_builder(combo.response.id, |n| n.set_label("Target branch"));
-            }
-            if f.templates.len() > 1 {
-                let before = f.template;
-                let shown = f
-                    .template
-                    .and_then(|i| f.templates.get(i))
-                    .map_or("No template", |(n, _)| n.as_str());
-                let combo = egui::ComboBox::from_id_salt("request-template")
-                    .selected_text(shown)
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut f.template, None, "No template");
-                        for (i, (name, _)) in f.templates.iter().enumerate() {
-                            ui.selectable_value(&mut f.template, Some(i), name);
-                        }
-                    });
-                ui.ctx()
-                    .accesskit_node_builder(combo.response.id, |n| n.set_label("Template"));
-                if f.template != before {
-                    f.fill();
-                }
-            }
-        });
-        // What it will contain.
-        ui.add_space(4.0);
-        let n = f.commits.len();
-        if n == 0 && !f.compared.is_empty() {
-            ui.label(
-                RichText::new(format!(
-                    "{} has nothing {} doesn't have.",
-                    f.source, f.target
-                ))
-                .color(theme::modified()),
-            );
-        } else if n > 0 {
-            let s = if n == 1 { "" } else { "s" };
-            egui::CollapsingHeader::new(format!("{n} commit{s}"))
-                .id_salt("request-commits")
-                .show(ui, |ui| {
-                    egui::ScrollArea::vertical()
-                        .max_height(120.0)
-                        .show(ui, |ui| {
-                            for (id, message) in &f.commits {
-                                ui.horizontal(|ui| {
-                                    ui.label(
-                                        RichText::new(crate::format::short_sha(id))
-                                            .font(theme::mono(12.0))
-                                            .color(theme::accent()),
-                                    );
-                                    ui.label(message.lines().next().unwrap_or_default());
-                                });
+    egui::Frame::new()
+        .fill(theme::bg_raised())
+        .inner_margin(egui::Margin {
+            left: 16,
+            right: 12,
+            top: 10,
+            bottom: 8,
+        })
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("New {}", f.kind.request().to_lowercase()))
+                        .strong()
+                        .size(16.0),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if widgets::icon_button(ui, icon::X, "Cancel (Esc)").clicked() {
+                        action = Some(NewAction::Close);
+                    }
+                });
+            });
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(&f.source).font(theme::mono(13.0)));
+                ui.label(RichText::new("into").color(theme::muted()));
+                if f.targets.is_empty() {
+                    // No branches known for the remote (not fetched yet): type one.
+                    let target =
+                        ui.add(egui::TextEdit::singleline(&mut f.target).desired_width(200.0));
+                    ui.ctx()
+                        .accesskit_node_builder(target.id, |n| n.set_label("Target branch"));
+                } else {
+                    let combo = egui::ComboBox::from_id_salt("request-target")
+                        .selected_text(f.target.as_str())
+                        .width(220.0)
+                        .height(320.0)
+                        .show_ui(ui, |ui| {
+                            for t in &f.targets {
+                                ui.selectable_value(&mut f.target, t.clone(), t);
                             }
                         });
-                });
-        }
-        if !f.files.is_empty() {
-            let n = f.files.len();
-            let s = if n == 1 { "" } else { "s" };
-            egui::CollapsingHeader::new(format!("{n} file{s} changed"))
-                .id_salt("request-files")
-                .show(ui, |ui| changed_files(ui, &f.files, &mut f.open_file));
-        }
-        if f.conflicts {
-            ui.label(
-                RichText::new(format!(
-                    "{}  It won't merge cleanly into {}: they change the same lines.",
-                    icon::WARNING,
-                    f.target
-                ))
-                .color(theme::danger()),
-            );
-        } else if f.behind > 0 {
-            let s = if f.behind == 1 { "" } else { "s" };
-            ui.label(
-                RichText::new(format!(
-                    "{}  It's {} commit{s} behind {}.",
-                    icon::INFO,
-                    f.behind,
-                    f.target
-                ))
-                .color(theme::muted()),
-            );
-        }
-        ui.add_space(6.0);
-        let title = ui.add(
-            egui::TextEdit::singleline(&mut f.title)
-                .hint_text("Title")
-                .desired_width(f32::INFINITY),
-        );
-        ui.ctx()
-            .accesskit_node_builder(title.id, |n| n.set_label("Request title"));
-        ui.add_space(4.0);
-        let body = ui.add(
-            egui::TextEdit::multiline(&mut f.body)
-                .hint_text("What it changes, and why")
-                .desired_rows(6)
-                .desired_width(f32::INFINITY),
-        );
-        ui.ctx()
-            .accesskit_node_builder(body.id, |n| n.set_label("Request description"));
-        ui.add_space(4.0);
-        match &f.choices {
-            None => {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label(
-                        RichText::new("Listing who can review it, and the labels…")
-                            .color(theme::muted()),
-                    );
-                });
-            }
-            Some(Err(e)) => {
+                    ui.ctx().accesskit_node_builder(combo.response.id, |n| {
+                        n.set_label("Target branch");
+                    });
+                }
+            });
+            // What it will contain, and how it stands with the target.
+            ui.add_space(2.0);
+            let n = f.commits.len();
+            if n == 0 && !f.compared.is_empty() {
                 ui.label(
                     RichText::new(format!(
-                        "Reviewers, assignees and labels couldn't be listed: {e}."
+                        "{} has nothing {} doesn't have.",
+                        f.source, f.target
+                    ))
+                    .color(theme::modified()),
+                );
+            } else {
+                let (c, s) = (n, if n == 1 { "" } else { "s" });
+                let files = f.files.len();
+                let fs = if files == 1 { "" } else { "s" };
+                ui.label(
+                    RichText::new(format!("{c} commit{s}, {files} file{fs} changed"))
+                        .color(theme::muted()),
+                );
+            }
+            if f.conflicts {
+                ui.label(
+                    RichText::new(format!(
+                        "{}  It won't merge cleanly into {}: they change the same lines.",
+                        icon::WARNING,
+                        f.target
+                    ))
+                    .color(theme::danger()),
+                );
+            } else if f.behind > 0 {
+                let s = if f.behind == 1 { "" } else { "s" };
+                ui.label(
+                    RichText::new(format!(
+                        "{}  It's {} commit{s} behind {}.",
+                        icon::INFO,
+                        f.behind,
+                        f.target
                     ))
                     .color(theme::muted()),
                 );
             }
-            Some(Ok(choices)) => {
-                let people: Vec<(String, String)> = choices
-                    .people
-                    .iter()
-                    .map(|p| (p.clone(), String::new()))
-                    .collect();
-                egui::Grid::new("request-people")
-                    .num_columns(2)
-                    .show(ui, |ui| {
-                        for (name, chosen, options) in [
-                            ("Reviewers", &mut f.reviewers, &people),
-                            ("Assignees", &mut f.assignees, &people),
-                            ("Labels", &mut f.labels, &choices.labels),
-                        ] {
-                            ui.label(RichText::new(name).color(theme::muted()));
-                            picker(ui, name, chosen, options, &mut f.filter);
-                            ui.end_row();
-                        }
-                    });
+            if let Some(e) = &f.error {
+                ui.label(RichText::new(format!("It wasn't opened: {e}.")).color(theme::danger()));
             }
-        }
-        ui.checkbox(&mut f.draft, "Draft (not ready for review yet)");
-        if f.kind == Kind::GitLab {
-            ui.checkbox(
-                &mut f.remove_source,
-                format!("Delete {} when it's merged", f.source),
-            );
-            ui.checkbox(&mut f.squash, "Squash its commits when it's merged");
-        }
-        if let Some(e) = &f.error {
             ui.add_space(6.0);
-            ui.label(RichText::new(format!("It wasn't opened: {e}.")).color(theme::danger()));
-        }
-        ui.add_space(10.0);
-        ui.horizontal(|ui| {
-            let busy = f.sending || f.pushing;
-            let ready = !busy && !f.title.trim().is_empty() && !f.target.trim().is_empty();
-            let label = if f.pushing {
-                "Pushing…".to_string()
-            } else if f.sending {
-                "Opening…".to_string()
-            } else if f.unpushed {
-                let n = f.to_push;
-                let s = if n == 1 { "" } else { "s" };
-                if n > 0 {
-                    format!("Push {n} commit{s} and open")
-                } else {
-                    "Push and open".to_string()
-                }
-            } else {
-                "Open it".to_string()
-            };
-            let go = egui::Button::new(
-                RichText::new(label)
-                    .color(if ready {
-                        theme::on_accent()
+            ui.horizontal(|ui| {
+                let busy = f.sending || f.pushing;
+                let ready = !busy && !f.title.trim().is_empty() && !f.target.trim().is_empty();
+                let label = if f.pushing {
+                    "Pushing…".to_string()
+                } else if f.sending {
+                    "Opening…".to_string()
+                } else if f.unpushed {
+                    let n = f.to_push;
+                    let s = if n == 1 { "" } else { "s" };
+                    if n > 0 {
+                        format!("Push {n} commit{s} and open")
                     } else {
-                        theme::muted()
-                    })
-                    .strong(),
-            )
-            .fill(if ready {
-                theme::accent_fill()
-            } else {
-                theme::bg_hover()
-            });
-            if ui.add_enabled(ready, go).clicked() {
-                action = Some(if f.unpushed {
-                    NewAction::PushAndCreate
+                        "Push and open".to_string()
+                    }
                 } else {
-                    NewAction::Create
+                    "Open it".to_string()
+                };
+                let go = egui::Button::new(
+                    RichText::new(label)
+                        .color(if ready {
+                            theme::on_accent()
+                        } else {
+                            theme::muted()
+                        })
+                        .strong(),
+                )
+                .fill(if ready {
+                    theme::accent_fill()
+                } else {
+                    theme::bg_hover()
                 });
-            }
-            if busy {
-                ui.spinner();
-            }
-            if ui.button("Cancel").clicked() {
-                action = Some(NewAction::Close);
-            }
+                if ui.add_enabled(ready, go).clicked() {
+                    action = Some(if f.unpushed {
+                        NewAction::PushAndCreate
+                    } else {
+                        NewAction::Create
+                    });
+                }
+                if busy {
+                    ui.spinner();
+                }
+                if ui.button("Cancel").clicked() {
+                    action = Some(NewAction::Close);
+                }
+                ui.add_space(8.0);
+                ui.checkbox(&mut f.draft, "Draft (not ready for review yet)");
+            });
         });
-    });
-    if modal.should_close() && action.is_none() {
-        action = Some(NewAction::Close);
+    // The tabs.
+    egui::Frame::new()
+        .fill(theme::bg_raised())
+        .inner_margin(egui::Margin::symmetric(12, 0))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.set_height(32.0);
+                ui.set_width(ui.available_width());
+                for (tab, name, count) in [
+                    (NewTab::Description, "Description", None),
+                    (NewTab::Commits, "Commits", Some(f.commits.len())),
+                    (NewTab::Changes, "Changes", Some(f.files.len())),
+                ] {
+                    let on = f.tab == tab;
+                    let text = count.map_or_else(|| name.to_string(), |c| format!("{name}  {c}"));
+                    let b = ui.add(
+                        egui::Button::new(
+                            RichText::new(text)
+                                .color(if on { theme::text() } else { theme::muted() })
+                                .strong(),
+                        )
+                        .frame(false),
+                    );
+                    ui.ctx()
+                        .accesskit_node_builder(b.id, |n| n.set_label(format!("{name} tab")));
+                    if on {
+                        ui.painter().hline(
+                            b.rect.x_range(),
+                            ui.max_rect().bottom() - 1.0,
+                            egui::Stroke::new(2.0, theme::accent()),
+                        );
+                    }
+                    if b.clicked() {
+                        f.tab = tab;
+                    }
+                }
+            });
+        });
+    match f.tab {
+        NewTab::Description => description(ui, f),
+        NewTab::Commits => commits(ui, f),
+        NewTab::Changes => changed_files(ui, &f.files, &mut f.open_file),
     }
     action
+}
+
+/// Its title, description, template, people, labels and options.
+fn description(ui: &mut egui::Ui, f: &mut NewForm) {
+    egui::ScrollArea::vertical()
+        .id_salt("new-request-description")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            egui::Frame::new()
+                .inner_margin(egui::Margin::symmetric(16, 12))
+                .show(ui, |ui| {
+                    ui.set_max_width(900.0_f32.min(ui.available_width()));
+                    if f.templates.len() > 1 {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Template").color(theme::muted()));
+                            let before = f.template;
+                            let shown = f
+                                .template
+                                .and_then(|i| f.templates.get(i))
+                                .map_or("No template", |(n, _)| n.as_str());
+                            let combo = egui::ComboBox::from_id_salt("request-template")
+                                .selected_text(shown)
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut f.template, None, "No template");
+                                    for (i, (name, _)) in f.templates.iter().enumerate() {
+                                        ui.selectable_value(&mut f.template, Some(i), name);
+                                    }
+                                });
+                            ui.ctx().accesskit_node_builder(combo.response.id, |n| {
+                                n.set_label("Template");
+                            });
+                            if f.template != before {
+                                f.fill();
+                            }
+                        });
+                        ui.add_space(4.0);
+                    }
+                    let title = ui.add(
+                        egui::TextEdit::singleline(&mut f.title)
+                            .hint_text("Title")
+                            .font(egui::TextStyle::Heading)
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.ctx()
+                        .accesskit_node_builder(title.id, |n| n.set_label("Request title"));
+                    ui.add_space(6.0);
+                    let body = ui.add(
+                        egui::TextEdit::multiline(&mut f.body)
+                            .hint_text("What it changes, and why (Markdown)")
+                            .desired_rows(12)
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.ctx()
+                        .accesskit_node_builder(body.id, |n| n.set_label("Request description"));
+                    ui.add_space(8.0);
+                    match &f.choices {
+                        None => {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label(
+                                    RichText::new("Listing who can review it, and the labels…")
+                                        .color(theme::muted()),
+                                );
+                            });
+                        }
+                        Some(Err(e)) => {
+                            ui.label(
+                                RichText::new(format!(
+                                    "Reviewers, assignees and labels couldn't be listed: {e}."
+                                ))
+                                .color(theme::muted()),
+                            );
+                        }
+                        Some(Ok(choices)) => {
+                            let people: Vec<(String, String)> = choices
+                                .people
+                                .iter()
+                                .map(|p| (p.clone(), String::new()))
+                                .collect();
+                            egui::Grid::new("request-people")
+                                .num_columns(2)
+                                .show(ui, |ui| {
+                                    for (name, chosen, options) in [
+                                        ("Reviewers", &mut f.reviewers, &people),
+                                        ("Assignees", &mut f.assignees, &people),
+                                        ("Labels", &mut f.labels, &choices.labels),
+                                    ] {
+                                        ui.label(RichText::new(name).color(theme::muted()));
+                                        picker(ui, name, chosen, options, &mut f.filter);
+                                        ui.end_row();
+                                    }
+                                });
+                        }
+                    }
+                    if f.kind == Kind::GitLab {
+                        ui.add_space(4.0);
+                        ui.checkbox(
+                            &mut f.remove_source,
+                            format!("Delete {} when it's merged", f.source),
+                        );
+                        ui.checkbox(&mut f.squash, "Squash its commits when it's merged");
+                    }
+                });
+        });
+}
+
+/// Its commits, oldest first.
+fn commits(ui: &mut egui::Ui, f: &NewForm) {
+    egui::ScrollArea::vertical()
+        .id_salt("new-request-commits")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            egui::Frame::new()
+                .inner_margin(egui::Margin::symmetric(16, 12))
+                .show(ui, |ui| {
+                    if f.commits.is_empty() {
+                        ui.label(RichText::new("No commits.").color(theme::muted()));
+                    }
+                    for (id, message) in &f.commits {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(crate::format::short_sha(id))
+                                    .font(theme::mono(12.0))
+                                    .color(theme::accent()),
+                            );
+                            ui.label(message.lines().next().unwrap_or_default());
+                        });
+                    }
+                });
+        });
+}
+
+/// The files it changes, with how many lines each adds and removes, beside
+/// the diff of the one picked.
+fn changed_files(
+    ui: &mut egui::Ui,
+    files: &[std::sync::Arc<crate::highlight::RenderedDiff>],
+    open: &mut Option<usize>,
+) {
+    use git_raccoon_core::details::LineKind;
+    if files.is_empty() {
+        ui.add_space(24.0);
+        ui.vertical_centered(|ui| ui.label(RichText::new("No changes.").color(theme::muted())));
+        return;
+    }
+    if open.is_none_or(|i| i >= files.len()) {
+        *open = Some(0);
+    }
+    egui::Panel::left("new-request-files")
+        .resizable(true)
+        .default_size(260.0)
+        .size_range(160.0..=500.0)
+        .frame(
+            egui::Frame::new()
+                .fill(theme::bg_raised())
+                .inner_margin(egui::Margin::symmetric(6, 6)),
+        )
+        .show(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("new-request-file-list")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    for (i, d) in files.iter().enumerate() {
+                        let lines = d.diff.hunks[..d.changes].iter().flat_map(|h| &h.lines);
+                        let (added, removed) = lines.fold((0, 0), |(a, r), l| match l.kind {
+                            LineKind::Add => (a + 1, r),
+                            LineKind::Delete => (a, r + 1),
+                            _ => (a, r),
+                        });
+                        let on = *open == Some(i);
+                        let row = ui.horizontal(|ui| {
+                            ui.set_width(ui.available_width());
+                            let (dir, name) = crate::format::split_path(&d.diff.path);
+                            ui.label(name);
+                            if !dir.is_empty() {
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(dir).size(11.0).color(theme::muted()),
+                                    )
+                                    .truncate(),
+                                );
+                            }
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.label(
+                                        RichText::new(format!("−{removed}"))
+                                            .size(11.0)
+                                            .color(theme::del()),
+                                    );
+                                    ui.label(
+                                        RichText::new(format!("+{added}"))
+                                            .size(11.0)
+                                            .color(theme::add()),
+                                    );
+                                },
+                            );
+                        });
+                        let row = ui.interact(
+                            row.response.rect,
+                            ui.id().with(("new-file", i)),
+                            egui::Sense::click(),
+                        );
+                        row.widget_info(|| {
+                            egui::WidgetInfo::selected(
+                                egui::WidgetType::SelectableLabel,
+                                true,
+                                on,
+                                &d.diff.path,
+                            )
+                        });
+                        if on {
+                            ui.painter().rect_filled(
+                                row.rect.expand(2.0),
+                                4,
+                                theme::accent().gamma_multiply(0.15),
+                            );
+                        }
+                        if row.clicked() {
+                            *open = Some(i);
+                        }
+                    }
+                });
+        });
+    let Some(d) = open.and_then(|i| files.get(i)) else {
+        return;
+    };
+    egui::Frame::new()
+        .fill(theme::bg_raised())
+        .inner_margin(egui::Margin::symmetric(12, 0))
+        .show(ui, |ui| {
+            ui.set_height(32.0);
+            ui.set_width(ui.available_width());
+            ui.horizontal_centered(|ui| ui.label(RichText::new(&d.diff.path).strong()));
+        });
+    if d.diff.binary {
+        ui.add_space(24.0);
+        ui.vertical_centered(|ui| ui.label(RichText::new("Binary file.").color(theme::muted())));
+        return;
+    }
+    egui::ScrollArea::both()
+        .id_salt(("new-request-diff", &d.diff.path))
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let width = ui.available_width().max(800.0);
+            for row in &d.unified {
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(width, crate::ui::diff::LINE),
+                    egui::Sense::hover(),
+                );
+                match *row {
+                    crate::highlight::Row::Header(h) => {
+                        crate::ui::diff::header(ui.painter(), rect, &d.diff.hunks[h].header);
+                    }
+                    crate::highlight::Row::Line(h, l) => crate::ui::diff::unified_line(
+                        ui.painter(),
+                        rect,
+                        &d.diff.hunks[h].lines[l],
+                        &d.jobs[h][l],
+                        false,
+                    ),
+                }
+            }
+        });
 }
 
 #[cfg(test)]
@@ -649,6 +800,7 @@ mod tests {
             remove_source: false,
             squash: false,
             pushing: false,
+            tab: NewTab::default(),
             sending: false,
             error: None,
         };
