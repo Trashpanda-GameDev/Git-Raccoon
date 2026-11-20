@@ -240,7 +240,7 @@ The header shows its state, branches, checks, approvals and unresolved threads. 
 
 - **Conversation**: the description and comments (as formatted Markdown, images included), reviews, checks, and threads with the code they're about.
 - **Commits**: **Show them in the graph** marks them there (a bar takes you back). Click one to go straight to it.
-- **Changes**: each file's diff, with comment threads under their lines. **Reply**, **Resolve** or **Unresolve** them there. Switch to **Split**, **Whole file** or **Blame**, as in any diff (Git Raccoon fetches the request's commits in the background for these, without making a branch).
+- **Changes**: each file's diff, with comment threads under their lines. **Reply**, **Resolve** or **Unresolve** them there. The arrows by the file's name go to the previous or next thread, across files. Switch to **Split**, **Whole file** or **Blame**, as in any diff (Git Raccoon fetches the request's commits in the background for these, without making a branch).
 
 ### Reviewing
 

@@ -947,12 +947,11 @@ fn thread_card(
                     }
                 }
                 if !in_changes
-                    && let Some(at) = t.at.as_ref().filter(|_| !t.outdated)
+                    && t.at.is_some()
+                    && !t.outdated
                     && ui.small_button("Show in Changes").clicked()
                 {
-                    state.tab = Tab::Changes;
-                    state.file = Some(at.path.clone());
-                    state.picked.clear();
+                    go_to_thread(ui, t, state);
                 }
             });
         }
@@ -1699,6 +1698,8 @@ fn changes(
                         state.whole = chosen;
                         state.picked.clear();
                     }
+                    ui.add_space(8.0);
+                    thread_nav(ui, o, state);
                 });
             });
         });
@@ -1784,6 +1785,63 @@ fn changes(
         (here, blame.as_ref().map(|b| b.as_deref())),
         action,
     );
+}
+
+/// Previous / Next through the threads on the code, across files, and
+/// which one of them you're on.
+fn thread_nav(ui: &mut egui::Ui, o: &Overview, state: &mut RequestState) {
+    let threads = o.code_threads();
+    if threads.is_empty() {
+        return;
+    }
+    let n = threads.len();
+    let current = state
+        .at_thread
+        .as_ref()
+        .and_then(|id| threads.iter().position(|t| &t.id == id));
+    // Right to left: Next, the count, Previous.
+    let next = ui
+        .add(egui::Button::new(icon::CARET_DOWN).small())
+        .on_hover_text("Next comment");
+    ui.ctx()
+        .accesskit_node_builder(next.id, |b| b.set_label("Next comment"));
+    let s = if n == 1 { "" } else { "s" };
+    let count = match current {
+        Some(i) => format!("{} of {n}", i + 1),
+        None => format!("{n} thread{s}"),
+    };
+    ui.label(RichText::new(count).size(12.0).color(theme::muted()));
+    let previous = ui
+        .add(egui::Button::new(icon::CARET_UP).small())
+        .on_hover_text("Previous comment");
+    ui.ctx()
+        .accesskit_node_builder(previous.id, |b| b.set_label("Previous comment"));
+    let to = if next.clicked() {
+        Some(current.map_or(0, |i| (i + 1) % n))
+    } else if previous.clicked() {
+        Some(current.map_or(n - 1, |i| (i + n - 1) % n))
+    } else {
+        None
+    };
+    if let Some(t) = to.map(|i| threads[i]) {
+        go_to_thread(ui, t, state);
+    }
+}
+
+/// Opens a thread's file in Changes, and the thread, and scrolls to it.
+fn go_to_thread(ui: &egui::Ui, t: &Thread, state: &mut RequestState) {
+    let Some(at) = &t.at else {
+        return;
+    };
+    state.tab = Tab::Changes;
+    if state.file.as_ref() != Some(&at.path) {
+        state.file = Some(at.path.clone());
+        state.picked.clear();
+        state.pick_from = None;
+    }
+    state.at_thread = Some(t.id.clone());
+    state.scroll_to_thread = true;
+    ui.data_mut(|m| m.insert_temp(egui::Id::new(("thread-open", &t.id)), true));
 }
 
 /// A row of a request's diff.
@@ -2112,7 +2170,25 @@ fn under_row(
             ui.set_max_width(view_width - 2.0 * NUMBER - 24.0);
             ui.spacing_mut().item_spacing.y = 6.0;
             for t in under {
-                thread_card(ui, t, None, true, state, here.drafts, here.now, action);
+                let rect = ui
+                    .scope(|ui| {
+                        thread_card(ui, t, None, true, state, here.drafts, here.now, action);
+                    })
+                    .response
+                    .rect;
+                // The one gone to with Previous / Next: marked, and in view.
+                if state.at_thread.as_ref() == Some(&t.id) {
+                    ui.painter().rect_stroke(
+                        rect.expand(2.0),
+                        8,
+                        Stroke::new(1.5, theme::accent()),
+                        egui::StrokeKind::Outside,
+                    );
+                    if state.scroll_to_thread {
+                        state.scroll_to_thread = false;
+                        ui.scroll_to_rect(rect, Some(egui::Align::Center));
+                    }
+                }
             }
             for (i, dr) in drafts {
                 draft_card(

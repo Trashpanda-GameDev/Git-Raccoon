@@ -3794,6 +3794,23 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     h.run_ok();
     h.get_by_label("Select line: Another");
     h.get_by_label("Why another?");
+    // Next goes to the (only) thread, and marks it.
+    h.get_by_label("1 thread");
+    h.get_by_label("Next comment").click();
+    h.run_ok();
+    h.get_by_label("1 of 1");
+    assert_eq!(
+        h.state()
+            .repo()
+            .unwrap()
+            .forge
+            .as_ref()
+            .unwrap()
+            .state
+            .at_thread
+            .as_deref(),
+        Some("d2")
+    );
     // The whole file, side by side, with blame: from its commits, here.
     wait_for(&mut h, "its commits", |app| {
         app.repo()

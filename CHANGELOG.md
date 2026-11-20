@@ -7,6 +7,8 @@ release page). Newest first; a version's heading is just its number.
 
 - **Corner roundness looks like a slider again** (Settings › Appearance): a wider track, filled in the accent colour up to the value, with a round handle. It looked like a button.
 - **Pin branches to the top**: right-click a local branch in the sidebar › *Pin to top*. Pinned branches sit at the top of *Local*, in alphabetical order, with a pin; *Unpin* puts one back in its folder. Pins are kept per repository.
+- **Go from one comment to the next** in a request's *Changes*: the arrows by the file's name go to the previous or next thread, across files, and say which one you're on ("2 of 5"). *Show in Changes* on a thread in the conversation goes to it the same way.
+- **The status under an open request fits the sidebar**: when the words don't fit, it shows only the icons and the thread count, with the words on hover. They wrapped to the panel's edge.
 - **Markdown looks right** in requests, issues and comments:
   - Links line up with the text and show in the link colour. They sat higher than the words around them.
   - **Bold** is bold. It looked like the rest of the text.

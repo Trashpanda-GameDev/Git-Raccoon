@@ -381,6 +381,23 @@ impl Overview {
     }
 
     /// A file's threads that are still on its diff.
+    /// The threads on lines of the diff, in reading order: by file, as
+    /// the files are listed, then by line.
+    pub fn code_threads(&self) -> Vec<&Thread> {
+        let mut threads: Vec<(usize, u32, &Thread)> = self
+            .threads
+            .iter()
+            .filter(|t| !t.outdated)
+            .filter_map(|t| {
+                let at = t.at.as_ref()?;
+                let file = self.files.iter().position(|f| f.path == at.path)?;
+                Some((file, at.line.new.or(at.line.old).unwrap_or(0), t))
+            })
+            .collect();
+        threads.sort_by_key(|&(file, line, _)| (file, line));
+        threads.into_iter().map(|(.., t)| t).collect()
+    }
+
     pub fn threads_on<'a>(&'a self, path: &'a str) -> impl Iterator<Item = (usize, &'a Thread)> {
         self.threads
             .iter()
@@ -528,6 +545,47 @@ pub fn excerpt(patch: &str, at: &Anchor) -> Vec<PatchLine> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lists_threads_on_code_by_file_then_line() {
+        let file = |path: &str| File {
+            path: path.into(),
+            old_path: None,
+            change: Change::Modified,
+            patch: String::new(),
+        };
+        let thread = |id: &str, path: &str, new: Option<u32>, old: Option<u32>| Thread {
+            id: id.into(),
+            at: Some(Anchor {
+                path: path.into(),
+                line: Line { old, new },
+                ..Anchor::default()
+            }),
+            ..Thread::default()
+        };
+        let o = Overview {
+            files: vec![file("b.rs"), file("a.rs")],
+            threads: vec![
+                thread("a-10", "a.rs", Some(10), None),
+                thread("b-20", "b.rs", Some(20), None),
+                Thread {
+                    outdated: true,
+                    ..thread("b-old", "b.rs", Some(1), None)
+                },
+                Thread {
+                    id: "whole".into(),
+                    ..Thread::default()
+                },
+                thread("b-5-deleted", "b.rs", None, Some(5)),
+                thread("a-2", "a.rs", Some(2), None),
+            ],
+            ..Overview::default()
+        };
+        let ids: Vec<&str> = o.code_threads().iter().map(|t| t.id.as_str()).collect();
+        // As the files are listed, then by line; outdated ones, and those
+        // on the whole request, aren't on the diff.
+        assert_eq!(ids, ["b-5-deleted", "b-20", "a-2", "a-10"]);
+    }
 
     #[test]
     fn numbers_patch_lines() {

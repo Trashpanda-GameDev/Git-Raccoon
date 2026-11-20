@@ -125,6 +125,10 @@ pub struct RequestState {
     pub wholes: HashMap<String, Result<Arc<RenderedDiff>, String>>,
     pub blames: HashMap<String, Result<Arc<Blame>, String>>,
     loading: Vec<(String, Task<Result<Loaded, String>>)>,
+    /// The thread gone to with Previous / Next in Changes (its id), and
+    /// whether it's still to be scrolled to.
+    pub at_thread: Option<String>,
+    pub scroll_to_thread: bool,
 }
 
 /// Keeping a draft on the forge: saving (or changing) it, or deleting it.

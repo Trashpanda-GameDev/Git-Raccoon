@@ -1038,24 +1038,48 @@ fn request_status(ui: &mut egui::Ui, forge: &crate::forge_view::ForgeView) {
     let open = o.unresolved();
     let threads = format!("{open} open thread{}", if open == 1 { "" } else { "s" });
     let threads = (open > 0).then(|| (icon::CHAT_CIRCLE_DOTS, threads.as_str(), theme::modified()));
-    ui.horizontal_wrapped(|ui| {
+    // Each item in full, or, when they don't all fit on the line, only its
+    // icon (the threads keep their count), with the words on hover.
+    let items: Vec<_> = [checks, review]
+        .into_iter()
+        .flatten()
+        .map(|(glyph, text, colour)| (glyph.to_string(), text, colour))
+        .chain(threads.map(|(glyph, text, colour)| (format!("{glyph} {open}"), text, colour)))
+        .map(|(short, text, colour)| {
+            let glyph = short.split(' ').next().unwrap_or_default();
+            (format!("{glyph} {text}"), short, text, colour)
+        })
+        .collect();
+    ui.horizontal(|ui| {
         ui.add_space(30.0);
         ui.spacing_mut().item_spacing.x = 8.0;
-        let mut any = false;
-        for (glyph, text, colour) in [checks, review, threads].into_iter().flatten() {
-            ui.label(
-                RichText::new(format!("{glyph} {text}"))
-                    .size(11.0)
-                    .color(colour),
-            );
-            any = true;
-        }
-        if !any {
+        if items.is_empty() {
             ui.label(
                 RichText::new("No checks or reviews yet")
                     .size(11.0)
                     .color(theme::muted()),
             );
+            return;
+        }
+        let font = theme::body(11.0);
+        let gaps = 8.0 * (items.len() - 1) as f32;
+        let full: f32 = items
+            .iter()
+            .map(|(text, ..)| {
+                ui.fonts_mut(|f| {
+                    f.layout_no_wrap(text.clone(), font.clone(), egui::Color32::WHITE)
+                        .size()
+                        .x
+                })
+            })
+            .sum();
+        let shorten = full + gaps > ui.available_width();
+        for (text, short, words, colour) in &items {
+            let shown = if shorten { short } else { text };
+            let label = ui.label(RichText::new(shown.as_str()).size(11.0).color(*colour));
+            if shorten {
+                label.on_hover_text(*words);
+            }
         }
     });
 }
