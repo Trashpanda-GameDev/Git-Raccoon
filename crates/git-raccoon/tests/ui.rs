@@ -2355,6 +2355,7 @@ fn a_diff_can_show_the_whole_file() {
     h.get_by_label("Split").click();
     settle(&mut h);
     screenshot(&mut h, "75-whole-file-split");
+    moves_the_split_line(&mut h);
     h.get_by_label("Unified").click();
     settle(&mut h);
     h.get_by_label("Changes").click();
@@ -3856,6 +3857,7 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     });
     h.run_ok();
     screenshot(&mut h, "59-request-whole-split-blame");
+    moves_the_split_line(&mut h);
     // The thread is still under its line.
     h.get_by_label("Why another?");
     for switch in ["Changes", "Unified", "Blame"] {
@@ -5037,6 +5039,21 @@ fn conflicted(app: &App) -> usize {
 }
 
 /// Drags one sidebar row onto another with the pointer.
+/// Drags the line between a split diff's sides 150 points left, checks it
+/// followed, and puts it back to half each.
+fn moves_the_split_line(h: &mut Harness<'_, App>) {
+    let line = h.get_by_label("Resize the two sides").rect().center();
+    drag(h, line, line - egui::vec2(150.0, 0.0));
+    let now = h.get_by_label("Resize the two sides").rect().center();
+    assert!(
+        (now.x - (line.x - 150.0)).abs() < 2.0,
+        "the line followed: {line:?} → {now:?}"
+    );
+    h.ctx
+        .data_mut(|d| d.insert_persisted(egui::Id::new("diff-split-share"), 0.5_f32));
+    h.run_ok();
+}
+
 fn drag(h: &mut Harness<'_, App>, from: egui::Pos2, to: egui::Pos2) {
     h.event(egui::Event::PointerMoved(from));
     h.run_ok();

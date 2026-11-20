@@ -1909,12 +1909,12 @@ fn diff_with_threads(
         .auto_shrink([false, false])
         .show(ui, |ui| {
             let view_width = ui.available_width();
-            // Side by side, the sides share the view as the line between them
-            // was dragged, each at least as wide as its code.
+            // Side by side, the sides share the room as the line between them
+            // was dragged: the view, or more (to scroll sideways) when it
+            // takes that for half each to fit the code.
             let share = crate::ui::diff::split_share(ui.ctx());
-            let inner = view_width - lead;
-            let fits = NUMBER + 18.0 + code_width;
-            let (old, new) = ((inner * share).max(fits), (inner * (1.0 - share)).max(fits));
+            let inner = (view_width - lead).max(2.0 * (NUMBER + 18.0 + code_width));
+            let (old, new) = (inner * share, inner * (1.0 - share));
             let width = if split {
                 lead + old + new
             } else {
