@@ -340,6 +340,8 @@ pub struct Overview {
     pub checks: Vec<Check>,
     pub merge: Mergeable,
     pub refs: DiffRefs,
+    /// A list was too long to fetch all of (more than 5,000).
+    pub cut_short: bool,
 }
 
 impl Overview {

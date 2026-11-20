@@ -191,6 +191,23 @@ pub fn kept_elsewhere(path: &str, name: &str, except: &[String]) -> Result<bool>
     Ok(false)
 }
 
+/// Makes `branch` pull from `refname` (such as "refs/pull/12/head") on
+/// `remote`: a ref that isn't a branch there, which Git can follow but
+/// not set as an upstream the usual way.
+pub fn follow(path: &str, branch: &str, remote: &str, refname: &str) -> Result<()> {
+    cli::run(
+        path,
+        &["config", &format!("branch.{branch}.remote"), remote],
+        None,
+    )?;
+    cli::run(
+        path,
+        &["config", &format!("branch.{branch}.merge"), refname],
+        None,
+    )
+    .map(drop)
+}
+
 /// What a branch has for another (a pull/merge request from it, before
 /// it's opened).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -536,5 +553,15 @@ mod tests {
             (same.commits.len(), same.behind, same.conflicts),
             (1, 0, false)
         );
+    }
+
+    #[test]
+    fn follows_a_ref_that_isnt_a_branch() {
+        let (t, _, _) = repo();
+        cli::run(t.path(), &["branch", "pr/12"], None).unwrap();
+        follow(t.path(), "pr/12", "origin", "refs/pull/12/head").unwrap();
+        let config = |key: &str| cli::run(t.path(), &["config", key], None).unwrap();
+        assert_eq!(config("branch.pr/12.remote").trim(), "origin");
+        assert_eq!(config("branch.pr/12.merge").trim(), "refs/pull/12/head");
     }
 }

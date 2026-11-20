@@ -25,6 +25,24 @@ fn get(s: &Session, path: &str) -> Result<Value, String> {
     http::get(FORGE, &format!("{}{path}", api(s)), &Auth::Bearer(&s.token))
 }
 
+/// Page `page` (from 1) of a list, and whether there are more.
+fn page(s: &Session, path: &str, page: u32) -> Result<(Value, bool), String> {
+    let (list, next) = http::get_page(
+        FORGE,
+        &format!("{}{path}&page={page}", api(s)),
+        &Auth::Bearer(&s.token),
+    )?;
+    Ok((list, next.is_some()))
+}
+
+/// Every page of a list; `cut` notes if it stopped short of the end.
+fn all(s: &Session, path: &str, cut: &mut bool) -> Result<Value, String> {
+    let (list, short) =
+        http::get_all(FORGE, &format!("{}{path}", api(s)), &Auth::Bearer(&s.token))?;
+    *cut |= short;
+    Ok(list)
+}
+
 fn request(v: &Value) -> Request {
     let title = text(v, "title");
     let draft =
@@ -53,12 +71,16 @@ fn request(v: &Value) -> Request {
     }
 }
 
-pub fn requests(s: &Session) -> Result<Vec<Request>, String> {
-    let list = get(
+pub fn requests(s: &Session, n: u32) -> Result<(Vec<Request>, bool), String> {
+    let (list, more) = page(
         s,
         "/merge_requests?state=opened&per_page=50&order_by=created_at&sort=desc",
+        n,
     )?;
-    Ok(list.as_array().into_iter().flatten().map(request).collect())
+    Ok((
+        list.as_array().into_iter().flatten().map(request).collect(),
+        more,
+    ))
 }
 
 pub fn details(s: &Session, number: u64) -> Result<Request, String> {
@@ -201,7 +223,11 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
     };
     // The pipeline's jobs are its checks.
     if let Some(id) = v["head_pipeline"]["id"].as_u64() {
-        let jobs = get(s, &format!("/pipelines/{id}/jobs?per_page=100"))?;
+        let jobs = all(
+            s,
+            &format!("/pipelines/{id}/jobs?per_page=100"),
+            &mut o.cut_short,
+        )?;
         o.checks = jobs
             .as_array()
             .into_iter()
@@ -229,7 +255,11 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
             None => {}
         }
     }
-    let diffs = get(s, &format!("/merge_requests/{number}/diffs?per_page=100"))?;
+    let diffs = all(
+        s,
+        &format!("/merge_requests/{number}/diffs?per_page=100"),
+        &mut o.cut_short,
+    )?;
     o.files = diffs
         .as_array()
         .into_iter()
@@ -253,7 +283,11 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
             }
         })
         .collect();
-    let commits = get(s, &format!("/merge_requests/{number}/commits?per_page=100"))?;
+    let commits = all(
+        s,
+        &format!("/merge_requests/{number}/commits?per_page=100"),
+        &mut o.cut_short,
+    )?;
     o.commits = commits
         .as_array()
         .into_iter()
@@ -266,9 +300,10 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
         })
         .rev() // GitLab lists them newest first.
         .collect();
-    let discussions = get(
+    let discussions = all(
         s,
         &format!("/merge_requests/{number}/discussions?per_page=100"),
+        &mut o.cut_short,
     )?;
     for d in discussions.as_array().into_iter().flatten() {
         let notes: Vec<&Value> = d["notes"].as_array().into_iter().flatten().collect();
@@ -480,12 +515,13 @@ pub fn merge(s: &Session, r: &Request, how: &Merge) -> Result<(), String> {
     Ok(())
 }
 
-pub fn issues(s: &Session) -> Result<Vec<Issue>, String> {
-    let list = get(
+pub fn issues(s: &Session, n: u32) -> Result<(Vec<Issue>, bool), String> {
+    let (list, more) = page(
         s,
         "/issues?state=opened&per_page=50&order_by=created_at&sort=desc",
+        n,
     )?;
-    Ok(list
+    let issues: Vec<Issue> = list
         .as_array()
         .into_iter()
         .flatten()
@@ -504,7 +540,8 @@ pub fn issues(s: &Session) -> Result<Vec<Issue>, String> {
             created: timestamp(v["created_at"].as_str().unwrap_or_default()),
             comments: v["user_notes_count"].as_u64().unwrap_or(0),
         })
-        .collect())
+        .collect();
+    Ok((issues, more))
 }
 
 pub fn default_branch(s: &Session) -> Result<String, String> {
@@ -513,8 +550,9 @@ pub fn default_branch(s: &Session) -> Result<String, String> {
 
 pub fn choices(s: &Session) -> Result<Choices, String> {
     // Members, with those inherited from the project's groups.
-    let people = get(s, "/members/all?per_page=100")?;
-    let labels = get(s, "/labels?per_page=100")?;
+    let mut cut = false;
+    let people = all(s, "/members/all?per_page=100", &mut cut)?;
+    let labels = all(s, "/labels?per_page=100", &mut cut)?;
     let mut logins: Vec<String> = people
         .as_array()
         .into_iter()
@@ -605,7 +643,7 @@ mod tests {
             ),
         ]);
         let s = session(&base);
-        let list = s.requests().unwrap();
+        let list = s.requests(1).unwrap().0;
         let mr = &list[0];
         assert_eq!(
             (mr.number, mr.title.as_str(), mr.source.as_str()),
@@ -625,7 +663,7 @@ mod tests {
         let seen = seen.lock().unwrap();
         assert_eq!(
             seen[0].0,
-            "GET /api/v4/projects/team%2Fsub%2Fapp/merge_requests?state=opened&per_page=50&order_by=created_at&sort=desc"
+            "GET /api/v4/projects/team%2Fsub%2Fapp/merge_requests?state=opened&per_page=50&order_by=created_at&sort=desc&page=1"
         );
         assert!(seen[0].1.contains("authorization: bearer tok"));
         assert_eq!(s.head_ref(12), "merge-requests/12/head");
@@ -644,7 +682,7 @@ mod tests {
             (201, MR.into()),
         ]);
         let s = session(&base);
-        let issues = s.issues().unwrap();
+        let issues = s.issues(1).unwrap().0;
         assert_eq!(
             (issues[0].number, issues[0].labels.clone()),
             (4, vec!["perf".into()])
@@ -789,14 +827,19 @@ mod tests {
 
     #[test]
     fn lists_who_and_which_labels() {
-        let (base, seen) = mock::serve(vec![
+        // The members come in two pages.
+        let (base, seen) = mock::serve_paged(vec![
             (
                 200,
-                r#"[{"username":"milo","state":"active"},{"username":"ada","state":"active"},
-                    {"username":"gone","state":"blocked"},{"username":"ada","state":"active"}]"#
-                    .into(),
+                r#"<{base}/api/v4/projects/team%2Fsub%2Fapp/members/all?per_page=100&page=2>; rel="next""#.into(),
+                r#"[{"username":"milo","state":"active"},{"username":"ada","state":"active"}]"#.into(),
             ),
-            (200, r##"[{"name":"perf","color":"#d73a4a"}]"##.into()),
+            (
+                200,
+                String::new(),
+                r#"[{"username":"gone","state":"blocked"},{"username":"ada","state":"active"}]"#.into(),
+            ),
+            (200, String::new(), r##"[{"name":"perf","color":"#d73a4a"}]"##.into()),
         ]);
         let c = session(&base).choices().unwrap();
         assert_eq!(c.people, ["ada", "milo"]);
@@ -805,6 +848,10 @@ mod tests {
         assert_eq!(
             seen[0].0,
             "GET /api/v4/projects/team%2Fsub%2Fapp/members/all?per_page=100"
+        );
+        assert_eq!(
+            seen[1].0,
+            "GET /api/v4/projects/team%2Fsub%2Fapp/members/all?per_page=100&page=2"
         );
     }
 }

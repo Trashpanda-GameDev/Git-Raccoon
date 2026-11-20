@@ -151,6 +151,8 @@ impl App {
             .and_then(|s| eframe::get_value::<Settings>(s, Settings::KEY))
             .map(Settings::upgrade)
             .unwrap_or_default();
+        // Images in pull/merge requests' Markdown.
+        egui_extras::install_image_loaders(&cc.egui_ctx);
         let mut app = Self::with_settings(&cc.egui_ctx, settings);
         if let Ok(exe) = std::env::current_exe() {
             app.answer_git_questions(&cc.egui_ctx, &exe);
@@ -2016,6 +2018,11 @@ impl App {
                         ));
                     }
                 }
+                Some(sidebar::Action::LoadMore(requests)) => {
+                    if let Some(f) = &mut repo.forge {
+                        f.load_more(&ctx, requests);
+                    }
+                }
                 Some(sidebar::Action::NewRequest(from)) => {
                     self.new_request = new_form(repo, from.as_deref());
                 }
@@ -2626,6 +2633,7 @@ fn repo_action(repo: &mut RepoView, ctx: &egui::Context, action: sidebar::Action
         | sidebar::Action::OpenIssue(_)
         | sidebar::Action::SignInToForge
         | sidebar::Action::NewRequest(_)
+        | sidebar::Action::LoadMore(_)
         | sidebar::Action::ToggleSection(_)
         | sidebar::Action::ShowAllSections
         | sidebar::Action::Terminal(_) => {}
@@ -2878,9 +2886,15 @@ fn check_out_op(forge: &crate::forge_view::ForgeView, number: u64) -> Option<Op>
         };
         Some(Op::Then(vec![
             Op::FetchInto {
-                remote,
-                source,
+                remote: remote.clone(),
+                source: source.clone(),
                 branch: branch.clone(),
+            },
+            // It follows the request, so Pull brings its new commits.
+            Op::Follow {
+                branch: branch.clone(),
+                remote,
+                refname: format!("refs/{source}"),
             },
             Op::Checkout(branch),
         ]))
@@ -3108,7 +3122,31 @@ fn request_action(
             repo.run(ctx, Op::Then(steps));
             repo.open_when_done = Some(folder);
         }
-        Action::PullLatest => repo.pull(ctx, None, pull),
+        Action::PullLatest => {
+            // From a fork: its branch follows the request's head (set up on
+            // checking out; again here for one checked out before that).
+            if let Some((r, _)) = viewed.as_ref().filter(|(r, _)| r.from_fork) {
+                let branch = crate::ui::request::fork_branch(f.project.kind, r.number);
+                let follow = Op::Follow {
+                    branch,
+                    remote: f.remote.clone(),
+                    refname: format!("refs/{}", f.session_head_ref(n)),
+                };
+                repo.run(
+                    ctx,
+                    Op::Then(vec![
+                        follow,
+                        Op::Pull {
+                            from: None,
+                            mode: pull.strategy.mode(),
+                            stash: pull.changes == crate::settings::PullChanges::Stash,
+                        },
+                    ]),
+                );
+            } else {
+                repo.pull(ctx, None, pull);
+            }
+        }
         Action::BackTo(target) => {
             let (remote, kind) = (f.remote.clone(), f.project.kind);
             // Changes put aside to check it out, on that branch, come back.

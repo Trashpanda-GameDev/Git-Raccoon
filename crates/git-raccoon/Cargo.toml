@@ -12,7 +12,9 @@ git-raccoon-core = { path = "../git-raccoon-core" }
 eframe = { version = "0.36", default-features = false, features = ["accesskit", "default_fonts", "links", "persistence", "wayland", "wgpu", "x11"] }
 egui-phosphor = "0.14"
 # Markdown: request descriptions and comments.
-egui_commonmark = { version = "0.25", default-features = false, features = ["pulldown_cmark"] }
+egui_commonmark = { version = "0.25", default-features = false, features = ["pulldown_cmark", "load-images", "fetch"] }
+# Loading the images in requests' Markdown (from the web).
+egui_extras = { version = "0.36", default-features = false, features = ["image", "http", "file"] }
 serde = { version = "1.0.229", features = ["derive"] }
 rfd = "0.18"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "tga", "tiff", "webp", "ico", "qoi"] }

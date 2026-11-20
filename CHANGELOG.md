@@ -3,6 +3,13 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.19
+
+- **Long pull/merge requests are complete**: their files, commits, comments and threads were cut off at the first 100; now every page is loaded (up to 5,000 of each, with a note if there are more). The reviewer, assignee and label pickers list everyone and every label too.
+- **Load more requests or issues**: the sidebar lists the newest 50 of each, and a *Load more* row at the end lists the next 50, when there are more.
+- **Pull the latest works for requests from forks**: their branch (`pr/12`, `mr/12`) now follows the request, so Pull brings its new commits.
+- **Images in requests' descriptions and comments** are shown, not just their alt text.
+
 ## 0.5.18
 
 - **Pull and merge requests, without leaving the app**: click one in the sidebar and it opens in place of the graph, with how its checks, approvals and threads stand, and **Conversation**, **Commits** and **Changes** tabs. Its description and comments show as formatted Markdown. Changes shows each file's diff with the comment threads under their lines: reply, resolve or unresolve them there.

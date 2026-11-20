@@ -309,6 +309,13 @@ pub enum Op {
         remote_branch: String,
         id: String,
     },
+    /// Make a branch pull from a ref on a remote that isn't a branch (a
+    /// pull request's head).
+    Follow {
+        branch: String,
+        remote: String,
+        refname: String,
+    },
     /// Push a branch (checked out or not) to its name on a remote, and
     /// track it there.
     PushBranch {
@@ -465,6 +472,11 @@ impl Op {
             Op::SetUpstream { branch, upstream } => {
                 branch::set_upstream(path, &branch, upstream.as_deref())
             }
+            Op::Follow {
+                branch,
+                remote,
+                refname,
+            } => branch::follow(path, &branch, &remote, &refname),
             Op::DeleteBranch { name, force } => branch::delete(path, &name, force),
             Op::DeleteBranches { names, force } => branch::delete_many(path, &names, force),
             Op::CreateTag {
@@ -615,7 +627,7 @@ impl Op {
             Op::Checkout(_) | Op::CheckoutRemote(_) => "check out the branch",
             Op::CheckoutDetached(_) => "check out the commit",
             Op::RenameBranch { .. } => "rename the branch",
-            Op::SetUpstream { .. } => "set the upstream",
+            Op::SetUpstream { .. } | Op::Follow { .. } => "set the upstream",
             Op::DeleteBranch { .. } => "delete the branch",
             Op::DeleteBranches { .. } => "delete the branches",
             Op::CreateTag { .. } => "create the tag",

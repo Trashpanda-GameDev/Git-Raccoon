@@ -783,6 +783,7 @@ fn forge_sections(
                         }
                     });
                 }
+                load_more(ui, c, forge, true);
             }
         });
     }
@@ -833,6 +834,7 @@ fn forge_sections(
                         }
                     });
                 }
+                load_more(ui, c, forge, false);
             }
         });
     }
@@ -877,6 +879,8 @@ pub enum Action {
     /// Sign in to the repository's forge.
     SignInToForge,
     /// Open a new pull/merge request.
+    /// List the next page of requests (`true`) or issues.
+    LoadMore(bool),
     /// A new pull/merge request: from this branch, or the checked-out one.
     NewRequest(Option<String>),
     /// Open a page on the forge.
@@ -1000,6 +1004,46 @@ pub fn copy_name(ui: &mut egui::Ui, name: &str) {
     if item.on_hover_text(name).clicked() {
         ui.ctx().copy_text(name.to_string());
         ui.close();
+    }
+}
+
+/// "Load more" at the end of a forge's list, when it has more: requests
+/// (`true`) or issues.
+fn load_more(
+    ui: &mut egui::Ui,
+    c: &mut Ctx<'_>,
+    forge: &crate::forge_view::ForgeView,
+    requests: bool,
+) {
+    let more = if requests {
+        forge.more_requests
+    } else {
+        forge.more_issues
+    };
+    if !more {
+        return;
+    }
+    ui.horizontal(|ui| {
+        ui.add_space(12.0);
+        if forge.loading_more(requests) {
+            ui.spinner();
+            ui.label(RichText::new("Loading…").color(theme::muted()));
+        } else {
+            let label = if requests {
+                "Load more requests"
+            } else {
+                "Load more issues"
+            };
+            if ui
+                .add(egui::Button::new(RichText::new(label).color(theme::accent())).frame(false))
+                .clicked()
+            {
+                c.action = Some(Action::LoadMore(requests));
+            }
+        }
+    });
+    if let Some(e) = &forge.load_more_error {
+        ui.label(RichText::new(e).size(11.0).color(theme::danger()));
     }
 }
 

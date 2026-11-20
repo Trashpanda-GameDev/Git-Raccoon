@@ -139,6 +139,9 @@ pub fn show(ui: &mut egui::Ui, forge: &mut ForgeView, here: &Here<'_>) -> Option
         });
         return action;
     };
+    let web =
+        (kind == Kind::GitLab).then(|| format!("{}/{}", forge.project.base, forge.project.path));
+    ui.data_mut(|d| d.insert_temp(egui::Id::new("request-web"), web));
     let state = &mut forge.state;
     state.gitlab = kind == Kind::GitLab;
     state.on_branch = on_its_branch(&r, kind, here.branch);
@@ -344,6 +347,13 @@ fn header(
                 ui.spacing_mut().item_spacing.x = 14.0;
                 summary_line(ui, r, o);
             });
+            if o.cut_short {
+                ui.label(
+                    RichText::new("It's very long: some of its lists show only their first 5,000.")
+                        .size(12.0)
+                        .color(theme::muted()),
+                );
+            }
             // On its branch: keep up with it, or go back.
             if o.state == State::Open && on_its_branch(r, kind, here.branch) {
                 ui.add_space(4.0);
@@ -530,6 +540,12 @@ fn tabs(ui: &mut egui::Ui, o: &Overview, state: &mut RequestState) {
     );
 }
 
+/// GitLab's uploads ("/uploads/…") at the project's address (`web`).
+pub fn absolute_uploads(text: &str, web: &str) -> String {
+    text.replace("](/uploads/", &format!("]({web}/uploads/"))
+        .replace("src=\"/uploads/", &format!("src=\"{web}/uploads/"))
+}
+
 /// A comment's body, as Markdown.
 fn markdown(ui: &mut egui::Ui, cache: &mut CommonMarkCache, text: &str) {
     if text.trim().is_empty() {
@@ -539,7 +555,17 @@ fn markdown(ui: &mut egui::Ui, cache: &mut CommonMarkCache, text: &str) {
                 .color(theme::muted()),
         );
     } else {
-        CommonMarkViewer::new().show(ui, cache, text);
+        // GitLab's uploads are relative to the project's page.
+        let web = ui
+            .data(|d| d.get_temp::<Option<String>>(egui::Id::new("request-web")))
+            .flatten();
+        let text = match web {
+            Some(web) => absolute_uploads(text, &web),
+            None => text.to_string(),
+        };
+        CommonMarkViewer::new()
+            .max_image_width(Some(640))
+            .show(ui, cache, &text);
     }
 }
 
@@ -2302,5 +2328,16 @@ mod tests {
             Some("feature/x")
         );
         assert_eq!(aside_from(&message, Kind::GitLab, 13), None);
+    }
+
+    #[test]
+    fn puts_gitlabs_uploads_at_the_project() {
+        assert_eq!(
+            absolute_uploads(
+                "See ![shot](/uploads/ab/shot.png) and <img src=\"/uploads/cd/x.png\">",
+                "https://gitlab.com/team/app"
+            ),
+            "See ![shot](https://gitlab.com/team/app/uploads/ab/shot.png) and <img src=\"https://gitlab.com/team/app/uploads/cd/x.png\">"
+        );
     }
 }

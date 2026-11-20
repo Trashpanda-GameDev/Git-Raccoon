@@ -45,12 +45,16 @@ fn request(v: &Value) -> Request {
     }
 }
 
-pub fn requests(s: &Session) -> Result<Vec<Request>, String> {
-    let list = get(
+pub fn requests(s: &Session, n: u32) -> Result<(Vec<Request>, bool), String> {
+    let (list, more) = page(
         s,
         "/pulls?state=open&per_page=50&sort=created&direction=desc",
+        n,
     )?;
-    Ok(list.as_array().into_iter().flatten().map(request).collect())
+    Ok((
+        list.as_array().into_iter().flatten().map(request).collect(),
+        more,
+    ))
 }
 
 /// Each reviewer's latest say, and what it comes to.
@@ -150,17 +154,96 @@ fn query(s: &Session, query: &str, variables: Value) -> Result<Value, String> {
     Ok(v)
 }
 
-const THREADS: &str = "query($owner: String!, $name: String!, $n: Int!) {
+const THREADS: &str = "query($owner: String!, $name: String!, $n: Int!, $after: String) {
   repository(owner: $owner, name: $name) { pullRequest(number: $n) {
-    reviewThreads(first: 100) { nodes {
-      id isResolved isOutdated path line startLine originalLine originalStartLine
-      diffSide startDiffSide
-      comments(first: 100) { nodes {
-        databaseId body createdAt diffHunk author { login }
-      } }
-    } }
+    reviewThreads(first: 100, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        id isResolved isOutdated path line startLine originalLine originalStartLine
+        diffSide startDiffSide
+        comments(first: 100) {
+          pageInfo { hasNextPage endCursor }
+          nodes { databaseId body createdAt diffHunk author { login } }
+        }
+      }
+    }
   } }
 }";
+
+/// The rest of a thread's comments, past its first 100.
+const MORE_COMMENTS: &str = "query($id: ID!, $after: String) {
+  node(id: $id) { ... on PullRequestReviewThread {
+    comments(first: 100, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes { databaseId body createdAt diffHunk author { login } }
+    }
+  } }
+}";
+
+/// Page `page` (from 1) of a list, and whether there are more.
+fn page(s: &Session, path: &str, page: u32) -> Result<(Value, bool), String> {
+    let (list, next) = http::get_page(
+        FORGE,
+        &format!("{}{path}&page={page}", api(s)),
+        &Auth::Bearer(&s.token),
+    )?;
+    Ok((list, next.is_some()))
+}
+
+/// Every page of a list; `cut` notes if it stopped short of the end.
+fn all(s: &Session, path: &str, cut: &mut bool) -> Result<Value, String> {
+    let (list, short) =
+        http::get_all(FORGE, &format!("{}{path}", api(s)), &Auth::Bearer(&s.token))?;
+    *cut |= short;
+    Ok(list)
+}
+
+/// Every review thread of a request, with all their comments.
+fn threads(s: &Session, number: u64, cut: &mut bool) -> Result<Vec<Value>, String> {
+    let (owner, name) = owner_name(s);
+    let mut nodes: Vec<Value> = Vec::new();
+    let mut after = Value::Null;
+    for page in 0.. {
+        if page == http::MAX_PAGES {
+            *cut = true;
+            break;
+        }
+        let v = query(
+            s,
+            THREADS,
+            json!({"owner": owner, "name": name, "n": number, "after": after}),
+        )?;
+        let threads = &v["data"]["repository"]["pullRequest"]["reviewThreads"];
+        nodes.extend(threads["nodes"].as_array().into_iter().flatten().cloned());
+        if threads["pageInfo"]["hasNextPage"].as_bool() != Some(true) {
+            break;
+        }
+        after = threads["pageInfo"]["endCursor"].clone();
+    }
+    // A long thread's comments come in pages of their own.
+    for node in &mut nodes {
+        let mut info = node["comments"]["pageInfo"].clone();
+        let mut pages = 1;
+        while info["hasNextPage"].as_bool() == Some(true) {
+            if pages == http::MAX_PAGES {
+                *cut = true;
+                break;
+            }
+            let v = query(
+                s,
+                MORE_COMMENTS,
+                json!({"id": node["id"], "after": info["endCursor"]}),
+            )?;
+            let more = &v["data"]["node"]["comments"];
+            if let Some(list) = node["comments"]["nodes"].as_array_mut() {
+                list.extend(more["nodes"].as_array().into_iter().flatten().cloned());
+            }
+            info = more["pageInfo"].clone();
+            pages += 1;
+        }
+    }
+    Ok(nodes)
+}
 
 fn owner_name(s: &Session) -> (String, String) {
     let (owner, name) = s
@@ -232,7 +315,12 @@ fn thread(v: &Value) -> Thread {
 pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
     let v = get(s, &format!("/pulls/{number}"))?;
     let mut r = request(&v);
-    let reviews = get(s, &format!("/pulls/{number}/reviews?per_page=100"))?;
+    let mut cut = false;
+    let reviews = all(
+        s,
+        &format!("/pulls/{number}/reviews?per_page=100"),
+        &mut cut,
+    )?;
     (r.reviews, r.review) = verdicts(&reviews);
     let mut o = Overview {
         state: if v["merged"].as_bool().unwrap_or(false) || !v["merged_at"].is_null() {
@@ -250,7 +338,12 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
         ..Overview::default()
     };
     (r.checks, o.checks) = checks(s, &o.refs.head)?;
-    let files = get(s, &format!("/pulls/{number}/files?per_page=100"))?;
+    o.cut_short = cut;
+    let files = all(
+        s,
+        &format!("/pulls/{number}/files?per_page=100"),
+        &mut o.cut_short,
+    )?;
     o.files = files
         .as_array()
         .into_iter()
@@ -267,7 +360,11 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
             patch: text(f, "patch"),
         })
         .collect();
-    let commits = get(s, &format!("/pulls/{number}/commits?per_page=100"))?;
+    let commits = all(
+        s,
+        &format!("/pulls/{number}/commits?per_page=100"),
+        &mut o.cut_short,
+    )?;
     o.commits = commits
         .as_array()
         .into_iter()
@@ -289,7 +386,11 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
             created: timestamp(c["commit"]["author"]["date"].as_str().unwrap_or_default()),
         })
         .collect();
-    let comments = get(s, &format!("/issues/{number}/comments?per_page=100"))?;
+    let comments = all(
+        s,
+        &format!("/issues/{number}/comments?per_page=100"),
+        &mut o.cut_short,
+    )?;
     for c in comments.as_array().into_iter().flatten() {
         o.events.push(Event::Comment(Comment {
             id: c["id"].as_u64().unwrap_or_default().to_string(),
@@ -318,16 +419,8 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
             created: timestamp(review["submitted_at"].as_str().unwrap_or_default()),
         });
     }
-    let (owner, name) = owner_name(s);
-    let threads = query(
-        s,
-        THREADS,
-        json!({"owner": owner, "name": name, "n": number}),
-    )?;
-    o.threads = threads["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
-        .as_array()
-        .into_iter()
-        .flatten()
+    o.threads = threads(s, number, &mut o.cut_short)?
+        .iter()
         .map(thread)
         .collect();
     // GitHub keeps suggestions in the comments' text: on the lines the
@@ -511,12 +604,13 @@ pub fn merge(s: &Session, r: &Request, how: &Merge) -> Result<(), String> {
     Ok(())
 }
 
-pub fn issues(s: &Session) -> Result<Vec<Issue>, String> {
-    let list = get(
+pub fn issues(s: &Session, n: u32) -> Result<(Vec<Issue>, bool), String> {
+    let (list, more) = page(
         s,
         "/issues?state=open&per_page=50&sort=created&direction=desc",
+        n,
     )?;
-    Ok(list
+    let issues: Vec<Issue> = list
         .as_array()
         .into_iter()
         .flatten()
@@ -537,7 +631,8 @@ pub fn issues(s: &Session) -> Result<Vec<Issue>, String> {
             created: timestamp(v["created_at"].as_str().unwrap_or_default()),
             comments: v["comments"].as_u64().unwrap_or(0),
         })
-        .collect())
+        .collect();
+    Ok((issues, more))
 }
 
 pub fn default_branch(s: &Session) -> Result<String, String> {
@@ -545,8 +640,9 @@ pub fn default_branch(s: &Session) -> Result<String, String> {
 }
 
 pub fn choices(s: &Session) -> Result<Choices, String> {
-    let people = get(s, "/assignees?per_page=100")?;
-    let labels = get(s, "/labels?per_page=100")?;
+    let mut cut = false;
+    let people = all(s, "/assignees?per_page=100", &mut cut)?;
+    let labels = all(s, "/labels?per_page=100", &mut cut)?;
     Ok(Choices {
         people: people
             .as_array()
@@ -653,7 +749,7 @@ mod tests {
             (200, r#"{"statuses":[{"state":"failure"}]}"#.into()),
         ]);
         let s = session(&base);
-        let list = s.requests().unwrap();
+        let list = s.requests(1).unwrap().0;
         assert_eq!(list.len(), 1);
         let pr = &list[0];
         assert_eq!(
@@ -685,7 +781,7 @@ mod tests {
         let seen = seen.lock().unwrap();
         assert_eq!(
             seen[0].0,
-            "GET /api/v3/repos/rocky/stash-box/pulls?state=open&per_page=50&sort=created&direction=desc"
+            "GET /api/v3/repos/rocky/stash-box/pulls?state=open&per_page=50&sort=created&direction=desc&page=1"
         );
         assert!(seen[0].1.contains("authorization: bearer tok"));
         assert_eq!(
@@ -709,7 +805,7 @@ mod tests {
             (201, PR.into()),
         ]);
         let s = session(&base);
-        let issues = s.issues().unwrap();
+        let issues = s.issues(1).unwrap().0;
         assert_eq!(issues.len(), 1);
         assert_eq!(
             (
@@ -919,5 +1015,45 @@ mod tests {
             seen.lock().unwrap()[0].0,
             "GET /api/v3/repos/rocky/stash-box/assignees?per_page=100"
         );
+    }
+
+    #[test]
+    fn reads_every_page_of_threads_and_their_comments() {
+        let node = |id: &str, more: bool| {
+            json!({"id": id, "isResolved": false, "path": "a.rs", "line": 1, "diffSide": "RIGHT",
+                "comments": {"pageInfo": {"hasNextPage": more, "endCursor": "c1"},
+                    "nodes": [{"databaseId": 1, "body": "first", "author": {"login": "ada"}}]}})
+        };
+        let page = |nodes: Vec<Value>, more: bool| {
+            json!({"data": {"repository": {"pullRequest": {"reviewThreads": {
+                "pageInfo": {"hasNextPage": more, "endCursor": "t1"}, "nodes": nodes}}}}})
+            .to_string()
+        };
+        let (base, seen) = mock::serve(vec![
+            (200, page(vec![node("T1", true)], true)),
+            (200, page(vec![node("T2", false)], false)),
+            (
+                200,
+                json!({"data": {"node": {"comments": {"pageInfo": {"hasNextPage": false},
+                    "nodes": [{"databaseId": 2, "body": "second", "author": {"login": "milo"}}]}}}})
+                .to_string(),
+            ),
+        ]);
+        let mut cut = false;
+        let nodes = threads(&session(&base), 7, &mut cut).unwrap();
+        let all: Vec<Thread> = nodes.iter().map(thread).collect();
+        assert_eq!(all.len(), 2);
+        assert_eq!(
+            all[0]
+                .comments
+                .iter()
+                .map(|c| c.body.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "second"]
+        );
+        assert!(!cut);
+        let seen = seen.lock().unwrap();
+        assert!(seen[1].2.contains(r#""after":"t1""#), "{}", seen[1].2);
+        assert!(seen[2].2.contains(r#""after":"c1""#), "{}", seen[2].2);
     }
 }

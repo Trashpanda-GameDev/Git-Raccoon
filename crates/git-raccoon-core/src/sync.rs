@@ -717,6 +717,47 @@ mod tests {
     }
 
     #[test]
+    fn pulls_a_pull_requests_new_commits() {
+        let s = setup();
+        let none = AtomicBool::new(false);
+        // The request's head, on the remote, as GitHub keeps it.
+        commit_file(&s.a, "pr.txt", "one\n", "request work");
+        cli::run(
+            s.a.path(),
+            &["push", "-q", "origin", "HEAD:refs/pull/12/head"],
+            None,
+        )
+        .unwrap();
+        // Checked out here as GitHub's pull request would be.
+        cli::run(
+            s.b.path(),
+            &["fetch", "-q", "origin", "pull/12/head:pr/12"],
+            None,
+        )
+        .unwrap();
+        crate::branch::follow(s.b.path(), "pr/12", "origin", "refs/pull/12/head").unwrap();
+        cli::run(s.b.path(), &["checkout", "-q", "pr/12"], None).unwrap();
+        // More work on the request, then Pull.
+        commit_file(&s.a, "pr.txt", "two\n", "more request work");
+        cli::run(
+            s.a.path(),
+            &["push", "-q", "-f", "origin", "HEAD:refs/pull/12/head"],
+            None,
+        )
+        .unwrap();
+        pull(
+            s.b.path(),
+            None,
+            PullMode::FastForward,
+            false,
+            &mut |_| {},
+            &none,
+        )
+        .unwrap();
+        assert_eq!(head(&s.b), head(&s.a));
+    }
+
+    #[test]
     fn pushes_a_branch_that_isnt_checked_out() {
         let s = setup();
         let none = AtomicBool::new(false);

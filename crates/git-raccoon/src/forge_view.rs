@@ -116,7 +116,14 @@ enum Loaded {
     Blame(Arc<Blame>),
 }
 
-type Lists = (Result<Vec<Request>, String>, Result<Vec<Issue>, String>);
+/// A page of requests and one of issues, each with whether there are more.
+type Lists = (
+    Result<(Vec<Request>, bool), String>,
+    Result<(Vec<Issue>, bool), String>,
+);
+
+/// The next page of requests (`true`) or issues, loading.
+type More = (bool, Task<Result<(Vec<Request>, Vec<Issue>, bool), String>>);
 
 /// The forge of a repository, and what it has.
 pub struct ForgeView {
@@ -129,11 +136,18 @@ pub struct ForgeView {
     pub requests: Option<Result<Vec<Request>, String>>,
     pub issues: Option<Result<Vec<Issue>, String>>,
     loading: Option<Task<Lists>>,
+    /// There are more requests, or issues, than listed; the pages listed.
+    pub more_requests: bool,
+    pub more_issues: bool,
+    pages: (u32, u32),
+    more: Option<More>,
     pub open: Option<Opened>,
     /// The open request's view (with its reviews and checks), once loaded.
     pub details: Option<(u64, Result<Viewed, String>)>,
     details_task: Option<(u64, Task<Result<Viewed, String>>)>,
     pub state: RequestState,
+    /// Why the next page couldn't be listed.
+    pub load_more_error: Option<String>,
     /// Something was sent: reload the view (and the list) next.
     pub reloading: bool,
 }
@@ -162,10 +176,15 @@ impl ForgeView {
             requests: None,
             issues: None,
             loading: None,
+            more_requests: false,
+            more_issues: false,
+            pages: (1, 1),
+            more: None,
             open: None,
             details: None,
             details_task: None,
             state: RequestState::default(),
+            load_more_error: None,
             reloading: false,
         })
     }
@@ -186,13 +205,43 @@ impl ForgeView {
         let project = self.project.clone();
         self.loading = Some(Task::spawn(ctx, move || {
             match forge::accounts::session(&account, &project) {
-                Ok(s) => (s.requests(), s.issues()),
+                Ok(s) => (s.requests(1), s.issues(1)),
                 Err(e) => (Err(e.clone()), Err(e)),
             }
         }));
         if let Some(Opened::Request(n)) = self.open {
             self.load_details(ctx, n);
         }
+    }
+
+    /// Lists the next page of requests (`true`) or issues.
+    pub fn load_more(&mut self, ctx: &egui::Context, requests: bool) {
+        let Some(account) = self.account.clone() else {
+            return;
+        };
+        if self.more.is_some() {
+            return;
+        }
+        self.load_more_error = None;
+        let project = self.project.clone();
+        let page = if requests { self.pages.0 } else { self.pages.1 } + 1;
+        self.more = Some((
+            requests,
+            Task::spawn(ctx, move || {
+                let s = forge::accounts::session(&account, &project)?;
+                if requests {
+                    s.requests(page)
+                        .map(|(list, more)| (list, Vec::new(), more))
+                } else {
+                    s.issues(page).map(|(list, more)| (Vec::new(), list, more))
+                }
+            }),
+        ));
+    }
+
+    /// Whether the next page of requests (`true`) or issues is loading.
+    pub fn loading_more(&self, requests: bool) -> bool {
+        self.more.as_ref().is_some_and(|(r, _)| *r == requests)
     }
 
     /// Whether it's loading.
@@ -400,8 +449,44 @@ impl ForgeView {
     pub fn poll(&mut self) {
         if let Some((requests, issues)) = self.loading.as_ref().and_then(Task::poll) {
             self.loading = None;
-            self.requests = Some(requests);
-            self.issues = Some(issues);
+            self.more_requests = requests.as_ref().is_ok_and(|(_, more)| *more);
+            self.more_issues = issues.as_ref().is_ok_and(|(_, more)| *more);
+            self.pages = (1, 1);
+            self.more = None;
+            self.requests = Some(requests.map(|(list, _)| list));
+            self.issues = Some(issues.map(|(list, _)| list));
+        }
+        if let Some((requests, task)) = &self.more
+            && let Some(result) = task.poll()
+        {
+            let requests = *requests;
+            self.more = None;
+            match result {
+                Ok((new_requests, new_issues, more)) => {
+                    if requests {
+                        self.pages.0 += 1;
+                        self.more_requests = more;
+                        if let Some(Ok(list)) = &mut self.requests {
+                            for r in new_requests {
+                                if !list.iter().any(|x| x.number == r.number) {
+                                    list.push(r);
+                                }
+                            }
+                        }
+                    } else {
+                        self.pages.1 += 1;
+                        self.more_issues = more;
+                        if let Some(Ok(list)) = &mut self.issues {
+                            for i in new_issues {
+                                if !list.iter().any(|x| x.number == i.number) {
+                                    list.push(i);
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => self.load_more_error = Some(e),
+            }
         }
         if let Some((n, task)) = &self.details_task
             && let Some(result) = task.poll()

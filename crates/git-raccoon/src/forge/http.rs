@@ -69,6 +69,74 @@ pub fn get(forge: &str, url: &str, auth: &Auth<'_>) -> Result<Value, String> {
     read(forge, req.call())
 }
 
+/// The most pages [`get_all`] reads (of 100 each).
+pub const MAX_PAGES: usize = 50;
+
+/// GET one page of a list, and where the next one is, if there is one
+/// (from the `Link` header, which GitHub and GitLab both send).
+pub fn get_page(
+    forge: &str,
+    url: &str,
+    auth: &Auth<'_>,
+) -> Result<(Value, Option<String>), String> {
+    let req = with_auth(agent_for().get(url), auth).header("X-GitHub-Api-Version", "2022-11-28");
+    let response = req.call().map_err(|e| explain(forge, e))?;
+    let next = response
+        .headers()
+        .get("link")
+        .and_then(|l| l.to_str().ok())
+        .and_then(next_link);
+    let text = response
+        .into_body()
+        .read_to_string()
+        .map_err(|e| e.to_string())?;
+    let value = if text.trim().is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_str(&text)
+            .map_err(|e| format!("{forge} answered something unexpected: {e}"))?
+    };
+    Ok((value, next))
+}
+
+/// GET every page of a list (up to [`MAX_PAGES`]), as one list. Returns
+/// whether it stopped short of the end.
+pub fn get_all(forge: &str, url: &str, auth: &Auth<'_>) -> Result<(Value, bool), String> {
+    let mut items = Vec::new();
+    let mut next = Some(url.to_string());
+    let mut pages = 0;
+    while let Some(at) = next.take() {
+        let (page, more) = get_page(forge, &at, auth)?;
+        let Value::Array(list) = page else {
+            // Not a list after all.
+            return Ok((page, false));
+        };
+        items.extend(list);
+        pages += 1;
+        if pages == MAX_PAGES {
+            return Ok((Value::Array(items), more.is_some()));
+        }
+        next = more;
+    }
+    Ok((Value::Array(items), false))
+}
+
+/// The `rel="next"` address in a `Link` header.
+fn next_link(header: &str) -> Option<String> {
+    header.split(',').find_map(|part| {
+        let (url, params) = part.split_once(';')?;
+        params
+            .split(';')
+            .any(|p| p.trim().replace(' ', "") == "rel=\"next\"")
+            .then(|| {
+                url.trim()
+                    .trim_start_matches('<')
+                    .trim_end_matches('>')
+                    .to_string()
+            })
+    })
+}
+
 /// POST some JSON, and get JSON back.
 pub fn post(forge: &str, url: &str, auth: &Auth<'_>, body: &Value) -> Result<Value, String> {
     let req = with_auth(agent_for().post(url), auth)
@@ -143,12 +211,24 @@ pub mod mock {
     /// Serves `replies` (status, JSON) in order, one per request. Returns
     /// its address ("http://127.0.0.1:port") and what it saw.
     pub fn serve(replies: Vec<(u16, String)>) -> (String, Seen) {
+        serve_paged(
+            replies
+                .into_iter()
+                .map(|(s, b)| (s, String::new(), b))
+                .collect(),
+        )
+    }
+
+    /// [`serve`], with a `Link` header for each reply (`{base}` in it is
+    /// the server's own address; empty for none).
+    pub fn serve_paged(replies: Vec<(u16, String, String)>) -> (String, Seen) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let base = format!("http://{}", listener.local_addr().expect("addr"));
         let seen: Seen = Arc::default();
         let log = Arc::clone(&seen);
+        let here = base.clone();
         std::thread::spawn(move || {
-            for (status, body) in replies {
+            for (status, link, body) in replies {
                 let Ok((stream, _)) = listener.accept() else {
                     return;
                 };
@@ -176,13 +256,45 @@ pub mod mock {
                     String::from_utf8_lossy(&data).into_owned(),
                 ));
                 let mut stream = stream;
+                let link = if link.is_empty() {
+                    String::new()
+                } else {
+                    format!("Link: {}\r\n", link.replace("{base}", &here))
+                };
                 let _ = write!(
                     stream,
-                    "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\n{link}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
                 );
             }
         });
         (base, seen)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn follows_next_pages() {
+        assert_eq!(
+            next_link(r#"<https://x/a?page=2>; rel="next", <https://x/a?page=9>; rel="last""#)
+                .as_deref(),
+            Some("https://x/a?page=2")
+        );
+        assert_eq!(next_link(r#"<https://x/a?page=1>; rel="prev""#), None);
+        let (base, seen) = mock::serve_paged(vec![
+            (
+                200,
+                r#"<{base}/list?page=2>; rel="next""#.into(),
+                "[1, 2]".into(),
+            ),
+            (200, String::new(), "[3]".into()),
+        ]);
+        let (all, cut) = get_all("Test", &format!("{base}/list"), &Auth::None).unwrap();
+        assert_eq!(all, serde_json::json!([1, 2, 3]));
+        assert!(!cut);
+        assert_eq!(seen.lock().unwrap()[1].0, "GET /list?page=2");
     }
 }

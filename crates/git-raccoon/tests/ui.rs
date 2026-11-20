@@ -3454,9 +3454,17 @@ fn forge_server(routes: Vec<(&'static str, String)>, repo: std::path::PathBuf) -
                         || (404, "{}".to_string()),
                         |(_, json)| (200, json.replace("{base}", &here)),
                     );
+                // "@link <…>; rel=\"next\"" on its first line: a Link header.
+                let (link, reply) = match reply.1.strip_prefix("@link ") {
+                    Some(rest) => {
+                        let (link, body) = rest.split_once('\n').unwrap_or((rest, ""));
+                        (format!("Link: {link}\r\n"), (reply.0, body.to_string()))
+                    }
+                    None => (String::new(), reply),
+                };
                 let _ = write!(
                     stream,
-                    "HTTP/1.1 {} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    "HTTP/1.1 {} X\r\nContent-Type: application/json\r\n{link}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
                     reply.0,
                     reply.1.len(),
                     reply.1
@@ -3505,7 +3513,12 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     let (base, seen) = forge_server(vec![
         ("GET /api/v4/user", r#"{"username": "milo"}"#.into()),
         // Listing.
-        ("GET /api/v4/projects/team%2Fapp/merge_requests?", format!("[{}]", mr(12, "Pipeline cache", "cache"))),
+        ("GET /api/v4/projects/team%2Fapp/merge_requests?", format!(
+            "@link <{{base}}/api/v4/projects/team%2Fapp/merge_requests?state=opened&per_page=50&order_by=created_at&sort=desc&page=2>; rel=\"next\"\n[{}]",
+            mr(12, "Pipeline cache", "cache")
+        )),
+        ("GET /api/v4/projects/team%2Fapp/merge_requests?state=opened&per_page=50&order_by=created_at&sort=desc&page=2",
+            format!("[{}]", mr(11, "Older one", "older"))),
         ("GET /api/v4/projects/team%2Fapp/issues?", r#"[{"iid": 4, "title": "Slow start", "author": {"username": "milo"},
             "labels": ["perf"], "web_url": "u", "description": "It takes ages.", "created_at": "2026-11-01T00:00:00Z",
             "user_notes_count": 1}]"#.into()),
@@ -3584,6 +3597,15 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
             .is_some_and(|f| f.requests.is_some() && f.issues.is_some())
     });
     h.run_ok();
+    // More than a page of them: the next on request.
+    h.get_by_label("Load more requests").click();
+    wait_for(&mut h, "the next page", |app| {
+        let f = app.repo().unwrap().forge.as_ref().unwrap();
+        !f.more_requests && f.request(11).is_some()
+    });
+    h.run_ok();
+    h.get_by_label("!11 Older one");
+    assert!(h.query_by_label("Load more requests").is_none());
     h.get_by_label("!12 Pipeline cache").click();
     wait_for(&mut h, "its details", |app| {
         app.repo()

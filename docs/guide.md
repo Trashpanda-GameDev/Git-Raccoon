@@ -219,7 +219,7 @@ Git Raccoon uses your existing Git setup: Git Credential Manager, other credenti
 
 ## Pull requests, merge requests and issues
 
-For a repository on **GitHub**, **GitLab.com** or a **self-managed GitLab**, the sidebar lists its open pull requests (merge requests on GitLab) and issues.
+For a repository on **GitHub**, **GitLab.com** or a **self-managed GitLab**, the sidebar lists its open pull requests (merge requests on GitLab) and issues, newest first. When there are more than 50, **Load more** at the end of the list shows the next ones.
 
 ### Signing in
 
@@ -237,7 +237,7 @@ Click a request to open it in place of the graph. **Esc** goes back.
 
 The header shows its state, branches, checks, approvals and unresolved threads. Below it are three tabs:
 
-- **Conversation**: the description and comments (as formatted Markdown), reviews, checks, and threads with the code they're about.
+- **Conversation**: the description and comments (as formatted Markdown, images included), reviews, checks, and threads with the code they're about.
 - **Commits**: **Show them in the graph** marks them there (a bar takes you back). Click one to go straight to it.
 - **Changes**: each file's diff, with comment threads under their lines. **Reply**, **Resolve** or **Unresolve** them there. Switch to **Split**, **Whole file** or **Blame**, as in any diff (Git Raccoon fetches the request's commits in the background for these, without making a branch).
 
@@ -268,7 +268,7 @@ To suggest one yourself, pick lines in Changes and right-click › **Suggest a c
 
 ### Checking out
 
-**Check out ▾** puts you on the request's branch, or in a **new worktree** beside this folder, which opens in a tab. A request from a fork gets a branch of its own (`pr/12` or `mr/12`).
+**Check out ▾** puts you on the request's branch, or in a **new worktree** beside this folder, which opens in a tab. A request from a fork gets a branch of its own (`pr/12` or `mr/12`), which follows the request, so Pull brings its new commits.
 
 - **Uncommitted changes in the way?** It asks: put them aside and check out, use a worktree instead, or cancel.
 - **On its branch,** the header offers **Pull the latest** and **Back to…** the branch you were on. Changes put aside come back with you.

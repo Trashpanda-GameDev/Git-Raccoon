@@ -328,11 +328,12 @@ impl Session {
         Session { project, token }
     }
 
-    /// The open pull/merge requests, newest first.
-    pub fn requests(&self) -> Result<Vec<Request>, String> {
+    /// A page (from 1) of the open pull/merge requests, newest first, and
+    /// whether there are more.
+    pub fn requests(&self, page: u32) -> Result<(Vec<Request>, bool), String> {
         match self.project.kind {
-            Kind::GitHub => github::requests(self),
-            Kind::GitLab => gitlab::requests(self),
+            Kind::GitHub => github::requests(self, page),
+            Kind::GitLab => gitlab::requests(self, page),
         }
     }
 
@@ -344,11 +345,12 @@ impl Session {
         }
     }
 
-    /// The open issues, newest first.
-    pub fn issues(&self) -> Result<Vec<Issue>, String> {
+    /// A page (from 1) of the open issues, newest first, and whether there
+    /// are more.
+    pub fn issues(&self, page: u32) -> Result<(Vec<Issue>, bool), String> {
         match self.project.kind {
-            Kind::GitHub => github::issues(self),
-            Kind::GitLab => gitlab::issues(self),
+            Kind::GitHub => github::issues(self, page),
+            Kind::GitLab => gitlab::issues(self, page),
         }
     }
 
