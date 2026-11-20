@@ -7,6 +7,7 @@ release page). Newest first; a version's heading is just its number.
 
 - **Corner roundness looks like a slider again** (Settings › Appearance): a wider track, filled in the accent colour up to the value, with a round handle. It looked like a button.
 - **Pin branches to the top**: right-click a local branch in the sidebar › *Pin to top*. Pinned branches sit at the top of *Local*, in alphabetical order, with a pin; *Unpin* puts one back in its folder. Pins are kept per repository.
+- **Links in Markdown line up with the text** in requests, issues and comments, and show in the link colour. They sat higher than the words around them.
 
 ## 0.5.20
 

@@ -3590,7 +3590,7 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
         ("GET /api/v4/projects/team%2Fapp/merge_requests/12/commits", format!(r#"[{{"id": "{main}", "title": "Cache the pipeline",
             "author_name": "Ada", "created_at": "2026-11-01T00:00:00Z"}}]"#)),
         ("GET /api/v4/projects/team%2Fapp/merge_requests/12/discussions", r#"[
-            {"id": "d1", "individual_note": true, "notes": [{"id": 1, "body": "Looks **good**", "author": {"username": "milo"},
+            {"id": "d1", "individual_note": true, "notes": [{"id": 1, "body": "Looks **good**, see [the docs](https://example.com/docs) for more", "author": {"username": "milo"},
                 "created_at": "2026-11-02T00:00:00Z", "system": false}]},
             {"id": "d4", "individual_note": true, "notes": [{"id": 7, "body": "Typo in the title.", "author": {"username": "rocky"},
                 "created_at": "2026-11-02T12:00:00Z", "system": false}]},
