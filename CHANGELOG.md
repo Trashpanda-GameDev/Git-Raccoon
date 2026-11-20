@@ -15,6 +15,8 @@ release page). Newest first; a version's heading is just its number.
 - Going to a comment scrolls only up or down, not sideways.
 - **Hovering a line in a request's diff no longer pushes the lines below it down**: its + (to comment) now sits over the line instead of taking room.
 - **The status under an open request fits the sidebar**: when the words don't fit, it shows only the icons and the thread count, with the words on hover. They wrapped to the panel's edge.
+- **Select and copy Markdown text**: drag over a description or comment (in a request or an issue) to select it, then copy it with Ctrl+C.
+- **An issue's description shows as Markdown** in the side panel, as a request's does, with its images. It showed the raw text.
 - **Markdown looks right** in requests, issues and comments:
   - Links line up with the text and show in the link colour. They sat higher than the words around them.
   - **Bold** is bold. It looked like the rest of the text.

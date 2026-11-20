@@ -577,7 +577,9 @@ pub fn absolute_uploads(text: &str, web: &str) -> String {
 }
 
 /// A comment's body, as Markdown.
-fn markdown(ui: &mut egui::Ui, cache: &mut CommonMarkCache, text: &str) {
+/// Markdown from the forge (a description, a comment), as it shows there;
+/// its text can be selected, to copy.
+pub(crate) fn markdown(ui: &mut egui::Ui, cache: &mut CommonMarkCache, text: &str) {
     if text.trim().is_empty() {
         ui.label(
             RichText::new("No description.")
@@ -593,9 +595,12 @@ fn markdown(ui: &mut egui::Ui, cache: &mut CommonMarkCache, text: &str) {
             Some(web) => absolute_uploads(text, &web),
             None => text.to_string(),
         };
-        CommonMarkViewer::new()
-            .max_image_width(Some(640))
-            .show(ui, cache, &text);
+        ui.scope(|ui| {
+            ui.style_mut().interaction.selectable_labels = true;
+            CommonMarkViewer::new()
+                .max_image_width(Some(640))
+                .show(ui, cache, &text);
+        });
     }
 }
 

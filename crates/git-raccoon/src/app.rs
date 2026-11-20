@@ -2158,7 +2158,7 @@ impl App {
         // A pull/merge request or issue from the forge.
         if let Some(forge) = repo
             .forge
-            .as_ref()
+            .as_mut()
             .filter(|f| matches!(f.open, Some(crate::forge_view::Opened::Issue(_))))
         {
             let action = Panel::right("forge-details")

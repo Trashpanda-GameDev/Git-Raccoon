@@ -26,27 +26,23 @@ fn heading(ui: &mut egui::Ui, text: &str, action: &mut Option<Action>) {
     });
 }
 
-fn body(ui: &mut egui::Ui, text: &str) {
-    ui.add_space(8.0);
-    if text.trim().is_empty() {
-        ui.label(RichText::new("No description.").color(theme::muted()));
-    } else {
-        ui.label(RichText::new(text.trim()).size(13.0));
-    }
-}
-
 /// Shows what's open from the forge.
-pub fn show(ui: &mut egui::Ui, forge: &ForgeView, now: i64) -> Option<Action> {
+pub fn show(ui: &mut egui::Ui, forge: &mut ForgeView, now: i64) -> Option<Action> {
     let mut action = None;
     let kind = forge.project.kind;
     let site = kind.name();
     match forge.open {
         Some(Opened::Issue(n)) => {
             heading(ui, &format!("Issue #{n}"), &mut action);
-            let Some(i) = forge.issue(n) else {
+            let Some(i) = forge.issue(n).cloned() else {
                 ui.label(RichText::new("It isn't open any more.").color(theme::muted()));
                 return action;
             };
+            // GitLab's uploads are relative to the project's page.
+            let web = (kind == Kind::GitLab)
+                .then(|| format!("{}/{}", forge.project.base, forge.project.path));
+            ui.data_mut(|d| d.insert_temp(egui::Id::new("request-web"), web));
+            let cache = &mut forge.state.markdown;
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
@@ -54,10 +50,11 @@ pub fn show(ui: &mut egui::Ui, forge: &ForgeView, now: i64) -> Option<Action> {
                     ui.add_space(4.0);
                     ui.label(
                         RichText::new(format!(
-                            "Opened by {} · {} · {} comments",
+                            "Opened by {} · {} · {} comment{}",
                             i.author,
                             crate::format::age(i.created, now),
-                            i.comments
+                            i.comments,
+                            if i.comments == 1 { "" } else { "s" }
                         ))
                         .color(theme::muted()),
                     );
@@ -77,7 +74,8 @@ pub fn show(ui: &mut egui::Ui, forge: &ForgeView, now: i64) -> Option<Action> {
                         action = Some(Action::Open(i.url.clone()));
                     }
                     ui.separator();
-                    body(ui, &i.body);
+                    ui.add_space(8.0);
+                    crate::ui::request::markdown(ui, cache, &i.body);
                 });
         }
         // Requests have a view of their own, in place of the graph.

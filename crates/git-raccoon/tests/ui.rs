@@ -3596,7 +3596,7 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
         ("GET /api/v4/projects/team%2Fapp/merge_requests?state=opened&per_page=50&order_by=created_at&sort=desc&page=2",
             format!("[{}]", mr(11, "Older one", "older"))),
         ("GET /api/v4/projects/team%2Fapp/issues?", r#"[{"iid": 4, "title": "Slow start", "author": {"username": "milo"},
-            "labels": ["perf"], "web_url": "u", "description": "It takes ages.", "created_at": "2026-11-01T00:00:00Z",
+            "labels": ["perf"], "web_url": "u", "description": "It takes **ages** to start:\n\n- the window\n- the graph", "created_at": "2026-11-01T00:00:00Z",
             "user_notes_count": 1}]"#.into()),
         // Details.
         ("GET /api/v4/projects/team%2Fapp/merge_requests/12", mr(12, "Pipeline cache", "cache").replace(
@@ -4183,6 +4183,36 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     h.run_ok();
     h.get_by_value("ISSUE #4");
     h.get_by_value("perf");
+    // Its description in Markdown: bold, a list.
+    h.get_by_label("ages");
+    h.get_by_label("the window");
+    assert!(
+        h.query_by_label_contains("**ages**").is_none(),
+        "not raw Markdown"
+    );
+    screenshot(&mut h, "80-issue");
+    // Its text can be selected, and copied.
+    let from = h.get_by_label("It takes ").rect().left_center() + egui::vec2(1.0, 0.0);
+    let to = h.get_by_label("the graph").rect().right_center() - egui::vec2(1.0, 0.0);
+    drag(&mut h, from, to);
+    h.event(egui::Event::Copy);
+    h.step();
+    let copied: Vec<String> = h
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .filter_map(|c| match c {
+            egui::OutputCommand::CopyText(t) => Some(t.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        copied
+            .iter()
+            .any(|t| t.contains("ages") && t.contains("the graph")),
+        "copied the selection: {copied:?}"
+    );
     h.key_press(Key::Escape);
     h.run_ok();
     assert!(h.query_by_value("ISSUE #4").is_none(), "Esc closes it");
