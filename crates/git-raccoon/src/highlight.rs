@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::ops::Range;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 use eframe::egui::Color32;
 use eframe::egui::text::{LayoutJob, TextFormat};
@@ -42,6 +42,51 @@ pub fn syntax_for(path: &str) -> Option<&'static SyntaxReference> {
     by_ext
         .or_else(|| set.find_syntax_by_extension(name))
         .filter(|s| s.name != "Plain Text")
+}
+
+/// Fenced code in Markdown, highlighted for its language (`rust`, `yaml`,
+/// `sh`…), in the diffs' colours; `None` for a language without a grammar.
+pub fn code(lang: &str, text: &str) -> Option<LayoutJob> {
+    // Drawn every frame: the last few are kept.
+    type Seen = Vec<(
+        (String, String, two_face::theme::EmbeddedThemeName),
+        LayoutJob,
+    )>;
+    static SEEN: Mutex<Seen> = Mutex::new(Vec::new());
+    let key = (lang.to_string(), text.to_string(), theme::syntax());
+    let mut seen = SEEN.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((_, job)) = seen.iter().find(|(k, _)| *k == key) {
+        return Some(job.clone());
+    }
+
+    let token = lang.split([' ', ',', '{']).next()?.trim();
+    let set = syntaxes();
+    let syntax = set
+        .find_syntax_by_token(token)
+        .or_else(|| set.find_syntax_by_token(&token.to_lowercase()))
+        .filter(|s| s.name != "Plain Text")?;
+    let mut highlighter = HighlightLines::new(syntax, syntax_theme());
+    let mut job = LayoutJob::default();
+    let format = |color, italics| TextFormat {
+        font_id: theme::mono(theme::MONO_SIZE),
+        color,
+        italics,
+        ..Default::default()
+    };
+    for (i, line) in text.split('\n').enumerate() {
+        if i > 0 {
+            job.append("\n", 0.0, format(theme::text(), false));
+        }
+        for (range, color, italics) in spans(Some(&mut highlighter), line) {
+            job.append(&line[range], 0.0, format(color, italics));
+        }
+    }
+
+    if seen.len() >= 32 {
+        seen.remove(0);
+    }
+    seen.push((key, job.clone()));
+    Some(job)
 }
 
 /// A row of the unified layout.
@@ -320,6 +365,17 @@ mod tests {
             new_line: None,
             content: content.into(),
         }
+    }
+
+    #[test]
+    fn highlights_fenced_code_by_its_language() {
+        let job = code("rust", "fn main() {\n    let x = 1;\n}").expect("rust");
+        assert_eq!(job.text, "fn main() {\n    let x = 1;\n}");
+        let colours: std::collections::HashSet<_> =
+            job.sections.iter().map(|s| s.format.color).collect();
+        assert!(colours.len() > 1, "more than one colour");
+        assert!(code("yaml", "a: 1").is_some());
+        assert!(code("no-such-language", "text").is_none());
     }
 
     #[test]

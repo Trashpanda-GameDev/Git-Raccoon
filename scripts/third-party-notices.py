@@ -40,6 +40,16 @@ BUNDLED = [
 ]
 
 
+# Assets of our own from elsewhere: (what, files in this repository).
+OWN_BUNDLED = [
+    (
+        "Ubuntu (variable font, for bold text), from the Ubuntu font family "
+        "(Ubuntu Font Licence)",
+        ["crates/git-raccoon/assets/fonts/UFL.txt"],
+    ),
+]
+
+
 def metadata():
     # The sources of every platform's crates, so their license files can be read.
     subprocess.run(["cargo", "fetch", "--locked"], check=True)
@@ -114,6 +124,11 @@ def main():
             path = roots[crate] / f
             if path.exists():
                 lines += ["", path.read_text(encoding="utf-8", errors="replace").strip()]
+
+    for what, files in OWN_BUNDLED:
+        lines += ["", "-" * 72, what, "-" * 72]
+        for f in files:
+            lines += ["", pathlib.Path(f).read_text(encoding="utf-8").strip()]
 
     lines += ["", "=" * 72, f"RUST CRATES ({len(packages)})", "=" * 72]
     # The texts shared by the most crates first.

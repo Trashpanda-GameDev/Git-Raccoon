@@ -19,43 +19,36 @@ pub fn newline(ui: &mut Ui) {
     ui.label("\n");
 }
 
+// Git Raccoon's change: list markers are labels, so they sit on the line
+// like the item's text. (They were drawn in the middle of a box and came
+// out higher than it.)
+fn marker(ui: &mut Ui, text: &str, color: egui::Color32) -> egui::Response {
+    let width = width_body_space(ui) * 4.0;
+    let font = TextStyle::Body.resolve(ui.style());
+    let wide = ui.fonts_mut(|f| f.layout_no_wrap(text.to_owned(), font, color).size().x);
+    ui.add_space((width - wide).max(0.0));
+    ui.label(RichText::new(text).color(color))
+}
+
 pub fn bullet_point(ui: &mut Ui) {
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(width_body_space(ui) * 4.0, height_body(ui)),
-        Sense::hover(),
-    );
-    ui.painter().circle_filled(
-        rect.center(),
-        rect.height() / 6.0,
-        ui.visuals().strong_text_color(),
-    );
+    marker(ui, "\u{2022}", ui.visuals().text_color());
 }
 
 pub fn bullet_point_hollow(ui: &mut Ui) {
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(width_body_space(ui) * 4.0, height_body(ui)),
-        Sense::hover(),
-    );
-    ui.painter().circle(
-        rect.center(),
-        rect.height() / 6.0,
-        egui::Color32::TRANSPARENT,
-        egui::Stroke::new(0.6, ui.visuals().strong_text_color()),
+    // The font has no hollow bullet: a ring where the bullet would be.
+    let at = marker(ui, "\u{2022}", egui::Color32::TRANSPARENT).rect;
+    let font = TextStyle::Body.resolve(ui.style());
+    let radius = font.size * 0.14;
+    let center = egui::pos2(at.center().x, at.top() + at.height() * 0.55);
+    ui.painter().circle_stroke(
+        center,
+        radius,
+        egui::Stroke::new(1.0, ui.visuals().text_color()),
     );
 }
 
 pub fn number_point(ui: &mut Ui, number: &str) {
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(width_body_space(ui) * 4.0, height_body(ui)),
-        Sense::hover(),
-    );
-    ui.painter().text(
-        rect.right_center(),
-        egui::Align2::RIGHT_CENTER,
-        format!("{number}."),
-        TextStyle::Body.resolve(ui.style()),
-        ui.visuals().strong_text_color(),
-    );
+    marker(ui, &format!("{number}."), ui.visuals().text_color());
 }
 
 #[inline]
@@ -105,6 +98,8 @@ pub fn code_block<'t>(
     let output = egui::TextEdit::multiline(&mut text)
         .layouter(layouter)
         .desired_width(max_width)
+        // Git Raccoon's change: room around the code.
+        .margin(egui::Margin::symmetric(12, 10))
         // prevent trailing lines
         .desired_rows(1)
         .show(ui);

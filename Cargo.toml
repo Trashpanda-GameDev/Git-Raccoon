@@ -39,7 +39,8 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 
-# A patched copy: links in Markdown in line with their text, and coloured
-# (see vendor/egui_commonmark_backend/README-git-raccoon.md).
+# Patched copies of the Markdown viewer, so Markdown looks right in the app
+# (see vendor/README.md).
 [patch.crates-io]
+egui_commonmark = { path = "vendor/egui_commonmark" }
 egui_commonmark_backend = { path = "vendor/egui_commonmark_backend" }

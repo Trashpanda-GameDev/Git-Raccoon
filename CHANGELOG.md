@@ -7,7 +7,13 @@ release page). Newest first; a version's heading is just its number.
 
 - **Corner roundness looks like a slider again** (Settings › Appearance): a wider track, filled in the accent colour up to the value, with a round handle. It looked like a button.
 - **Pin branches to the top**: right-click a local branch in the sidebar › *Pin to top*. Pinned branches sit at the top of *Local*, in alphabetical order, with a pin; *Unpin* puts one back in its folder. Pins are kept per repository.
-- **Links in Markdown line up with the text** in requests, issues and comments, and show in the link colour. They sat higher than the words around them.
+- **Markdown looks right** in requests, issues and comments:
+  - Links line up with the text and show in the link colour. They sat higher than the words around them.
+  - **Bold** is bold. It looked like the rest of the text.
+  - Headings come in clear steps, with a line under the top two levels.
+  - List bullets and numbers line up with their items, and task lists show a checkbox without a bullet.
+  - Code blocks have room around them and syntax colours, like diffs.
+  - Tables have a bold header row and more space between cells.
 
 ## 0.5.20
 

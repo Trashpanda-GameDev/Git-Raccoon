@@ -895,11 +895,43 @@ pub fn mono(size: f32) -> FontId {
     FontId::new(size, FontFamily::Monospace)
 }
 
+/// The family of bold text, e.g. `**this**` in Markdown: Ubuntu, like the
+/// rest of the text, in Medium. (egui has no bold of its own.)
+pub fn bold() -> FontFamily {
+    FontFamily::Name(egui_commonmark::BOLD.into())
+}
+
+fn add_bold(fonts: &mut egui::FontDefinitions) {
+    let tweak = egui::FontTweak {
+        coords: egui::epaint::text::VariationCoords::new([("wght", 500.0), ("wdth", 100.0)]),
+        ..Default::default()
+    };
+    fonts.font_data.insert(
+        "ubuntu-medium".into(),
+        std::sync::Arc::new(
+            egui::FontData::from_static(include_bytes!("../assets/fonts/Ubuntu-Variable.ttf"))
+                .tweak(tweak),
+        ),
+    );
+    // Icons and emoji from the usual fallbacks.
+    let mut family = vec!["ubuntu-medium".to_string()];
+    family.extend(
+        fonts.families[&FontFamily::Proportional]
+            .iter()
+            .skip(1)
+            .cloned(),
+    );
+    fonts.families.insert(bold(), family);
+}
+
 /// Installs fonts (with Phosphor icons) and the default look.
 pub fn apply(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+    add_bold(&mut fonts);
     ctx.set_fonts(fonts);
+    // Fenced code in Markdown, highlighted like the diffs.
+    let _ = egui_commonmark::HIGHLIGHT.set(crate::highlight::code);
     set(ctx, Family::Raccoon.look(false));
 }
 

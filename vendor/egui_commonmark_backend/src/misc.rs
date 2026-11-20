@@ -125,44 +125,24 @@ impl Style {
     pub fn to_richtext(&self, ui: &Ui, text: &str) -> RichText {
         let mut text = RichText::new(text);
 
+        // Git Raccoon's change: headings in steps like GitHub's, all bold.
         if let Some(level) = self.heading {
-            let max_height = ui
-                .style()
-                .text_styles
-                .get(&TextStyle::Heading)
-                .map_or(32.0, |d| d.size);
-            let min_height = ui
+            let body = ui
                 .style()
                 .text_styles
                 .get(&TextStyle::Body)
                 .map_or(14.0, |d| d.size);
-            let diff = max_height - min_height;
-
-            match level {
-                0 => {
-                    text = text.strong().heading();
-                }
-                1 => {
-                    let size = min_height + diff * 0.835;
-                    text = text.strong().size(size);
-                }
-                2 => {
-                    let size = min_height + diff * 0.668;
-                    text = text.strong().size(size);
-                }
-                3 => {
-                    let size = min_height + diff * 0.501;
-                    text = text.strong().size(size);
-                }
-                4 => {
-                    let size = min_height + diff * 0.334;
-                    text = text.size(size);
-                }
-                // We only support 6 levels
-                5.. => {
-                    let size = min_height + diff * 0.167;
-                    text = text.size(size);
-                }
+            let scale = match level {
+                0 => 1.7,
+                1 => 1.4,
+                2 => 1.2,
+                3 => 1.0,
+                4 => 0.95,
+                _ => 0.9,
+            };
+            text = bold(ui, text.size(body * scale)).strong();
+            if level >= 5 {
+                text = text.weak();
             }
         }
 
@@ -171,7 +151,7 @@ impl Style {
         }
 
         if self.strong {
-            text = text.strong();
+            text = bold(ui, text).strong();
         }
 
         if self.emphasis {
@@ -187,6 +167,19 @@ impl Style {
             text = text.code();
         }
 
+        text
+    }
+}
+
+/// Git Raccoon's change: the font family that bold text is set in, when
+/// the app has one (egui has no bold of its own, only a brighter colour).
+pub const BOLD: &str = "bold";
+
+fn bold(ui: &Ui, text: RichText) -> RichText {
+    let family = egui::FontFamily::Name(BOLD.into());
+    if ui.fonts(|f| f.definitions().families.contains_key(&family)) {
+        text.family(family)
+    } else {
         text
     }
 }
@@ -291,6 +284,11 @@ pub struct CodeBlock {
     pub content: String,
 }
 
+/// Git Raccoon's change: the app's own highlighting for fenced code, taking
+/// the language and the code (`None` for a language it doesn't know).
+pub static HIGHLIGHT: std::sync::OnceLock<fn(&str, &str) -> Option<LayoutJob>> =
+    std::sync::OnceLock::new();
+
 impl CodeBlock {
     pub fn end(
         &self,
@@ -303,7 +301,14 @@ impl CodeBlock {
             Self::pre_syntax_highlighting(cache, options, ui);
 
             let mut layout = |ui: &Ui, string: &dyn TextBuffer, wrap_width: f32| {
-                let mut job = if let Some(lang) = &self.lang {
+                let app = self
+                    .lang
+                    .as_deref()
+                    .zip(HIGHLIGHT.get())
+                    .and_then(|(lang, highlight)| highlight(lang, string.as_str()));
+                let mut job = if let Some(job) = app {
+                    job
+                } else if let Some(lang) = &self.lang {
                     self.syntax_highlighting(cache, options, lang, ui, string.as_str())
                 } else {
                     plain_highlighting(ui, string.as_str())
