@@ -6,6 +6,7 @@ release page). Newest first; a version's heading is just its number.
 ## 0.5.22
 
 - **Add a submodule from the sidebar**: *Submodules* is always there now (hide it like any section, by right-clicking a section's heading), and its **+** adds one from a URL, into the folder you choose. It's cloned and staged with `.gitmodules`, ready to commit.
+- **Discarding a submodule's changes no longer throws its folder away.** It moved the whole submodule (and any work in it) to the trash; now it puts the submodule back on the commit this repository records, keeping its own commits. If it has work of its own (edited or new files), it's left alone, and you're told to open it to commit or discard those.
 
 ## 0.5.21
 

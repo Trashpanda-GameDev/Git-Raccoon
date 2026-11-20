@@ -3,15 +3,19 @@
 //! the staged version (or, for untracked files, nothing) takes its place.
 //!
 //! Staged changes are not touched; unstage them first.
+//!
+//! A submodule isn't a file: discarding it puts it back on the commit this
+//! repository records for it (its own commits stay in it), and only when it
+//! has no work of its own, which is left for it to handle.
 
 use std::path::Path;
 
-use git2::Repository;
 use git2::build::CheckoutBuilder;
+use git2::{Repository, SubmoduleIgnore, SubmoduleStatus};
 
 use crate::details::FileStatus;
-use crate::working;
 use crate::{Error, Result};
+use crate::{cli, working};
 
 /// Discards the unstaged changes to `files`, moving their current versions
 /// to the system trash. Returns the files whose versions were moved there.
@@ -71,6 +75,27 @@ pub fn discard_with(
                 "{file} has a merge conflict; resolve it first"
             )));
         }
+        if let Some(name) = submodule_at(&repo, file) {
+            let status = repo
+                .submodule_status(&name, SubmoduleIgnore::None)
+                .unwrap_or(SubmoduleStatus::empty());
+            if status.intersects(
+                SubmoduleStatus::WD_WD_MODIFIED
+                    | SubmoduleStatus::WD_INDEX_MODIFIED
+                    | SubmoduleStatus::WD_UNTRACKED,
+            ) {
+                return Err(Error::Unsupported(format!(
+                    "{file} is a submodule with changes of its own; open it to commit or discard them"
+                )));
+            }
+            // Back on the commit recorded here (as staged).
+            cli::run(
+                path,
+                &["submodule", "update", "--checkout", "--", file],
+                None,
+            )?;
+            continue;
+        }
         let full = workdir.join(file);
         if full.symlink_metadata().is_ok() {
             keep(&full)?;
@@ -82,6 +107,17 @@ pub fn discard_with(
         }
     }
     Ok(kept)
+}
+
+/// The name of the submodule at `file` (a path in the repository), if it
+/// is one.
+fn submodule_at(repo: &Repository, file: &str) -> Option<String> {
+    let path = Path::new(file);
+    repo.submodules()
+        .ok()?
+        .into_iter()
+        .find(|s| s.path() == path)
+        .and_then(|s| s.name().map(str::to_string))
 }
 
 #[cfg(test)]
@@ -156,6 +192,76 @@ mod tests {
                 .unwrap()
                 .unwrap()
                 .is_clean()
+        );
+    }
+
+    #[test]
+    fn puts_a_submodule_back_on_its_commit_and_leaves_its_work() {
+        use crate::merge::tests::{git, identity};
+        let repo = || {
+            let t = TempRepo::new();
+            identity(&t);
+            t.write("f.txt", "one\n");
+            git(&t, &["add", "."]);
+            git(&t, &["commit", "-q", "-m", "first"]);
+            t
+        };
+        let (lib, app) = (repo(), repo());
+        git(
+            &app,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                "-q",
+                lib.path(),
+                "vendor/lib",
+            ],
+        );
+        git(&app, &["commit", "-q", "-m", "Add lib"]);
+        let sub = app.dir.join("vendor/lib");
+        let head = |what: &str| {
+            cli::run(&sub.to_string_lossy(), &["rev-parse", what], None)
+                .unwrap()
+                .trim()
+                .to_string()
+        };
+        let recorded = head("HEAD");
+        // A commit in the submodule: it's on another commit than recorded.
+        std::fs::write(sub.join("f.txt"), "two\n").unwrap();
+        cli::run(
+            &sub.to_string_lossy(),
+            &["commit", "-q", "-am", "two"],
+            None,
+        )
+        .unwrap();
+        let newer = head("HEAD");
+        let bin = Bin::new(&app);
+        let files = vec!["vendor/lib".to_string()];
+
+        let kept = discard_with(app.path(), &files, bin.keep()).unwrap();
+        assert!(kept.is_empty(), "nothing went to the trash");
+        assert_eq!(head("HEAD"), recorded, "back on the recorded commit");
+        assert_eq!(std::fs::read_to_string(sub.join("f.txt")).unwrap(), "one\n");
+        // Its own commit is still there.
+        assert_eq!(head(&format!("{newer}^{{commit}}")), newer);
+        assert!(
+            working::working_status(app.path())
+                .unwrap()
+                .unwrap()
+                .is_clean()
+        );
+
+        // Work of its own: left alone, and said why.
+        std::fs::write(sub.join("f.txt"), "unsaved work\n").unwrap();
+        let err = discard_with(app.path(), &files, bin.keep())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("changes of its own"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(sub.join("f.txt")).unwrap(),
+            "unsaved work\n"
         );
     }
 
