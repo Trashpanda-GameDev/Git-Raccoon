@@ -408,6 +408,7 @@ fn body(
         .data(|d| d.get_temp::<f32>(sideways_id))
         .unwrap_or_default();
 
+    let share = split_share(ui.ctx());
     // Where the last line drawn ends, if it's on screen.
     let mut end = None;
     let mut area = area.id_salt(("diff", split)).auto_shrink([false, false]);
@@ -486,12 +487,9 @@ fn body(
                         }
                     }
                     SplitRow::Pair(a, b) => {
-                        let half = rect.width() / 2.0;
-                        let l = Rect::from_min_size(rect.min, egui::vec2(half, LINE));
-                        let r = Rect::from_min_size(
-                            Pos2::new(rect.left() + half, top),
-                            egui::vec2(half, LINE),
-                        );
+                        let old = rect.width() * share;
+                        let l = Rect::from_min_size(rect.min, egui::vec2(old, LINE));
+                        let r = Rect::from_min_max(Pos2::new(rect.left() + old, top), rect.max);
                         side(painter, l, d, a, (false, sideways), lines.picked);
                         side(painter, r, d, b, (true, sideways), lines.picked);
                         for (at, half_rect, salt) in [(a, l, 0), (b, r, 1)] {
@@ -560,13 +558,14 @@ fn body(
     // Each half's code has a scrollbar of its own, and the two move
     // together: either one (or the wheel over either half) scrolls both.
     if split {
-        let half = (view.width() - lead) / 2.0;
+        let line = view.left() + lead + (width - lead) * share;
         let code = |i: f32| {
-            Rect::from_x_y_ranges(
-                view.left() + lead + i * half + NUMBER + MARKER
-                    ..=view.left() + lead + (i + 1.0) * half,
-                view.y_range(),
-            )
+            let (from, to) = if i == 0.0 {
+                (view.left() + lead, line)
+            } else {
+                (line, view.right())
+            };
+            Rect::from_x_y_ranges(from + NUMBER + MARKER..=to, view.y_range())
         };
         let mut x = sideways;
         for which in [0u8, 1] {
@@ -586,9 +585,18 @@ fn body(
     }
     if split && let Some(end) = end.filter(|&end| end < view.bottom()) {
         ui.painter().with_clip_rect(view).vline(
-            view.left() + lead + (width - lead) / 2.0,
+            view.left() + lead + (width - lead) * share,
             end.max(view.top())..=view.bottom(),
             Stroke::new(1.0, theme::border()),
+        );
+    }
+    if split {
+        let from = view.left() + lead;
+        split_handle(
+            ui,
+            from + (width - lead) * share,
+            view.y_range(),
+            egui::Rangef::new(from, view.left() + width),
         );
     }
     // Ctrl+C copies the picked lines (when nothing else has the focus).
@@ -741,6 +749,41 @@ pub(crate) fn unified_line(
         line.new_line,
     );
     code(painter, body, line, job, 0.0);
+}
+
+/// How much of a side-by-side diff the old side takes, from 0 to 1: set by
+/// dragging the line between the sides, the same in every diff.
+pub(crate) fn split_share(ctx: &egui::Context) -> f32 {
+    ctx.data_mut(|d| d.get_persisted::<f32>(egui::Id::new("diff-split-share")))
+        .unwrap_or(0.5)
+}
+
+/// The line between the two sides, at `x` from `top` to `bottom`, as a
+/// handle: dragging it shares out `span` (where the two sides are) between
+/// them; a double-click gives them half each.
+pub(crate) fn split_handle(ui: &mut egui::Ui, x: f32, ys: egui::Rangef, span: egui::Rangef) {
+    let rect = Rect::from_x_y_ranges(x - 3.0..=x + 3.0, ys);
+    let handle = ui.interact(rect, ui.id().with("split-handle"), Sense::click_and_drag());
+    handle.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "Resize the two sides")
+    });
+    let handle = handle
+        .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
+        .on_hover_text("Drag to resize the sides; double-click for half each");
+    if handle.hovered() || handle.dragged() {
+        ui.painter().vline(x, ys, Stroke::new(2.0, theme::accent()));
+    }
+    let id = egui::Id::new("diff-split-share");
+    if handle.double_clicked() {
+        ui.data_mut(|d| d.insert_persisted(id, 0.5_f32));
+    } else if handle.dragged()
+        && let Some(at) = handle.interact_pointer_pos()
+        && span.span() > 0.0
+    {
+        let share = ((at.x - span.min) / span.span()).clamp(0.15, 0.85);
+        ui.data_mut(|d| d.insert_persisted(id, share));
+        ui.ctx().request_repaint();
+    }
 }
 
 /// One half of a side-by-side row; its code is `shift` scrolled sideways.

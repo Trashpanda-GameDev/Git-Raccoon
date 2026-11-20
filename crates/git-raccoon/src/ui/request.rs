@@ -1802,7 +1802,7 @@ fn thread_nav(ui: &mut egui::Ui, o: &Overview, state: &mut RequestState) {
     // Right to left: Next, the count, Previous.
     let next = ui
         .add(egui::Button::new(icon::CARET_DOWN).small())
-        .on_hover_text("Next comment");
+        .on_hover_text("Next comment (Alt+↓)");
     ui.ctx()
         .accesskit_node_builder(next.id, |b| b.set_label("Next comment"));
     let s = if n == 1 { "" } else { "s" };
@@ -1813,12 +1813,23 @@ fn thread_nav(ui: &mut egui::Ui, o: &Overview, state: &mut RequestState) {
     ui.label(RichText::new(count).size(12.0).color(theme::muted()));
     let previous = ui
         .add(egui::Button::new(icon::CARET_UP).small())
-        .on_hover_text("Previous comment");
+        .on_hover_text("Previous comment (Alt+↑)");
     ui.ctx()
         .accesskit_node_builder(previous.id, |b| b.set_label("Previous comment"));
-    let to = if next.clicked() {
+    // Alt+↓ and Alt+↑ too, unless something's being typed.
+    let (alt_next, alt_previous) = if ui.ctx().text_edit_focused() {
+        (false, false)
+    } else {
+        ui.input_mut(|i| {
+            (
+                i.consume_key(egui::Modifiers::ALT, egui::Key::ArrowDown),
+                i.consume_key(egui::Modifiers::ALT, egui::Key::ArrowUp),
+            )
+        })
+    };
+    let to = if next.clicked() || alt_next {
         Some(current.map_or(0, |i| (i + 1) % n))
-    } else if previous.clicked() {
+    } else if previous.clicked() || alt_previous {
         Some(current.map_or(n - 1, |i| (i + n - 1) % n))
     } else {
         None
@@ -1898,9 +1909,14 @@ fn diff_with_threads(
         .auto_shrink([false, false])
         .show(ui, |ui| {
             let view_width = ui.available_width();
-            let half = ((view_width - lead) / 2.0).max(NUMBER + 18.0 + code_width);
+            // Side by side, the sides share the view as the line between them
+            // was dragged, each at least as wide as its code.
+            let share = crate::ui::diff::split_share(ui.ctx());
+            let inner = view_width - lead;
+            let fits = NUMBER + 18.0 + code_width;
+            let (old, new) = ((inner * share).max(fits), (inner * (1.0 - share)).max(fits));
             let width = if split {
-                lead + 2.0 * half
+                lead + old + new
             } else {
                 (lead + 2.0 * NUMBER + 18.0 + code_width).max(view_width)
             };
@@ -1959,10 +1975,10 @@ fn diff_with_threads(
                         vec![at]
                     }
                     Shown::Pair(a, b) => {
-                        let l = Rect::from_min_size(body.min, egui::vec2(half, LINE));
+                        let l = Rect::from_min_size(body.min, egui::vec2(old, LINE));
                         let r = Rect::from_min_size(
-                            Pos2::new(body.left() + half, body.top()),
-                            egui::vec2(half, LINE),
+                            Pos2::new(body.left() + old, body.top()),
+                            egui::vec2(new, LINE),
                         );
                         crate::ui::diff::side(ui.painter(), l, d, a, (false, 0.0), &state.picked);
                         crate::ui::diff::side(ui.painter(), r, d, b, (true, 0.0), &state.picked);
@@ -1983,6 +1999,16 @@ fn diff_with_threads(
                     Shown::Header(_) => Vec::new(),
                 };
                 under_row(ui, (d, &lines), &threads, state, (here, view_width), action);
+            }
+            if split {
+                let content = ui.min_rect();
+                let from = content.left() + lead;
+                crate::ui::diff::split_handle(
+                    ui,
+                    from + old,
+                    content.y_range(),
+                    egui::Rangef::new(from, from + inner),
+                );
             }
         });
     // Dragging over lines picks them all, from where it started.

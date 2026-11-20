@@ -374,6 +374,24 @@ fn browses_history_details_diffs_and_images() {
     settle(&mut h);
     assert!(h.state().settings().split_diff);
     screenshot(&mut h, "5-diff-split");
+    // The line between the sides can be dragged; it stays where it's put.
+    let share = |h: &Harness<'_, App>| {
+        h.ctx
+            .data_mut(|d| d.get_persisted::<f32>(egui::Id::new("diff-split-share")))
+            .unwrap_or(0.5)
+    };
+    let line = h.get_by_label("Resize the two sides").rect().center();
+    drag(&mut h, line, line - egui::vec2(200.0, 0.0));
+    let moved = share(&h);
+    assert!(moved < 0.45, "the old side is narrower: {moved}");
+    let now = h.get_by_label("Resize the two sides").rect().center();
+    assert!(
+        (now.x - (line.x - 200.0)).abs() < 2.0,
+        "the line followed: {now:?}"
+    );
+    h.ctx
+        .data_mut(|d| d.insert_persisted(egui::Id::new("diff-split-share"), 0.5_f32));
+    h.run_ok();
     h.key_press(Key::Escape);
     h.run_ok();
     assert!(
@@ -3794,9 +3812,9 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     h.run_ok();
     h.get_by_label("Select line: Another");
     h.get_by_label("Why another?");
-    // Next goes to the (only) thread, and marks it.
+    // Next (here Alt+↓) goes to the (only) thread, and marks it.
     h.get_by_label("1 thread");
-    h.get_by_label("Next comment").click();
+    h.key_press_modifiers(egui::Modifiers::ALT, Key::ArrowDown);
     h.run_ok();
     h.get_by_label("1 of 1");
     assert_eq!(

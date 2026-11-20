@@ -1681,7 +1681,14 @@ impl App {
             }
             return;
         }
-        if repo.active_file.is_some() || repo.planner.is_some() || repo.conflict.is_some() {
+        // Nor while something is shown in the graph's place (a request
+        // has keys of its own).
+        let request = repo.forge.as_ref().is_some_and(|f| f.open.is_some());
+        if repo.active_file.is_some()
+            || repo.planner.is_some()
+            || repo.conflict.is_some()
+            || request
+        {
             return;
         }
         // The arrows move a row; with Shift they follow the branch, with
