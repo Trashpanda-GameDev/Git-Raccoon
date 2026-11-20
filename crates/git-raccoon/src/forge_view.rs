@@ -62,6 +62,8 @@ pub enum Sent {
     Resolve,
     Merge,
     Apply,
+    Update,
+    Comment,
 }
 
 /// How the open request's view stands: what's picked and being written.
@@ -92,6 +94,12 @@ pub struct RequestState {
     pub batch_message: String,
     /// This frame: the request is on GitLab, and its branch is checked out.
     pub gitlab: bool,
+    /// Who's signed in (their comments can be edited and deleted).
+    pub me: Option<String>,
+    /// A posted comment being edited (its id, and the new text), or about
+    /// to be deleted (its id).
+    pub editing_comment: Option<(String, String)>,
+    pub deleting_comment: Option<String>,
     pub on_branch: bool,
     /// How Changes shows a file: side by side, the whole file, with blame
     /// (kept from one request to the next).
@@ -509,6 +517,8 @@ impl ForgeView {
                 Sent::Resolve => "Thread updated.",
                 Sent::Merge => "Merged.",
                 Sent::Apply => "Applied: GitLab committed it to the branch (pull to get it here).",
+                Sent::Update => "It's being brought up to date: reload in a moment to see.",
+                Sent::Comment => "Saved.",
             };
             let merged = matches!(what, Sent::Merge) && result.is_ok();
             if result.is_ok() {
@@ -518,6 +528,10 @@ impl ForgeView {
                 }
                 if merged {
                     self.state.merging = None;
+                }
+                if matches!(what, Sent::Comment) {
+                    self.state.editing_comment = None;
+                    self.state.deleting_comment = None;
                 }
                 if matches!(what, Sent::Apply) {
                     self.state.batch.clear();

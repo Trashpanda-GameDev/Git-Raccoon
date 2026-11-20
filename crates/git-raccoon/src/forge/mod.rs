@@ -411,6 +411,35 @@ impl Session {
         }
     }
 
+    /// Brings a request up to date with its target, on the forge.
+    pub fn update(&self, request: &Request, head: &str) -> Result<(), String> {
+        match self.project.kind {
+            Kind::GitHub => github::update(self, request, head),
+            Kind::GitLab => gitlab::update(self, request.number),
+        }
+    }
+
+    /// Changes a posted comment's text.
+    pub fn edit_comment(
+        &self,
+        number: u64,
+        comment: &review::Comment,
+        body: &str,
+    ) -> Result<(), String> {
+        match self.project.kind {
+            Kind::GitHub => github::edit_comment(self, comment, body),
+            Kind::GitLab => gitlab::edit_comment(self, number, comment, body),
+        }
+    }
+
+    /// Deletes a posted comment.
+    pub fn delete_comment(&self, number: u64, comment: &review::Comment) -> Result<(), String> {
+        match self.project.kind {
+            Kind::GitHub => github::delete_comment(self, comment),
+            Kind::GitLab => gitlab::delete_comment(self, number, comment),
+        }
+    }
+
     /// Posts a comment on the whole request, now.
     pub fn comment(&self, number: u64, body: &str) -> Result<(), String> {
         match self.project.kind {

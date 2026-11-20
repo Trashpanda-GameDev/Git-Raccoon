@@ -3187,6 +3187,18 @@ fn request_action(
                 );
             }
         }
+        Action::EditComment(comment, body) => {
+            f.send(ctx, Sent::Comment, move |s| {
+                s.edit_comment(n, &comment, &body)
+            });
+        }
+        Action::DeleteComment(comment) => {
+            f.send(ctx, Sent::Comment, move |s| s.delete_comment(n, &comment));
+        }
+        Action::UpdateBranch => {
+            let Some((r, o)) = viewed else { return Ok(()) };
+            f.send(ctx, Sent::Update, move |s| s.update(&r, &o.refs.head));
+        }
         Action::ApplySuggestions(ids, message) => {
             f.send(ctx, Sent::Apply, move |s| s.apply(&ids, &message));
         }
@@ -3236,7 +3248,9 @@ fn request_action(
             }
         }
         Action::GoToCommit(id) => {
-            if repo.history.locate(&id).is_some() {
+            // Not in the graph (only the request has it), but here: its
+            // details show all the same.
+            if repo.history.locate(&id).is_some() || git_raccoon_core::request::has(&root, &id) {
                 repo.select(&id);
             } else {
                 return Err(format!(

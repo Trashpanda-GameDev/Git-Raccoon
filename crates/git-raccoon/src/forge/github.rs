@@ -87,8 +87,17 @@ fn checks(s: &Session, sha: &str) -> Result<(Checks, Vec<Check>), String> {
     if sha.is_empty() {
         return Ok((counts, list));
     }
-    let runs = get(s, &format!("/commits/{sha}/check-runs?per_page=100"))?;
-    for run in runs["check_runs"].as_array().into_iter().flatten() {
+    // Check runs come in pages, inside an object.
+    let mut runs = Vec::new();
+    let mut next = Some(format!("{}/commits/{sha}/check-runs?per_page=100", api(s)));
+    let mut pages = 0;
+    while let Some(at) = next.take() {
+        let (page, more) = http::get_page(FORGE, &at, &Auth::Bearer(&s.token))?;
+        runs.extend(page["check_runs"].as_array().into_iter().flatten().cloned());
+        pages += 1;
+        next = more.filter(|_| pages < http::MAX_PAGES);
+    }
+    for run in &runs {
         let outcome = match (run["status"].as_str(), run["conclusion"].as_str()) {
             (Some("completed"), Some("success" | "neutral" | "skipped")) => Outcome::Passed,
             (Some("completed"), _) => Outcome::Failed,
@@ -280,6 +289,7 @@ fn thread(v: &Value) -> Thread {
             body: text(c, "body"),
             created: timestamp(c["createdAt"].as_str().unwrap_or_default()),
             suggestions: Vec::new(),
+            on_code: true,
         })
         .collect();
     let outdated = v["isOutdated"].as_bool().unwrap_or(false) || v["line"].is_null();
@@ -398,6 +408,7 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
             body: text(c, "body"),
             created: timestamp(c["created_at"].as_str().unwrap_or_default()),
             suggestions: Vec::new(),
+            on_code: false,
         }));
     }
     for review in reviews.as_array().into_iter().flatten() {
@@ -469,6 +480,7 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
     .map(|(_, m)| m)
     .collect();
     o.merge.can_delete_branch = !r.from_fork;
+    o.merge.can_update = o.state == State::Open && v["mergeable_state"].as_str() == Some("behind");
     o.merge.blocked = match (o.state, v["mergeable_state"].as_str()) {
         (State::Merged, _) => Some("It's merged already".into()),
         (State::Closed, _) => Some("It's closed".into()),
@@ -551,6 +563,41 @@ pub fn submit(
     Ok(())
 }
 
+/// Brings a request up to date with its target: GitHub merges the target
+/// into its branch.
+pub fn update(s: &Session, r: &Request, head: &str) -> Result<(), String> {
+    http::put(
+        FORGE,
+        &format!("{}/pulls/{}/update-branch", api(s), r.number),
+        &Auth::Bearer(&s.token),
+        &json!({"expected_head_sha": head}),
+    )?;
+    Ok(())
+}
+
+/// Where a posted comment is kept: on the request, or on its code.
+fn comment_url(s: &Session, c: &Comment) -> String {
+    let kind = if c.on_code { "pulls" } else { "issues" };
+    format!("{}/{kind}/comments/{}", api(s), c.id)
+}
+
+/// Changes a comment's text.
+pub fn edit_comment(s: &Session, c: &Comment, body: &str) -> Result<(), String> {
+    http::patch(
+        FORGE,
+        &comment_url(s, c),
+        &Auth::Bearer(&s.token),
+        &json!({"body": body}),
+    )?;
+    Ok(())
+}
+
+/// Deletes a comment.
+pub fn delete_comment(s: &Session, c: &Comment) -> Result<(), String> {
+    http::delete(FORGE, &comment_url(s, c), &Auth::Bearer(&s.token))?;
+    Ok(())
+}
+
 /// A comment on the whole request.
 pub fn comment(s: &Session, number: u64, body: &str) -> Result<(), String> {
     http::post(
@@ -580,7 +627,7 @@ pub fn merge(s: &Session, r: &Request, how: &Merge) -> Result<(), String> {
     let method = match how.method {
         Method::Merge => "merge",
         Method::Squash => "squash",
-        Method::Rebase => "rebase",
+        Method::Rebase | Method::FastForward => "rebase",
     };
     let mut body = json!({"merge_method": method});
     if how.method != Method::Rebase && !title.trim().is_empty() {
@@ -1055,5 +1102,42 @@ mod tests {
         let seen = seen.lock().unwrap();
         assert!(seen[1].2.contains(r#""after":"t1""#), "{}", seen[1].2);
         assert!(seen[2].2.contains(r#""after":"c1""#), "{}", seen[2].2);
+    }
+
+    #[test]
+    fn updates_a_branch_and_edits_and_deletes_comments() {
+        let (base, seen) = mock::serve(vec![
+            (202, r#"{"message":"Updating pull request branch."}"#.into()),
+            (200, "{}".into()),
+            (204, String::new()),
+        ]);
+        let s = session(&base);
+        let r = request(&serde_json::from_str::<Value>(PR).unwrap());
+        s.update(&r, "abc").unwrap();
+        let on_code = Comment {
+            id: "42".into(),
+            on_code: true,
+            ..Comment::default()
+        };
+        s.edit_comment(7, &on_code, "Better").unwrap();
+        let on_request = Comment {
+            id: "5".into(),
+            ..Comment::default()
+        };
+        s.delete_comment(7, &on_request).unwrap();
+        let seen = seen.lock().unwrap();
+        assert_eq!(
+            seen[0].0,
+            "PUT /api/v3/repos/rocky/stash-box/pulls/7/update-branch"
+        );
+        assert_eq!(seen[0].2, r#"{"expected_head_sha":"abc"}"#);
+        assert_eq!(
+            seen[1].0,
+            "PATCH /api/v3/repos/rocky/stash-box/pulls/comments/42"
+        );
+        assert_eq!(
+            seen[2].0,
+            "DELETE /api/v3/repos/rocky/stash-box/issues/comments/5"
+        );
     }
 }

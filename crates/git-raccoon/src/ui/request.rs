@@ -49,6 +49,11 @@ pub enum Action {
     },
     Resolve(String, bool),
     Merge(Merge),
+    /// Bring it up to date with its target, on the forge.
+    UpdateBranch,
+    /// Change a posted comment's text, or delete it.
+    EditComment(review::Comment, String),
+    DeleteComment(review::Comment),
     /// Apply suggestions on the forge (GitLab), in one commit with this
     /// message.
     ApplySuggestions(Vec<String>, String),
@@ -142,7 +147,9 @@ pub fn show(ui: &mut egui::Ui, forge: &mut ForgeView, here: &Here<'_>) -> Option
     let web =
         (kind == Kind::GitLab).then(|| format!("{}/{}", forge.project.base, forge.project.path));
     ui.data_mut(|d| d.insert_temp(egui::Id::new("request-web"), web));
+    let me = forge.account.as_ref().map(|a| a.login.clone());
     let state = &mut forge.state;
+    state.me = me;
     state.gitlab = kind == Kind::GitLab;
     state.on_branch = on_its_branch(&r, kind, here.branch);
     header(ui, kind, &r, &o, state, here, loading, &mut action);
@@ -717,6 +724,101 @@ fn place(at: &Anchor) -> String {
     }
 }
 
+/// A posted comment: who and when, and its text (with any suggested
+/// changes); yours can be edited and deleted.
+fn posted(
+    ui: &mut egui::Ui,
+    c: &review::Comment,
+    what: &str,
+    now: i64,
+    state: &mut RequestState,
+    action: &mut Option<Action>,
+) {
+    let mine = state.me.as_deref() == Some(c.author.as_str());
+    let sending = state.sending.is_some();
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(&c.author).strong());
+        let age = crate::format::age(c.created, now);
+        let text = if what.is_empty() {
+            age
+        } else {
+            format!("{what} · {age}")
+        };
+        ui.label(RichText::new(text).color(theme::muted()));
+        if mine && state.editing_comment.is_none() && state.deleting_comment.is_none() {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let delete = ui
+                    .small_button(icon::TRASH)
+                    .on_hover_text("Delete your comment");
+                ui.ctx()
+                    .accesskit_node_builder(delete.id, |n| n.set_label("Delete comment"));
+                if delete.clicked() {
+                    state.deleting_comment = Some(c.id.clone());
+                }
+                let edit = ui
+                    .small_button(icon::PENCIL_SIMPLE)
+                    .on_hover_text("Edit your comment");
+                ui.ctx()
+                    .accesskit_node_builder(edit.id, |n| n.set_label("Edit comment"));
+                if edit.clicked() {
+                    state.editing_comment = Some((c.id.clone(), c.body.clone()));
+                }
+            });
+        }
+    });
+    // Being edited: the text, then Save or Cancel (it's changed straight
+    // away, not kept for the review).
+    let mut close = false;
+    if let Some((id, text)) = state.editing_comment.as_mut().filter(|(id, _)| *id == c.id) {
+        let edit = ui.add(
+            egui::TextEdit::multiline(text)
+                .desired_rows(3)
+                .desired_width(f32::INFINITY),
+        );
+        ui.ctx()
+            .accesskit_node_builder(edit.id, |n| n.set_label("Edit the comment"));
+        ui.horizontal(|ui| {
+            let ready = !text.trim().is_empty() && !sending;
+            if ui.add_enabled(ready, egui::Button::new("Save")).clicked() {
+                *action = Some(Action::EditComment(c.clone(), text.trim().to_string()));
+            }
+            if ui.button("Cancel").clicked() {
+                close = true;
+            }
+            if sending {
+                ui.spinner();
+            }
+        });
+        let _ = id;
+        if close {
+            state.editing_comment = None;
+        }
+        return;
+    }
+    if state.deleting_comment.as_deref() == Some(c.id.as_str()) {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Delete this comment, for everyone?").color(theme::danger()));
+            if ui
+                .add_enabled(!sending, egui::Button::new("Delete"))
+                .clicked()
+            {
+                *action = Some(Action::DeleteComment(c.clone()));
+            }
+            if ui.button("Cancel").clicked() {
+                state.deleting_comment = None;
+            }
+        });
+    }
+    let frame = Some((state.gitlab, state.on_branch, &mut state.batch));
+    body_with_suggestions(
+        ui,
+        &mut state.markdown,
+        (&c.body, &c.suggestions),
+        frame,
+        action,
+    );
+}
+
 /// A thread: its comments, drafts answering it, and Reply and Resolve.
 #[expect(
     clippy::too_many_arguments,
@@ -783,15 +885,7 @@ fn thread_card(
         }
         for c in &t.comments {
             ui.add_space(4.0);
-            who_and_when(ui, &c.author, "", c.created, now);
-            let frame = Some((state.gitlab, state.on_branch, &mut state.batch));
-            body_with_suggestions(
-                ui,
-                &mut state.markdown,
-                (&c.body, &c.suggestions),
-                frame,
-                action,
-            );
+            posted(ui, c, "", now, state, action);
         }
         for (i, d) in drafts.iter().enumerate() {
             if d.reply_to.as_deref() == Some(t.reply.as_str()) && !t.reply.is_empty() {
@@ -1142,8 +1236,7 @@ fn conversation(
                     for e in &o.events {
                         match e {
                             Event::Comment(c) => card(ui, |ui| {
-                                who_and_when(ui, &c.author, "commented", c.created, here.now);
-                                markdown(ui, &mut state.markdown, &c.body);
+                                posted(ui, c, "commented", here.now, state, action);
                             }),
                             Event::Review {
                                 author,
@@ -1609,6 +1702,47 @@ fn changes(
             )
         });
         return;
+    }
+    // Threads on code that's changed since: not on a line any more.
+    let outdated: Vec<&Thread> = o
+        .threads
+        .iter()
+        .filter(|t| t.outdated && t.at.as_ref().is_some_and(|a| a.path == f.path))
+        .collect();
+    if !outdated.is_empty() {
+        let n = outdated.len();
+        let s = if n == 1 { "" } else { "s" };
+        egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(12, 4))
+            .show(ui, |ui| {
+                egui::CollapsingHeader::new(
+                    RichText::new(format!(
+                        "{n} outdated thread{s}: on code that has changed since"
+                    ))
+                    .color(theme::muted()),
+                )
+                .id_salt(("outdated", &f.path))
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt(("outdated-list", &f.path))
+                        .max_height(320.0)
+                        .show(ui, |ui| {
+                            for t in outdated {
+                                let code = code_for(o, t);
+                                thread_card(
+                                    ui,
+                                    t,
+                                    Some(&code),
+                                    true,
+                                    state,
+                                    here.drafts,
+                                    here.now,
+                                    action,
+                                );
+                            }
+                        });
+                });
+            });
     }
     let blame = state.blame.then(|| {
         state
@@ -2103,7 +2237,7 @@ pub fn default_message(kind: Kind, r: &Request, o: &Overview, method: Method) ->
             r.source,
             r.title
         ),
-        Method::Rebase => String::new(),
+        Method::Rebase | Method::FastForward => String::new(),
     }
 }
 
@@ -2248,6 +2382,25 @@ fn merge_window(
                 RichText::new(format!("{}  It can't be merged yet: {why}.", icon::WARNING))
                     .color(theme::modified()),
             );
+            if o.merge.can_update {
+                let (label, tip) = match kind {
+                    Kind::GitHub => (
+                        "Update branch".to_string(),
+                        format!("{} merges {} into it", kind.name(), r.target),
+                    ),
+                    Kind::GitLab => (
+                        format!("Rebase onto {}", r.target),
+                        format!("{} rebases its commits onto {}", kind.name(), r.target),
+                    ),
+                };
+                if ui
+                    .add_enabled(!sending, egui::Button::new(label))
+                    .on_hover_text(tip)
+                    .clicked()
+                {
+                    action = Some(Action::UpdateBranch);
+                }
+            }
             ui.add_space(4.0);
         }
         let before = m.method;
@@ -2263,7 +2416,7 @@ fn merge_window(
         if m.method != before && m.message == default_message(kind, r, o, before) {
             m.message = default_message(kind, r, o, m.method);
         }
-        if m.method != Method::Rebase {
+        if !matches!(m.method, Method::Rebase | Method::FastForward) {
             ui.add_space(4.0);
             let message = ui.add(
                 egui::TextEdit::multiline(&mut m.message)

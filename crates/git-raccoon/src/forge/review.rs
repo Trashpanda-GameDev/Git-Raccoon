@@ -24,6 +24,8 @@ pub struct Comment {
     pub created: i64,
     /// The changes it suggests, in the order its body has them.
     pub suggestions: Vec<Suggestion>,
+    /// It's in a thread on the code (GitHub keeps those apart).
+    pub on_code: bool,
 }
 
 /// A change suggested in a comment: lines `start..=end` of the file (as
@@ -287,6 +289,8 @@ pub enum Method {
     Merge,
     Squash,
     Rebase,
+    /// GitLab, set to fast-forward merges only.
+    FastForward,
 }
 
 impl Method {
@@ -295,6 +299,7 @@ impl Method {
             Method::Merge => "Merge commit",
             Method::Squash => "Squash and merge",
             Method::Rebase => "Rebase and merge",
+            Method::FastForward => "Fast-forward",
         }
     }
 
@@ -304,6 +309,9 @@ impl Method {
             Method::Squash => "Its commits combined into one, on top of the target.",
             Method::Rebase => {
                 "Its commits replayed one by one on top of the target, no merge commit."
+            }
+            Method::FastForward => {
+                "The target moves up to its commits as they are, no merge commit (it must be up to date with the target first)."
             }
         }
     }
@@ -318,6 +326,9 @@ pub struct Mergeable {
     pub blocked: Option<String>,
     /// Its branch can be deleted after (it's not from a fork).
     pub can_delete_branch: bool,
+    /// It's behind the target, and the forge can bring it up to date
+    /// (GitHub merges the target in; GitLab rebases it).
+    pub can_update: bool,
 }
 
 /// GitLab's diff refs, which a comment on a line needs.

@@ -134,6 +134,7 @@ fn note(n: &Value) -> Comment {
                 }
             })
             .collect(),
+        on_code: !n["position"].is_null(),
     }
 }
 
@@ -339,12 +340,22 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
     o.events.extend((0..o.threads.len()).map(Event::Thread));
     o.sort();
     let project = get(s, "")?;
-    o.merge.methods = match project["squash_option"].as_str() {
-        Some("never") => vec![Method::Merge],
-        Some("always") => vec![Method::Squash],
-        Some("default_on") => vec![Method::Squash, Method::Merge],
-        _ => vec![Method::Merge, Method::Squash],
+    // How the project merges ("merge", "rebase_merge" or fast-forward
+    // only), and whether it squashes.
+    let plain = if project["merge_method"].as_str() == Some("ff") {
+        Method::FastForward
+    } else {
+        Method::Merge
     };
+    o.merge.methods = match project["squash_option"].as_str() {
+        Some("never") => vec![plain],
+        Some("always") => vec![Method::Squash],
+        Some("default_on") => vec![Method::Squash, plain],
+        _ => vec![plain, Method::Squash],
+    };
+    o.merge.can_update = o.state == State::Open
+        && v["detailed_merge_status"].as_str() == Some("need_rebase")
+        && !r.from_fork;
     o.merge.can_delete_branch = !r.from_fork;
     o.merge.blocked = match o.state {
         State::Merged => Some("It's merged already".into()),
@@ -464,6 +475,38 @@ pub fn apply(s: &Session, ids: &[String], message: &str) -> Result<(), String> {
         &format!("{}/api/v4/suggestions/batch_apply", s.project.base),
         &Auth::Bearer(&s.token),
         &body,
+    )?;
+    Ok(())
+}
+
+/// Rebases a request onto its target, on GitLab (it carries on there).
+pub fn update(s: &Session, number: u64) -> Result<(), String> {
+    http::put(
+        FORGE,
+        &format!("{}/merge_requests/{number}/rebase", api(s)),
+        &Auth::Bearer(&s.token),
+        &json!({}),
+    )?;
+    Ok(())
+}
+
+/// Changes a comment's (note's) text.
+pub fn edit_comment(s: &Session, number: u64, c: &Comment, body: &str) -> Result<(), String> {
+    http::put(
+        FORGE,
+        &format!("{}/merge_requests/{number}/notes/{}", api(s), c.id),
+        &Auth::Bearer(&s.token),
+        &json!({"body": body}),
+    )?;
+    Ok(())
+}
+
+/// Deletes a comment (note).
+pub fn delete_comment(s: &Session, number: u64, c: &Comment) -> Result<(), String> {
+    http::delete(
+        FORGE,
+        &format!("{}/merge_requests/{number}/notes/{}", api(s), c.id),
+        &Auth::Bearer(&s.token),
     )?;
     Ok(())
 }
@@ -707,7 +750,7 @@ mod tests {
         let mr = MR.replace(
             r#""head_pipeline": {"status": "running"}"#,
             r#""head_pipeline": {"id": 99, "status": "failed"}, "state": "opened",
-               "detailed_merge_status": "not_approved",
+               "detailed_merge_status": "need_rebase",
                "diff_refs": {"base_sha": "b", "start_sha": "s", "head_sha": "h"}"#,
         );
         let (base, seen) = mock::serve(vec![
@@ -734,7 +777,7 @@ mod tests {
                         "position":{"old_path":"a.rs","new_path":"a.rs","old_line":null,"new_line":1}}]}]"#
                     .into(),
             ),
-            (200, r#"{"squash_option":"default_off"}"#.into()),
+            (200, r#"{"squash_option":"default_off","merge_method":"ff"}"#.into()),
             // The review: two drafts, publishing, the summary, approving.
             (201, "{}".into()),
             (201, "{}".into()),
@@ -743,6 +786,10 @@ mod tests {
             (201, "{}".into()),
             // Applying a suggestion.
             (200, "[]".into()),
+            // Rebasing it, editing a comment and deleting it.
+            (202, r#"{"rebase_in_progress":true}"#.into()),
+            (200, "{}".into()),
+            (204, String::new()),
         ]);
         let s = session(&base);
         let (r, o) = s.view(12).unwrap();
@@ -773,8 +820,13 @@ mod tests {
         assert!(
             matches!(&o.events[1], Event::Review { verdict: Verdict::Approved, author, .. } if author == "rocky")
         );
-        assert_eq!(o.merge.methods, [Method::Merge, Method::Squash]);
-        assert_eq!(o.merge.blocked.as_deref(), Some("It needs approvals first"));
+        // Fast-forward only, and behind: GitLab can rebase it.
+        assert_eq!(o.merge.methods, [Method::FastForward, Method::Squash]);
+        assert_eq!(
+            o.merge.blocked.as_deref(),
+            Some("It has to be rebased onto main first")
+        );
+        assert!(o.merge.can_update);
 
         let drafts = [
             Draft {
@@ -802,6 +854,10 @@ mod tests {
         s.submit(12, &o.refs, &drafts, "Thanks", Finish::Approve)
             .unwrap();
         s.apply(&["77".into()], "Use z").unwrap();
+        s.update(&r, &o.refs.head).unwrap();
+        let mine = &o.threads[0].comments[0];
+        s.edit_comment(12, mine, "Why z?").unwrap();
+        s.delete_comment(12, mine).unwrap();
         let seen = seen.lock().unwrap();
         let api = "/api/v4/projects/team%2Fsub%2Fapp/merge_requests/12";
         assert_eq!(
@@ -819,6 +875,10 @@ mod tests {
         assert_eq!(seen[10].0, format!("POST {api}/notes"));
         assert_eq!(seen[11].0, format!("POST {api}/approve"));
         assert_eq!(seen[12].0, "PUT /api/v4/suggestions/batch_apply");
+        assert_eq!(seen[13].0, format!("PUT {api}/rebase"));
+        assert_eq!(seen[14].0, format!("PUT {api}/notes/3"));
+        assert_eq!(seen[14].2, r#"{"body":"Why z?"}"#);
+        assert_eq!(seen[15].0, format!("DELETE {api}/notes/3"));
         assert_eq!(
             serde_json::from_str::<Value>(&seen[12].2).unwrap(),
             json!({"ids": [77], "commit_message": "Use z"})

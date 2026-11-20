@@ -3535,6 +3535,8 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
         ("GET /api/v4/projects/team%2Fapp/merge_requests/12/discussions", r#"[
             {"id": "d1", "individual_note": true, "notes": [{"id": 1, "body": "Looks **good**", "author": {"username": "milo"},
                 "created_at": "2026-11-02T00:00:00Z", "system": false}]},
+            {"id": "d4", "individual_note": true, "notes": [{"id": 7, "body": "Typo in the title.", "author": {"username": "rocky"},
+                "created_at": "2026-11-02T12:00:00Z", "system": false}]},
             {"id": "d2", "individual_note": false, "notes": [{"id": 2, "body": "Why another?\n```suggestion:-0+0\nOne more\n```", "author": {"username": "milo"},
                 "created_at": "2026-11-03T00:00:00Z", "system": false, "resolvable": true, "resolved": false,
                 "suggestions": [{"id": 5, "from_line": 3, "to_line": 3, "from_content": "Another\n",
@@ -3550,6 +3552,7 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
         ("POST /api/v4/projects/team%2Fapp/merge_requests/12/draft_notes", "{}".into()),
         ("PUT /api/v4/projects/team%2Fapp/merge_requests/12", "{}".into()),
         ("PUT /api/v4/suggestions/batch_apply", "[]".into()),
+        ("DELETE /api/v4/projects/team%2Fapp/merge_requests/12/notes", "{}".into()),
         // Who can review a new one, and the labels.
         ("GET /api/v4/projects/team%2Fapp/members/all", r#"[{"username": "rocky", "state": "active"},
             {"username": "milo", "state": "active"}]"#.into()),
@@ -3650,6 +3653,39 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     assert!(h.state().repo().unwrap().highlight.is_none());
     h.get_by_label("Conversation tab").click();
     h.run_ok();
+
+    // Your own comments can be edited and deleted (others' can't).
+    assert_eq!(h.get_all_by_label("Edit comment").count(), 1);
+    h.get_by_label("Edit comment").click();
+    h.run_ok();
+    h.get_by_label("Edit the comment").click();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+    h.get_by_label("Edit the comment")
+        .type_text("Typo in the title: cahce.");
+    h.run_ok();
+    h.get_by_label("Save").click();
+    let saved = |app: &App| {
+        let s = &app.repo().unwrap().forge.as_ref().unwrap().state;
+        s.sending.is_none() && s.sent.is_some() && s.editing_comment.is_none()
+    };
+    wait_for(&mut h, "the edit", saved);
+    assert!(seen.lock().unwrap().iter().any(|(r, b)| {
+        r == &format!("PUT {api}/merge_requests/12/notes/7") && b.contains("cahce")
+    }));
+    h.get_by_label("Delete comment").click();
+    h.run_ok();
+    h.get_by_label("Delete this comment, for everyone?");
+    h.get_by_label("Delete").click();
+    wait_for(&mut h, "the delete", |app| {
+        let s = &app.repo().unwrap().forge.as_ref().unwrap().state;
+        s.sending.is_none() && s.deleting_comment.is_none()
+    });
+    assert!(
+        seen.lock()
+            .unwrap()
+            .iter()
+            .any(|(r, _)| r == &format!("DELETE {api}/merge_requests/12/notes/7"))
+    );
 
     // A suggestion in the thread: what it changes, and applying it.
     h.get_by_label_contains("Suggested change");

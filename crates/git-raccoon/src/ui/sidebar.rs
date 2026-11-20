@@ -774,6 +774,9 @@ fn forge_sections(
                     if response.clicked() {
                         c.action = Some(Action::OpenRequest(r.number));
                     }
+                    if forge.open == Some(Opened::Request(r.number)) {
+                        request_status(ui, forge);
+                    }
                     let page = (format!("Open on {}", kind.name()), r.url.clone());
                     response.context_menu(|ui| {
                         web_items(ui, &mut c.action, Some(&page));
@@ -1005,6 +1008,54 @@ pub fn copy_name(ui: &mut egui::Ui, name: &str) {
         ui.ctx().copy_text(name.to_string());
         ui.close();
     }
+}
+
+/// Under the open request: how its checks, approvals and threads stand.
+fn request_status(ui: &mut egui::Ui, forge: &crate::forge_view::ForgeView) {
+    use crate::forge::Review;
+    let Some((r, o)) = forge.viewed() else {
+        return;
+    };
+    let c = r.checks;
+    let checks = if c.is_empty() {
+        None
+    } else if c.failed > 0 {
+        Some((icon::X_CIRCLE, "checks failed", theme::danger()))
+    } else if c.pending > 0 {
+        Some((icon::CLOCK, "checks running", theme::modified()))
+    } else {
+        Some((icon::CHECK_CIRCLE, "checks passed", theme::add()))
+    };
+    let review = match r.review {
+        Review::Approved => Some((icon::CHECK, "approved", theme::add())),
+        Review::ChangesRequested => {
+            Some((icon::WARNING_CIRCLE, "changes asked", theme::modified()))
+        }
+        Review::None => None,
+    };
+    let open = o.unresolved();
+    let threads = format!("{open} open thread{}", if open == 1 { "" } else { "s" });
+    let threads = (open > 0).then(|| (icon::CHAT_CIRCLE_DOTS, threads.as_str(), theme::modified()));
+    ui.horizontal_wrapped(|ui| {
+        ui.add_space(30.0);
+        ui.spacing_mut().item_spacing.x = 8.0;
+        let mut any = false;
+        for (glyph, text, colour) in [checks, review, threads].into_iter().flatten() {
+            ui.label(
+                RichText::new(format!("{glyph} {text}"))
+                    .size(11.0)
+                    .color(colour),
+            );
+            any = true;
+        }
+        if !any {
+            ui.label(
+                RichText::new("No checks or reviews yet")
+                    .size(11.0)
+                    .color(theme::muted()),
+            );
+        }
+    });
 }
 
 /// "Load more" at the end of a forge's list, when it has more: requests
