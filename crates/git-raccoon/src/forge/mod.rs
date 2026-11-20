@@ -526,6 +526,14 @@ impl Session {
     }
 }
 
+/// What a call gave, or `None` with a note of `what` couldn't be loaded
+/// and why (in `missing`): for the parts of a view it can do without.
+fn soft<T>(result: Result<T, String>, what: &str, missing: &mut Vec<String>) -> Option<T> {
+    result
+        .map_err(|e| missing.push(format!("{what} ({e})")))
+        .ok()
+}
+
 /// Seconds since the Unix epoch for an RFC 3339 time ("2026-11-16T10:00:00Z").
 fn timestamp(text: &str) -> i64 {
     chrono::DateTime::parse_from_rfc3339(text).map_or(0, |t| t.timestamp())

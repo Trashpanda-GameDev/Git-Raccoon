@@ -7,7 +7,7 @@ use super::review::{
     Anchor, Change, Check, Comment, Commit, DiffRefs, Draft, Event, File, Finish, Line, Merge,
     Method, Outcome, Overview, State, Suggestion, Thread, Verdict,
 };
-use super::{Checks, Choices, Issue, NewRequest, Request, Review, Session, timestamp};
+use super::{Checks, Choices, Issue, NewRequest, Request, Review, Session, soft, timestamp};
 
 const FORGE: &str = "GitLab";
 
@@ -197,7 +197,15 @@ fn blocked(status: &str, target: &str) -> Option<String> {
 pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
     let v = get(s, &format!("/merge_requests/{number}"))?;
     let mut r = request(&v);
-    let approvals = get(s, &format!("/merge_requests/{number}/approvals"))?;
+    // Only the request itself is needed; what else can't be loaded is
+    // noted, and the rest shows.
+    let mut missing = Vec::new();
+    let approvals = soft(
+        get(s, &format!("/merge_requests/{number}/approvals")),
+        "its approvals",
+        &mut missing,
+    )
+    .unwrap_or(Value::Null);
     r.reviews = approvals["approved_by"]
         .as_array()
         .into_iter()
@@ -220,15 +228,21 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
             start: text(&v["diff_refs"], "start_sha"),
             head: text(&v["diff_refs"], "head_sha"),
         },
+        missing,
         ..Overview::default()
     };
     // The pipeline's jobs are its checks.
-    if let Some(id) = v["head_pipeline"]["id"].as_u64() {
-        let jobs = all(
-            s,
-            &format!("/pipelines/{id}/jobs?per_page=100"),
-            &mut o.cut_short,
-        )?;
+    if let Some(id) = v["head_pipeline"]["id"].as_u64()
+        && let Some(jobs) = soft(
+            all(
+                s,
+                &format!("/pipelines/{id}/jobs?per_page=100"),
+                &mut o.cut_short,
+            ),
+            "its pipeline's jobs",
+            &mut o.missing,
+        )
+    {
         o.checks = jobs
             .as_array()
             .into_iter()
@@ -256,11 +270,22 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
             None => {}
         }
     }
-    let diffs = all(
+    // Its files: from /diffs (GitLab 15.7 and later), else the older
+    // /changes.
+    let diffs = match all(
         s,
         &format!("/merge_requests/{number}/diffs?per_page=100"),
         &mut o.cut_short,
-    )?;
+    ) {
+        Ok(list) => list,
+        Err(first) => match get(s, &format!("/merge_requests/{number}/changes")) {
+            Ok(v) => v["changes"].clone(),
+            Err(_) => {
+                o.missing.push(format!("its changes ({first})"));
+                Value::Null
+            }
+        },
+    };
     o.files = diffs
         .as_array()
         .into_iter()
@@ -284,11 +309,16 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
             }
         })
         .collect();
-    let commits = all(
-        s,
-        &format!("/merge_requests/{number}/commits?per_page=100"),
-        &mut o.cut_short,
-    )?;
+    let commits = soft(
+        all(
+            s,
+            &format!("/merge_requests/{number}/commits?per_page=100"),
+            &mut o.cut_short,
+        ),
+        "its commits",
+        &mut o.missing,
+    )
+    .unwrap_or(Value::Null);
     o.commits = commits
         .as_array()
         .into_iter()
@@ -301,11 +331,16 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
         })
         .rev() // GitLab lists them newest first.
         .collect();
-    let discussions = all(
-        s,
-        &format!("/merge_requests/{number}/discussions?per_page=100"),
-        &mut o.cut_short,
-    )?;
+    let discussions = soft(
+        all(
+            s,
+            &format!("/merge_requests/{number}/discussions?per_page=100"),
+            &mut o.cut_short,
+        ),
+        "its comments and threads",
+        &mut o.missing,
+    )
+    .unwrap_or(Value::Null);
     for d in discussions.as_array().into_iter().flatten() {
         let notes: Vec<&Value> = d["notes"].as_array().into_iter().flatten().collect();
         let Some(first) = notes.first() else { continue };
@@ -338,11 +373,16 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
         });
     }
     // Your draft notes (only you see them).
-    let drafts = all(
-        s,
-        &format!("/merge_requests/{number}/draft_notes?per_page=100"),
-        &mut o.cut_short,
-    )?;
+    let drafts = soft(
+        all(
+            s,
+            &format!("/merge_requests/{number}/draft_notes?per_page=100"),
+            &mut o.cut_short,
+        ),
+        "your draft notes",
+        &mut o.missing,
+    )
+    .unwrap_or(Value::Null);
     o.pending = drafts
         .as_array()
         .into_iter()
@@ -357,7 +397,8 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
         .collect();
     o.events.extend((0..o.threads.len()).map(Event::Thread));
     o.sort();
-    let project = get(s, "")?;
+    let project =
+        soft(get(s, ""), "the project's merge settings", &mut o.missing).unwrap_or(Value::Null);
     // How the project merges ("merge", "rebase_merge" or fast-forward
     // only), and whether it squashes.
     let plain = if project["merge_method"].as_str() == Some("ff") {
@@ -987,6 +1028,36 @@ mod tests {
         assert_eq!(
             seen[1].0,
             "GET /api/v4/projects/team%2Fsub%2Fapp/members/all?per_page=100&page=2"
+        );
+    }
+
+    #[test]
+    fn shows_what_it_can_when_parts_fail() {
+        let (base, _) = mock::serve(vec![
+            (200, MR.into()),
+            // Its approvals: a server error, twice.
+            (500, "{}".into()),
+            (500, "{}".into()),
+            // Its diffs: the same; the older /changes answers.
+            (500, "{}".into()),
+            (500, "{}".into()),
+            (
+                200,
+                r#"{"changes":[{"old_path":"a.rs","new_path":"a.rs","diff":"@@ -1 +1 @@\n-x\n+y\n"}]}"#.into(),
+            ),
+            (200, "[]".into()),
+            (200, "[]".into()),
+            (200, "[]".into()),
+            (200, "{}".into()),
+        ]);
+        let (r, o) = session(&base).view(12).unwrap();
+        assert_eq!(r.number, 12);
+        assert_eq!(o.files.len(), 1, "from /changes");
+        assert_eq!(
+            o.missing,
+            [
+                "its approvals (GitLab had a problem on its side (500), for …/merge_requests/12/approvals)"
+            ]
         );
     }
 }

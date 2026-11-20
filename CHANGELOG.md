@@ -3,6 +3,10 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.20
+
+- **A request opens even when the forge fails on part of it.** A self-managed GitLab answering an error (a 500) for, say, the approvals or the diffs used to stop the whole view; now the rest shows, and a note says what's missing and why, with *Try again*. A server error is retried once by itself, errors say which call failed, and diffs fall back to GitLab's older way of listing them.
+
 ## 0.5.19
 
 - **Long pull/merge requests are complete**: their files, commits, comments and threads were cut off at the first 100; now every page is loaded (up to 5,000 of each, with a note if there are more). The reviewer, assignee and label pickers list everyone and every label too.

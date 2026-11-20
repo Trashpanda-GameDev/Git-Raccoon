@@ -7,7 +7,7 @@ use super::review::{
     self, Anchor, Change, Check, Comment, Commit, DiffRefs, Draft, Event, File, Finish, Line,
     Merge, Method, Outcome, Overview, State, Suggestion, Thread, Verdict,
 };
-use super::{Checks, Choices, Issue, NewRequest, Request, Review, Session, timestamp};
+use super::{Checks, Choices, Issue, NewRequest, Request, Review, Session, soft, timestamp};
 
 const FORGE: &str = "GitHub";
 
@@ -325,12 +325,20 @@ fn thread(v: &Value) -> Thread {
 pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
     let v = get(s, &format!("/pulls/{number}"))?;
     let mut r = request(&v);
+    // Only the request itself is needed; what else can't be loaded is
+    // noted, and the rest shows.
     let mut cut = false;
-    let reviews = all(
-        s,
-        &format!("/pulls/{number}/reviews?per_page=100"),
-        &mut cut,
-    )?;
+    let mut missing = Vec::new();
+    let reviews = soft(
+        all(
+            s,
+            &format!("/pulls/{number}/reviews?per_page=100"),
+            &mut cut,
+        ),
+        "its reviews",
+        &mut missing,
+    )
+    .unwrap_or(Value::Null);
     (r.reviews, r.review) = verdicts(&reviews);
     let mut o = Overview {
         state: if v["merged"].as_bool().unwrap_or(false) || !v["merged_at"].is_null() {
@@ -345,15 +353,23 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
             start: text(&v["base"], "sha"),
             head: text(&v["head"], "sha"),
         },
+        missing,
         ..Overview::default()
     };
-    (r.checks, o.checks) = checks(s, &o.refs.head)?;
+    if let Some(found) = soft(checks(s, &o.refs.head), "its checks", &mut o.missing) {
+        (r.checks, o.checks) = found;
+    }
     o.cut_short = cut;
-    let files = all(
-        s,
-        &format!("/pulls/{number}/files?per_page=100"),
-        &mut o.cut_short,
-    )?;
+    let files = soft(
+        all(
+            s,
+            &format!("/pulls/{number}/files?per_page=100"),
+            &mut o.cut_short,
+        ),
+        "its changes",
+        &mut o.missing,
+    )
+    .unwrap_or(Value::Null);
     o.files = files
         .as_array()
         .into_iter()
@@ -370,11 +386,16 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
             patch: text(f, "patch"),
         })
         .collect();
-    let commits = all(
-        s,
-        &format!("/pulls/{number}/commits?per_page=100"),
-        &mut o.cut_short,
-    )?;
+    let commits = soft(
+        all(
+            s,
+            &format!("/pulls/{number}/commits?per_page=100"),
+            &mut o.cut_short,
+        ),
+        "its commits",
+        &mut o.missing,
+    )
+    .unwrap_or(Value::Null);
     o.commits = commits
         .as_array()
         .into_iter()
@@ -396,11 +417,16 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
             created: timestamp(c["commit"]["author"]["date"].as_str().unwrap_or_default()),
         })
         .collect();
-    let comments = all(
-        s,
-        &format!("/issues/{number}/comments?per_page=100"),
-        &mut o.cut_short,
-    )?;
+    let comments = soft(
+        all(
+            s,
+            &format!("/issues/{number}/comments?per_page=100"),
+            &mut o.cut_short,
+        ),
+        "its comments",
+        &mut o.missing,
+    )
+    .unwrap_or(Value::Null);
     for c in comments.as_array().into_iter().flatten() {
         o.events.push(Event::Comment(Comment {
             id: c["id"].as_u64().unwrap_or_default().to_string(),
@@ -440,11 +466,16 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
     {
         o.pending_review = Some(text(p, "node_id"));
         let id = p["id"].as_u64().unwrap_or_default();
-        let comments = all(
-            s,
-            &format!("/pulls/{number}/reviews/{id}/comments?per_page=100"),
-            &mut o.cut_short,
-        )?;
+        let comments = soft(
+            all(
+                s,
+                &format!("/pulls/{number}/reviews/{id}/comments?per_page=100"),
+                &mut o.cut_short,
+            ),
+            "your pending review's comments",
+            &mut o.missing,
+        )
+        .unwrap_or(Value::Null);
         o.pending = comments
             .as_array()
             .into_iter()
@@ -452,7 +483,9 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
             .map(pending_draft)
             .collect();
     }
-    o.threads = threads(s, number, &mut o.cut_short)?
+    let threads = threads(s, number, &mut o.cut_short);
+    o.threads = soft(threads, "its threads on the code", &mut o.missing)
+        .unwrap_or_default()
         .iter()
         .map(thread)
         .collect();
@@ -490,7 +523,12 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
     }
     o.events.extend((0..o.threads.len()).map(Event::Thread));
     o.sort();
-    let repo = get(s, "")?;
+    let repo = soft(
+        get(s, ""),
+        "the repository's merge settings",
+        &mut o.missing,
+    )
+    .unwrap_or(Value::Null);
     let allowed = |key: &str| repo[key].as_bool().unwrap_or(true);
     o.merge.methods = [
         ("allow_merge_commit", Method::Merge),

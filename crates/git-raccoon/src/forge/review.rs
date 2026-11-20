@@ -358,6 +358,10 @@ pub struct Overview {
     pub pending_review: Option<String>,
     /// Your draft comments kept on the forge.
     pub pending: Vec<Draft>,
+    /// Parts that couldn't be loaded, and why ("its approvals (GitLab had
+    /// a problem on its side (500), for …/approvals)"); the rest shows
+    /// without them.
+    pub missing: Vec<String>,
 }
 
 impl Overview {

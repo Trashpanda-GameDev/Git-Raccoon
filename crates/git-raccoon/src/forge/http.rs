@@ -25,6 +25,9 @@ fn explain(forge: &str, error: ureq::Error) -> String {
             format!("{forge} doesn't know it (or it's private and this account can't see it)")
         }
         ureq::Error::StatusCode(422) => format!("{forge} wouldn't take it (it may already exist)"),
+        ureq::Error::StatusCode(code) if code >= 500 => {
+            format!("{forge} had a problem on its side ({code})")
+        }
         ureq::Error::StatusCode(code) => format!("{forge} answered {code}"),
         other => format!("couldn't reach {forge}: {other}"),
     }
@@ -63,10 +66,58 @@ fn read(
     serde_json::from_str(&text).map_err(|e| format!("{forge} answered something unexpected: {e}"))
 }
 
+/// The part of an API address that says what was asked for:
+/// ".../merge_requests/313/diffs" for any project.
+fn what_of(url: &str) -> String {
+    let path = url
+        .split("://")
+        .nth(1)
+        .and_then(|rest| rest.find('/').map(|i| &rest[i..]))
+        .unwrap_or(url);
+    let path = path.split('?').next().unwrap_or(path);
+    // The project's own part goes: GitLab's "/projects/<id>", GitHub's
+    // "/repos/<owner>/<name>".
+    let short = if let Some(i) = path.find("/projects/") {
+        let rest = &path[i + "/projects/".len()..];
+        rest.find('/').map_or("", |j| &rest[j..])
+    } else if let Some(i) = path.find("/repos/") {
+        let rest = &path[i + "/repos/".len()..];
+        rest.splitn(3, '/').nth(2).map_or("", |r| r)
+    } else {
+        path
+    };
+    if short.is_empty() {
+        "the project".into()
+    } else {
+        format!("…/{}", short.trim_start_matches('/'))
+    }
+}
+
+/// A GET, tried again once after a moment if the server failed (a 5xx):
+/// busy self-managed servers do now and then. A failure says which call.
+fn call_get(
+    forge: &str,
+    url: &str,
+    auth: &Auth<'_>,
+) -> Result<ureq::http::Response<ureq::Body>, String> {
+    let attempt = || {
+        with_auth(agent_for().get(url), auth)
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .call()
+    };
+    let response = match attempt() {
+        Err(ureq::Error::StatusCode(code)) if code >= 500 => {
+            std::thread::sleep(std::time::Duration::from_millis(600));
+            attempt()
+        }
+        other => other,
+    };
+    response.map_err(|e| format!("{}, for {}", explain(forge, e), what_of(url)))
+}
+
 /// GET some JSON.
 pub fn get(forge: &str, url: &str, auth: &Auth<'_>) -> Result<Value, String> {
-    let req = with_auth(agent_for().get(url), auth).header("X-GitHub-Api-Version", "2022-11-28");
-    read(forge, req.call())
+    read(forge, Ok(call_get(forge, url, auth)?))
 }
 
 /// The most pages [`get_all`] reads (of 100 each).
@@ -79,8 +130,7 @@ pub fn get_page(
     url: &str,
     auth: &Auth<'_>,
 ) -> Result<(Value, Option<String>), String> {
-    let req = with_auth(agent_for().get(url), auth).header("X-GitHub-Api-Version", "2022-11-28");
-    let response = req.call().map_err(|e| explain(forge, e))?;
+    let response = call_get(forge, url, auth)?;
     let next = response
         .headers()
         .get("link")
@@ -295,6 +345,43 @@ pub mod mock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn says_which_call_failed_after_trying_again() {
+        assert_eq!(
+            what_of(
+                "https://git.example.com/api/v4/projects/team%2Fapp/merge_requests/313/diffs?per_page=100"
+            ),
+            "…/merge_requests/313/diffs"
+        );
+        assert_eq!(
+            what_of("https://api.github.com/repos/rocky/stash-box/pulls/7/files"),
+            "…/pulls/7/files"
+        );
+        assert_eq!(
+            what_of("https://git.example.com/api/v4/projects/team%2Fapp"),
+            "the project"
+        );
+        // A 500, then a 500 again: it's an error, naming the call.
+        let (base, seen) = mock::serve(vec![(500, "{}".into()), (500, "{}".into())]);
+        let e = get(
+            "GitLab",
+            &format!("{base}/api/v4/projects/a%2Fb/merge_requests/313/diffs"),
+            &Auth::None,
+        )
+        .unwrap_err();
+        assert_eq!(
+            e,
+            "GitLab had a problem on its side (500), for …/merge_requests/313/diffs"
+        );
+        assert_eq!(seen.lock().unwrap().len(), 2, "tried twice");
+        // A 500, then an answer: fine.
+        let (base, _) = mock::serve(vec![(502, "{}".into()), (200, "[1]".into())]);
+        assert_eq!(
+            get("GitLab", &base, &Auth::None).unwrap(),
+            serde_json::json!([1])
+        );
+    }
 
     #[test]
     fn follows_next_pages() {

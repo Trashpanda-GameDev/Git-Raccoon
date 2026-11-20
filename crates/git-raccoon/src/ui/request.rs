@@ -354,6 +354,29 @@ fn header(
                 ui.spacing_mut().item_spacing.x = 14.0;
                 summary_line(ui, r, o);
             });
+            // Parts the forge didn't give: say which, and why.
+            if !o.missing.is_empty() {
+                ui.add_space(4.0);
+                banner(ui, theme::modified(), |ui| {
+                    ui.vertical(|ui| {
+                        ui.label(
+                            RichText::new(format!(
+                                "{}  Some of it couldn't be loaded, so it's not shown:",
+                                icon::WARNING
+                            ))
+                            .color(theme::modified()),
+                        );
+                        for what in &o.missing {
+                            ui.label(RichText::new(format!("• {what}")).size(12.0).color(theme::muted()));
+                        }
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                        if ui.button("Try again").clicked() {
+                            *action = Some(Action::Reload);
+                        }
+                    });
+                });
+            }
             if o.cut_short {
                 ui.label(
                     RichText::new("It's very long: some of its lists show only their first 5,000.")
