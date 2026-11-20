@@ -8,7 +8,15 @@ release page). Newest first; a version's heading is just its number.
 - **Long pull/merge requests are complete**: their files, commits, comments and threads were cut off at the first 100; now every page is loaded (up to 5,000 of each, with a note if there are more). The reviewer, assignee and label pickers list everyone and every label too.
 - **Load more requests or issues**: the sidebar lists the newest 50 of each, and a *Load more* row at the end lists the next 50, when there are more.
 - **Pull the latest works for requests from forks**: their branch (`pr/12`, `mr/12`) now follows the request, so Pull brings its new commits.
-- **Images in requests' descriptions and comments** are shown, not just their alt text.
+- **Images in requests' descriptions and comments** are shown, not just their alt text, including uploads in private repositories (fetched with your account).
+- **Your review drafts are kept on GitHub or GitLab too**, as you write them: in GitHub's pending review, or as GitLab draft notes. They're there on the website and on other computers, and drafts started there show up here. (GitHub can't hold comments on the whole request in a review; those stay here until you finish.)
+- **Edit or delete your comments** after they're posted (the pencil and bin by them).
+- **A new request is a view of its own**, in place of the graph, like an open one: its Description, Commits and Changes in tabs.
+- **Bring a request up to date** from the Merge window when it's behind: *Update branch* on GitHub, *Rebase onto…* on GitLab. GitLab projects that only fast-forward get **Fast-forward** as their way of merging.
+- **The open request's status in the sidebar**: its checks, approval and open threads, under it.
+- **Outdated threads** (on code that's changed since) are listed above a file's diff in Changes.
+- Clicking a commit in a request's **Blame** shows it, even when it isn't in your graph.
+- **Checks** are read in full too, not just the first 100.
 
 ## 0.5.18
 

@@ -251,7 +251,9 @@ Your comments are **drafts** until you finish the review, then they're all sent 
 
 When you're done, press **Finish review**: add a summary if you like, choose **Comment**, **Approve** or **Request changes**, and send. (GitLab can't *request changes* through its API.)
 
-Drafts can be edited or deleted, and are kept if you close the app.
+Drafts can be edited or deleted. They're kept on GitHub (in your pending review) or GitLab (as draft notes) as you write them, so they're there on the website or another computer too, and drafts started there show up here. Comments on the whole request stay on your computer until you finish, as GitHub can't hold them in a review.
+
+Your own posted comments have a pencil (edit) and a bin (delete) beside them.
 
 ### Suggested changes
 
@@ -264,7 +266,7 @@ To suggest one yourself, pick lines in Changes and right-click › **Suggest a c
 
 ### Merging
 
-**Merge** offers the methods the repository allows (merge commit, squash or rebase), the commit message, and *Delete the branch after merging*. If it can't be merged yet, it says why.
+**Merge** offers the methods the repository allows (merge commit, squash, rebase, or fast-forward on GitLab), the commit message, and *Delete the branch after merging*. If it can't be merged yet, it says why. When it's behind its target, **Update branch** (GitHub) or **Rebase onto…** (GitLab) brings it up to date.
 
 ### Checking out
 
@@ -275,7 +277,7 @@ To suggest one yourself, pick lines in Changes and right-click › **Suggest a c
 
 ### Opening a new request
 
-Use the **+** next to *Pull requests*, or right-click any local branch › **Open a pull request…**.
+Use the **+** next to *Pull requests*, or right-click any local branch › **Open a pull request…**. It opens in place of the graph, like a request, with **Description**, **Commits** and **Changes** tabs; Esc cancels.
 
 - Pick the branch it goes into. The window shows its commits and the files it changes (click one for its diff), and warns if it won't merge cleanly.
 - The title and description are filled in from its commits, or from the repository's template.

@@ -66,6 +66,8 @@ pub struct App {
     /// The new pull/merge request window, and its request on the way.
     new_request: Option<crate::ui::forge::NewForm>,
     new_request_post: Option<crate::task::Task<Result<crate::forge::Request, String>>>,
+    /// Fetches images in requests from the forges signed in to.
+    forge_images: Option<Arc<crate::forge::images::ForgeImages>>,
     /// What the new request's view asked for this frame.
     new_request_action: Option<crate::ui::forge::NewAction>,
     /// Who can review a new request, and its labels, being listed.
@@ -153,9 +155,13 @@ impl App {
             .and_then(|s| eframe::get_value::<Settings>(s, Settings::KEY))
             .map(Settings::upgrade)
             .unwrap_or_default();
-        // Images in pull/merge requests' Markdown.
+        // Images in pull/merge requests' Markdown: from the web, and (tried
+        // first) from the forges signed in to, with their tokens.
         egui_extras::install_image_loaders(&cc.egui_ctx);
+        let images = Arc::new(crate::forge::images::ForgeImages::default());
+        cc.egui_ctx.add_bytes_loader(images.clone());
         let mut app = Self::with_settings(&cc.egui_ctx, settings);
+        app.forge_images = Some(images);
         if let Ok(exe) = std::env::current_exe() {
             app.answer_git_questions(&cc.egui_ctx, &exe);
         }
@@ -215,6 +221,7 @@ impl App {
             new_request_post: None,
             new_request_choices: None,
             new_request_action: None,
+            forge_images: None,
             whats_new,
             feedback: None,
             feedback_post: None,
@@ -1187,6 +1194,16 @@ impl App {
         repo.web = crate::forge::Web::new(&remotes, &managed);
         if std::mem::take(&mut repo.forge_stale) {
             let found = crate::forge_view::ForgeView::find(&remotes, &self.settings.accounts);
+            if let (Some(images), Some(f)) = (&self.forge_images, &found)
+                && let Some(account) = f.account.clone()
+            {
+                let (images, project) = (Arc::clone(images), f.project.clone());
+                std::thread::spawn(move || {
+                    if let Ok(s) = crate::forge::accounts::session(&account, &project) {
+                        images.set(vec![s.for_images()]);
+                    }
+                });
+            }
             match (&mut repo.forge, found) {
                 (Some(now), Some(found)) if now.same_as(&found) => now.load(ctx),
                 (forge, Some(mut found)) => {

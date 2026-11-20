@@ -137,6 +137,26 @@ fn next_link(header: &str) -> Option<String> {
     })
 }
 
+/// GET a file's bytes (an image), and its type if the server says.
+pub fn get_bytes(url: &str, auth: &Auth<'_>) -> Result<(Vec<u8>, Option<String>), String> {
+    let response = with_auth(agent_for().get(url), auth)
+        .header("Accept", "*/*")
+        .call()
+        .map_err(|e| explain("The forge", e))?;
+    let mime = response
+        .headers()
+        .get("content-type")
+        .and_then(|t| t.to_str().ok())
+        .map(str::to_string);
+    let bytes = response
+        .into_body()
+        .with_config()
+        .limit(20 * 1024 * 1024)
+        .read_to_vec()
+        .map_err(|e| e.to_string())?;
+    Ok((bytes, mime))
+}
+
 /// POST some JSON, and get JSON back.
 pub fn post(forge: &str, url: &str, auth: &Auth<'_>, body: &Value) -> Result<Value, String> {
     let req = with_auth(agent_for().post(url), auth)

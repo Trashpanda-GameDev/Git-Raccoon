@@ -8,6 +8,7 @@ pub mod accounts;
 mod github;
 mod gitlab;
 mod http;
+pub mod images;
 pub mod oauth;
 pub mod review;
 pub mod templates;
@@ -326,6 +327,33 @@ pub struct Session {
 impl Session {
     pub fn new(project: Project, token: String) -> Self {
         Session { project, token }
+    }
+
+    /// What fetching the project's images with this account needs.
+    pub fn for_images(&self) -> images::Signed {
+        let host = self
+            .project
+            .host
+            .split(':')
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        let mut hosts = vec![self.project.host.clone(), host];
+        hosts.dedup();
+        images::Signed {
+            kind: self.project.kind,
+            project_web: format!("{}/{}", self.project.base, self.project.path),
+            project_api: match self.project.kind {
+                Kind::GitHub => String::new(),
+                Kind::GitLab => format!(
+                    "{}/api/v4/projects/{}",
+                    self.project.base,
+                    http::encode(&self.project.path)
+                ),
+            },
+            hosts,
+            token: self.token.clone(),
+        }
     }
 
     /// A page (from 1) of the open pull/merge requests, newest first, and

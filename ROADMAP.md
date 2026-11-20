@@ -130,6 +130,7 @@ Built in 0.5.18, with one set of words for GitHub and GitLab (what a forge doesn
   - [x] **Title and description filled in**: one commit → its message; several → the branch name and the commits listed; the repository's template when it has one (a picker for several).
   - [x] **Reviewers, assignees and labels**; GitLab's *Delete source branch* and *Squash when merging*.
   - [x] **Push and open in one step** ("Push 3 commits and open"), setting the upstream; draft or ready; then straight to the new request's view.
+- [x] Drafts kept on the forge (GitHub's pending review, GitLab's draft notes); editing and deleting your comments; a status line in the sidebar; outdated threads in Changes; GitLab fast-forward and bringing a request up to date; a new request as a view of its own.
 - Later: check logs and re-runs; editing the title, description, reviewers, assignees and labels; draft/ready, close/reopen; sidebar filters (*Mine*, *Review requested*), and a count of requests waiting on you.
 
 ## Later (ideas, not commitments)
