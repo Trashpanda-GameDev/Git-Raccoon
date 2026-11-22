@@ -133,6 +133,19 @@ Built in 0.5.18, with one set of words for GitHub and GitLab (what a forge doesn
 - [x] Drafts kept on the forge (GitHub's pending review, GitLab's draft notes); editing and deleting your comments; a status line in the sidebar; outdated threads in Changes; GitLab fast-forward and bringing a request up to date; a new request as a view of its own.
 - Later: check logs and re-runs; editing the title, description, reviewers, assignees and labels; draft/ready, close/reopen; sidebar filters (*Mine*, *Review requested*), and a count of requests waiting on you.
 
+### Conflict handling
+
+Mockups: [docs/design/conflicts](docs/design/conflicts) (today's view is `0-today.png`). Build work: the [Conflict handling milestone](https://github.com/Trashpanda-GameDev/Git-Raccoon/milestone/3).
+
+Everything is named by branch or commit (*main*, *feature/login*, "Remember the last user"), never "ours" and "theirs", which swap meaning between a merge and a rebase.
+
+- [ ] **A. One place for the whole conflict**, in place of the banner: what's in progress ("Rebasing feature/login onto main · applying commit 3 of 5: *Remember the last user*"), progress (2 of 4 conflicts resolved, in 3 files), each file with its state (conflicts left; deleted or renamed on one side, with *Keep yours* / *Delete it*; resolved, with *Review* and *Undo*; merged by Git), *Next conflict*, and **Skip this commit**, **Abort** and **Continue** (saying how many are left).
+- [ ] **B. A three-way editor:** the common ancestor and both sides (each with the commit, author and age that changed it) above an editable result. Per conflict: *Take main*, *Take feature/login*, *Both ▾* (in either order); per line, a checkbox to take it; editing anywhere; previous/next conflict (Ctrl+↑/↓); *Done with this file*.
+- [ ] **C. Warn before conflicting:** before Merge, Rebase and Pull, check without touching any files (`git merge-tree`) and say which files would conflict, with *Rebase instead* (or *Merge instead*) and Cancel. Pull/merge requests show "Conflicts with main in 2 files".
+- [ ] **D. Why each side changed it:** beside a conflict, the commits on each side that changed its lines, with their messages and authors (and the request they came in with, if known); *Show these commits* selects them in the graph.
+- [ ] **E. An agent's proposal:** agent tools to read the conflicts and propose a file's resolution, with its reasoning; shown in the editor as a proposal to *Use*, *Edit* or *Discard*, written only when the person chooses. Also *Ask an agent* from the conflict screen when one is connected.
+- [ ] **F. Solve it once:** Settings › Git › *Remember how I resolve conflicts* (Git's `rerere`); a conflict seen before is resolved the same way and marked as such, for review (*Review*, *Redo by hand*).
+
 ## Later (ideas, not commitments)
 
 - Commit message suggestions from the staged diff
