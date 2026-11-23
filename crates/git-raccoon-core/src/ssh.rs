@@ -622,6 +622,25 @@ pub fn test_connection(ssh: &Ssh, user: &str, host: &str, port: Option<u16>) -> 
     Ok(classify(out.status.code(), &text))
 }
 
+/// Whether signing in to `host` over SSH works right now, asking nobody
+/// anything (`BatchMode`): for choosing SSH when it would just work.
+pub fn works_quietly(ssh: &Ssh, user: &str, host: &str) -> bool {
+    let mut cmd = ssh.command();
+    cmd.args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8"])
+        .arg(format!("{user}@{host}"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    cmd.output().is_ok_and(|o| {
+        let text = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        matches!(classify(o.status.code(), &text), Connection::SignedIn(_))
+    })
+}
+
 /// Reads what `ssh -T -v` said (and its exit code) into what happened.
 pub fn classify(code: Option<i32>, text: &str) -> Connection {
     let lower = text.to_lowercase();

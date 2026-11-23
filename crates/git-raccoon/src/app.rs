@@ -2765,7 +2765,9 @@ impl App {
                 Some(Fix::Retry) => {
                     let op = problem.op.clone();
                     repo.ssh_problem = None;
-                    repo.run(&ctx, op);
+                    if let Some(op) = op {
+                        repo.run(&ctx, op);
+                    }
                 }
                 Some(Fix::Run(op)) => {
                     repo.ssh_problem = None;
@@ -3050,6 +3052,10 @@ fn repo_action(repo: &mut RepoView, ctx: &egui::Context, action: sidebar::Action
         sidebar::Action::DeleteTag(name) => repo.confirm_delete_tag(name),
         sidebar::Action::EditRemote(name) => repo.edit_remote(name),
         sidebar::Action::RemoveRemote(name) => repo.confirm_remove_remote(name),
+        sidebar::Action::ChangeRemoteUrl { name, url, how } => {
+            repo.confirm_remote_url(name, url, how);
+        }
+        sidebar::Action::TestRemote(name) => repo.test_remote(&name),
         sidebar::Action::Merge { source, target } => repo.ask_merge(source, target),
         sidebar::Action::Rebase(onto) => repo.confirm_rebase(onto),
         sidebar::Action::OpenPath(p) => repo.open_request = Some(p),

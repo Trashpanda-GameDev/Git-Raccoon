@@ -7755,3 +7755,89 @@ fn explains_an_ssh_failure_and_offers_the_fix() {
     git_raccoon_core::ssh::set_ssh_dir(None);
     let _ = std::fs::remove_dir_all(&home);
 }
+
+/// A remote switched between HTTPS and SSH (and back with Undo), and its
+/// SSH connection tested.
+#[cfg(unix)]
+#[test]
+fn switches_a_remote_between_https_and_ssh() {
+    use egui::accesskit::Role;
+    use std::os::unix::fs::PermissionsExt as _;
+    let sample = Sample::build();
+    git(
+        &sample,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "https://git.example.com/rocky/app.git",
+        ],
+    );
+    let home = std::env::temp_dir().join(format!("git-raccoon-remote-ssh-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).unwrap();
+    git_raccoon_core::ssh::set_ssh_dir(Some(home.join(".ssh")));
+    let fake = home.join("ssh");
+    std::fs::write(
+        &fake,
+        "#!/bin/sh\necho 'Welcome to GitLab, @rocky!'\nexit 0\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    git(
+        &sample,
+        &["config", "core.sshCommand", &fake.to_string_lossy()],
+    );
+    let url = |app: &App| {
+        app.repo()
+            .unwrap()
+            .refs
+            .remotes
+            .iter()
+            .find(|r| r.name == "origin")
+            .and_then(|r| r.url.clone())
+    };
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+
+    menu_item(&mut h, "origin", "Use SSH instead…");
+    h.get_by_label("Use SSH for origin?");
+    h.get_by_label_contains("to git@git.example.com:rocky/app.git");
+    h.get_by_role_and_label(Role::Button, "Use SSH").click();
+    wait_for(&mut h, "the SSH address", |app| {
+        url(app).as_deref() == Some("git@git.example.com:rocky/app.git")
+    });
+    // Undone: back as it was.
+    h.get_by_label("Undo").click();
+    wait_for(&mut h, "the old address", |app| {
+        url(app).as_deref() == Some("https://git.example.com/rocky/app.git")
+    });
+
+    // Over SSH again, then tested: signed in, as whom.
+    git(
+        &sample,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "git@git.example.com:rocky/app.git",
+        ],
+    );
+    let ctx = h.ctx.clone();
+    h.state_mut().repo_mut().unwrap().refresh(&ctx);
+    wait_for(&mut h, "the address", |app| {
+        url(app).as_deref() == Some("git@git.example.com:rocky/app.git")
+    });
+    menu_item(&mut h, "origin", "Test connection");
+    let start = Instant::now();
+    while h
+        .query_by_label("Signed in to git.example.com as rocky.")
+        .is_none()
+    {
+        assert!(start.elapsed() < Duration::from_secs(20), "no result");
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    git_raccoon_core::ssh::set_ssh_dir(None);
+    let _ = std::fs::remove_dir_all(&home);
+}

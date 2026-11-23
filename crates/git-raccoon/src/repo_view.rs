@@ -773,12 +773,20 @@ struct Before {
     tips: Vec<(String, String, Option<String>)>,
     /// HEAD's commit, for operations that move it.
     head: Option<String>,
+    /// A remote's address before it's changed.
+    remote_url: Option<String>,
 }
 
 impl Before {
     fn capture(op: &Op, path: &str) -> Self {
         let mut b = Before::default();
         match op {
+            Op::SetRemoteUrl { name, .. } => {
+                b.remote_url = git_raccoon_core::git_output(path, &["remote", "get-url", name])
+                    .ok()
+                    .map(|u| u.trim().to_string())
+                    .filter(|u| !u.is_empty());
+            }
             Op::DeleteBranch { name, .. } | Op::DeleteBranchEverywhere { name, .. } => {
                 b.tip = branch::tip(path, name).ok();
                 b.upstream = undo::upstream_of(path, name).ok().flatten();
@@ -887,6 +895,13 @@ fn undo_for(op: &Op, before: Before, path: &str) -> Option<Undoable> {
         })
     };
     let (label, ops): (String, Vec<Op>) = match op {
+        Op::SetRemoteUrl { name, .. } => (
+            format!("Undo change {name}'s address"),
+            vec![Op::SetRemoteUrl {
+                name: name.clone(),
+                url: before.remote_url.clone()?,
+            }],
+        ),
         Op::CreateBranch { name, checkout, .. } => {
             let mut ops = Vec::new();
             if *checkout {
@@ -2801,6 +2816,48 @@ impl RepoView {
             original: name,
             url,
         });
+    }
+
+    /// Asks before changing a remote's address, showing both.
+    pub fn confirm_remote_url(&mut self, name: String, url: String, how: &str) {
+        let old = self
+            .refs
+            .remotes
+            .iter()
+            .find(|r| r.name == name)
+            .and_then(|r| r.url.clone())
+            .unwrap_or_default();
+        let why = if how == "Use port 443" {
+            " GitHub also answers SSH on port 443, which firewalls that block SSH's usual port let through."
+        } else {
+            ""
+        };
+        self.dialog = Some(Dialog::Confirm {
+            title: format!("{how} for {name}?"),
+            body: format!(
+                "Changes {name}'s address\nfrom {old}\nto {url}\n\nYou can undo it.{why}"
+            ),
+            button: how.to_string(),
+            danger: false,
+            op: Op::SetRemoteUrl { name, url },
+        });
+    }
+
+    /// Tests signing in to a remote over SSH, saying who as, or why not.
+    pub fn test_remote(&mut self, name: &str) {
+        let Some(url) = self
+            .refs
+            .remotes
+            .iter()
+            .find(|r| r.name == name)
+            .and_then(|r| r.url.clone())
+        else {
+            return;
+        };
+        self.ssh_problem = Some(crate::ui::ssh_problem::SshProblem::test(
+            name.to_string(),
+            url,
+        ));
     }
 
     pub fn confirm_remove_remote(&mut self, name: String) {

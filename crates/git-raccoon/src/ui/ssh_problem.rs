@@ -22,8 +22,8 @@ pub struct Found {
 
 /// An operation that failed over SSH, being looked into.
 pub struct SshProblem {
-    /// What failed, to run again once fixed.
-    pub op: Op,
+    /// What failed, to run again once fixed (`None`: only testing).
+    pub op: Option<Op>,
     /// The remote it went to, and its address.
     pub remote: String,
     pub url: String,
@@ -39,10 +39,25 @@ pub struct SshProblem {
 impl SshProblem {
     pub fn new(op: Op, remote: String, url: String, said: String) -> Self {
         SshProblem {
-            op,
+            op: Some(op),
             remote,
             url,
             said,
+            found: None,
+            looking: None,
+            fixing: None,
+            failed: None,
+            details: false,
+        }
+    }
+
+    /// Testing a remote's connection (nothing failed yet).
+    pub fn test(remote: String, url: String) -> Self {
+        SshProblem {
+            op: None,
+            remote,
+            url,
+            said: String::new(),
             found: None,
             looking: None,
             fixing: None,
@@ -243,14 +258,20 @@ pub fn show(
             Err(e) => p.failed = Some(e),
         }
     }
-    let verb = p.op.verb();
+    let verb = p.op.as_ref().map_or("connect", Op::verb);
+    let testing = p.op.is_none();
     let mut chosen = None;
     let modal = egui::Modal::new(egui::Id::new("ssh-problem")).show(ctx, |ui| {
         ui.set_width(520.0);
         let Some(found) = &p.found else {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(icon::WARNING).color(theme::danger()));
-                ui.label(RichText::new(format!("Couldn't {verb} over SSH")).strong().size(15.0));
+                let title = if testing {
+                    format!("Testing {}'s connection", p.remote)
+                } else {
+                    format!("Couldn't {verb} over SSH")
+                };
+                ui.label(RichText::new(title).strong().size(15.0));
             });
             ui.horizontal(|ui| {
                 ui.spinner();
@@ -264,9 +285,21 @@ pub fn show(
             .account
             .as_ref()
             .map_or_else(|| host.clone(), |(a, _)| a.place());
-        let (title, body) = words(&cause, verb, &host, &forge, &found.diagnosis);
+        let (title, body) = if testing && cause == Cause::Works {
+            (
+                found.diagnosis.connection.describe(&host),
+                format!("{} reaches {host} over SSH, and signs in.", p.remote),
+            )
+        } else {
+            words(&cause, verb, &host, &forge, &found.diagnosis)
+        };
+        let (glyph, colour) = if cause == Cause::Works {
+            (icon::CHECK, theme::add())
+        } else {
+            (icon::WARNING, theme::danger())
+        };
         ui.horizontal(|ui| {
-            ui.label(RichText::new(icon::WARNING).color(theme::danger()).size(16.0));
+            ui.label(RichText::new(glyph).color(colour).size(16.0));
             ui.label(RichText::new(title).strong().size(15.0));
         });
         ui.add_space(4.0);
@@ -318,17 +351,17 @@ pub fn show(
                     let label = format!("Use HTTPS for {} instead", p.remote);
                     let b = ui.button(&label).on_hover_text(format!("Changes {}'s address to {url}", p.remote));
                     if b.clicked() {
-                        *chosen = Some(Fix::Run(Op::Then(vec![
-                            Op::SetRemoteUrl {
-                                name: p.remote.clone(),
-                                url: url.clone(),
-                            },
-                            p.op.clone(),
-                        ])));
+                        let mut ops = vec![Op::SetRemoteUrl {
+                            name: p.remote.clone(),
+                            url: url.clone(),
+                        }];
+                        ops.extend(p.op.clone());
+                        *chosen = Some(Fix::Run(Op::Then(ops)));
                     }
                 }
             };
             match &cause {
+                Cause::Works if testing => {}
                 Cause::Works | Cause::NameNotFound | Cause::Other(_) => {
                     if primary(ui, "Try again").clicked() {
                         chosen = Some(Fix::Retry);
@@ -423,13 +456,12 @@ pub fn show(
                         let b = primary(ui, "Use port 443")
                             .on_hover_text(format!("GitHub also answers SSH on port 443, which firewalls let through: changes {}'s address to {url}", p.remote));
                         if b.clicked() {
-                            chosen = Some(Fix::Run(Op::Then(vec![
-                                Op::SetRemoteUrl {
-                                    name: p.remote.clone(),
-                                    url,
-                                },
-                                p.op.clone(),
-                            ])));
+                            let mut ops = vec![Op::SetRemoteUrl {
+                                name: p.remote.clone(),
+                                url,
+                            }];
+                            ops.extend(p.op.clone());
+                            chosen = Some(Fix::Run(Op::Then(ops)));
                         }
                     }
                 }

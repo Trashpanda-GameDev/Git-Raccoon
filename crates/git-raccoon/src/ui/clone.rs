@@ -36,6 +36,11 @@ pub struct Form {
     pub folders: String,
     /// Why the last attempt failed.
     pub error: Option<String>,
+    /// Whether SSH works with a host, being found out, and the answer.
+    ssh_check: Option<(String, crate::task::Task<bool>)>,
+    ssh_works: Option<(String, bool)>,
+    /// SSH or HTTPS was picked by hand: not switched for them.
+    scheme_chosen: bool,
 }
 
 impl Form {
@@ -53,6 +58,9 @@ impl Form {
             sparse: false,
             folders: String::new(),
             error: None,
+            ssh_check: None,
+            ssh_works: None,
+            scheme_chosen: false,
         }
     }
 
@@ -93,7 +101,11 @@ fn repository_picker(ui: &mut egui::Ui, form: &mut Form) {
         .repos
         .as_ref()
         .and_then(|r| r.as_ref().ok())
-        .and_then(|repos| repos.iter().find(|r| r.clone_url == form.url))
+        .and_then(|repos| {
+            repos
+                .iter()
+                .find(|r| r.clone_url == form.url || r.ssh_url == form.url)
+        })
         .map(|r| r.path.clone());
     let shown = picked.unwrap_or_else(|| "Choose one of your repositories".into());
     let mut chosen = None;
@@ -139,7 +151,7 @@ fn repository_picker(ui: &mut egui::Ui, form: &mut Form) {
                             icon::BOOK_BOOKMARK
                         };
                         let row = ui.selectable_label(
-                            form.url == repo.clone_url,
+                            form.url == repo.clone_url || form.url == repo.ssh_url,
                             format!("{lock}  {}", repo.path),
                         );
                         let row = if repo.description.is_empty() {
@@ -163,6 +175,85 @@ fn repository_picker(ui: &mut egui::Ui, form: &mut Form) {
     if let Some(url) = chosen {
         form.set_url(url);
     }
+}
+
+/// SSH or HTTPS, for an address that can be either: SSH chosen when the
+/// key already works with that host (unless picked by hand).
+fn connect_with(ui: &mut egui::Ui, form: &mut Form) {
+    use git_raccoon_core::ssh;
+    let is_ssh = ssh::parse_url(&form.url).is_some();
+    let other = if is_ssh {
+        ssh::https_url(&form.url)
+    } else {
+        ssh::ssh_url(&form.url)
+    };
+    let Some(other) = other else { return };
+    let host = ssh::parse_url(if is_ssh { &form.url } else { &other })
+        .map(|u| u.host)
+        .unwrap_or_default();
+    // Does SSH work with it? Found out once per host, asking nobody.
+    if let Some((h, task)) = &form.ssh_check
+        && let Some(works) = task.poll()
+    {
+        form.ssh_works = Some((h.clone(), works));
+        form.ssh_check = None;
+    }
+    let known = form
+        .ssh_works
+        .as_ref()
+        .filter(|(h, _)| *h == host)
+        .map(|(_, w)| *w);
+    if known.is_none() && form.ssh_check.as_ref().is_none_or(|(h, _)| *h != host) {
+        let h = host.clone();
+        form.ssh_check = Some((
+            host.clone(),
+            crate::task::Task::spawn(ui.ctx(), move || {
+                ssh::works_quietly(&ssh::Ssh::for_git(None), "git", &h)
+            }),
+        ));
+    }
+    if known == Some(true) && !is_ssh && !form.scheme_chosen {
+        form.set_url(other.clone());
+        return;
+    }
+    label(ui, "Connect with");
+    ui.vertical(|ui| {
+        ui.horizontal(|ui| {
+            let ssh_button = ui.selectable_label(is_ssh, "SSH");
+            let https_button = ui.selectable_label(!is_ssh, "HTTPS");
+            ui.ctx().accesskit_node_builder(ssh_button.id, |n| n.set_label("Connect with SSH"));
+            ui.ctx().accesskit_node_builder(https_button.id, |n| n.set_label("Connect with HTTPS"));
+            if (ssh_button.clicked() && !is_ssh) || (https_button.clicked() && is_ssh) {
+                form.scheme_chosen = true;
+                form.set_url(other.clone());
+            }
+        });
+        match known {
+            Some(true) => {
+                ui.label(
+                    RichText::new(format!("{}  Your SSH key works with {host}", icon::CHECK))
+                        .size(12.0)
+                        .color(theme::add()),
+                );
+            }
+            Some(false) => {
+                ui.label(
+                    RichText::new(format!(
+                        "SSH isn't set up for {host} yet (Settings › SSH): HTTPS signs in with your account."
+                    ))
+                    .size(12.0)
+                    .color(theme::muted()),
+                );
+            }
+            None => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(RichText::new(format!("Checking SSH with {host}…")).size(12.0).color(theme::muted()));
+                });
+            }
+        }
+    });
+    ui.end_row();
 }
 
 /// The form, for `accounts` signed in to.
@@ -197,6 +288,7 @@ fn details(ui: &mut egui::Ui, form: &mut Form, accounts: &[Account], action: &mu
                 form.set_url(url);
             }
             ui.end_row();
+            connect_with(ui, form);
             label(ui, "Where to clone to");
             ui.horizontal(|ui| {
                 field_sized(

@@ -918,6 +918,15 @@ pub enum Action {
     /// Add a remote (`None`) or edit one.
     EditRemote(Option<String>),
     RemoveRemote(String),
+    /// Change a remote's address (to SSH, HTTPS, or GitHub's port 443):
+    /// its name, the new address, and what that is ("Use SSH").
+    ChangeRemoteUrl {
+        name: String,
+        url: String,
+        how: &'static str,
+    },
+    /// Test signing in to a remote over SSH.
+    TestRemote(String),
     /// Rebase the checked-out branch onto this one.
     Rebase(String),
     /// Open this repository (a submodule or worktree) in a tab.
@@ -1638,10 +1647,49 @@ pub fn show(
                         let page = web.remote_page(name);
                         response.context_menu(|ui| {
                             web_items(ui, &mut c.action, page.as_ref());
-                            let items = vec![
+                            let mut items = vec![
                                 ("Edit…", true, Action::EditRemote(Some((*name).to_string()))),
                                 ("Remove…", true, Action::RemoveRemote((*name).to_string())),
                             ];
+                            // SSH or HTTPS, and testing SSH.
+                            if let Some(url) = url {
+                                use git_raccoon_core::ssh;
+                                let change =
+                                    |url: String, how: &'static str| Action::ChangeRemoteUrl {
+                                        name: (*name).to_string(),
+                                        url,
+                                        how,
+                                    };
+                                if let Some(u) = ssh::parse_url(url) {
+                                    if let Some(https) = ssh::https_url(url) {
+                                        items.push((
+                                            "Use HTTPS instead…",
+                                            true,
+                                            change(https, "Use HTTPS"),
+                                        ));
+                                    }
+                                    if u.port != Some(443)
+                                        && let Some(p443) = ssh::port_443_url(url)
+                                    {
+                                        items.push((
+                                            "Use port 443…",
+                                            true,
+                                            change(p443, "Use port 443"),
+                                        ));
+                                    }
+                                    items.push((
+                                        "Test connection",
+                                        true,
+                                        Action::TestRemote((*name).to_string()),
+                                    ));
+                                } else if let Some(ssh_url) = ssh::ssh_url(url) {
+                                    items.push((
+                                        "Use SSH instead…",
+                                        true,
+                                        change(ssh_url, "Use SSH"),
+                                    ));
+                                }
+                            }
                             menu(ui, &mut c.action, items);
                         });
                         if open {

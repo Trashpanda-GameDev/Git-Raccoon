@@ -262,6 +262,8 @@ pub struct Repo {
     pub private: bool,
     /// The address to clone it from (HTTPS).
     pub clone_url: String,
+    /// The same over SSH.
+    pub ssh_url: String,
 }
 
 fn repo(kind: Kind, v: &serde_json::Value) -> Repo {
@@ -271,12 +273,14 @@ fn repo(kind: Kind, v: &serde_json::Value) -> Repo {
             description: text(v, "description"),
             private: v["private"].as_bool().unwrap_or(false),
             clone_url: text(v, "clone_url"),
+            ssh_url: text(v, "ssh_url"),
         },
         Kind::GitLab => Repo {
             path: text(v, "path_with_namespace"),
             description: text(v, "description"),
             private: v["visibility"].as_str() != Some("public"),
             clone_url: text(v, "http_url_to_repo"),
+            ssh_url: text(v, "ssh_url_to_repo"),
         },
     }
 }
