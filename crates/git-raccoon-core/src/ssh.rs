@@ -703,6 +703,138 @@ fn signed_in_as(text: &str) -> Option<String> {
     None
 }
 
+/// This computer's name, for a key's comment and its title on a forge.
+pub fn computer_name() -> String {
+    env("COMPUTERNAME")
+        .or_else(|| env("HOSTNAME"))
+        .or_else(|| {
+            std::fs::read_to_string("/etc/hostname")
+                .ok()
+                .map(|n| n.trim().to_string())
+                .filter(|n| !n.is_empty())
+        })
+        .or_else(|| {
+            let out = Command::new("hostname").output().ok()?;
+            let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            (!name.is_empty()).then_some(name)
+        })
+        .unwrap_or_else(|| "this computer".into())
+}
+
+/// A new key's usual comment: user@computer.
+pub fn default_comment() -> String {
+    let user = env("USER")
+        .or_else(|| env("USERNAME"))
+        .unwrap_or_else(|| "me".into());
+    format!("{user}@{}", computer_name())
+}
+
+/// A free file name in `dir` for a new key: `id_ed25519`, else
+/// `id_ed25519_2`… (neither the key nor its .pub may exist).
+pub fn free_key_name(dir: &Path, base: &str) -> String {
+    let taken = |n: &str| dir.join(n).exists() || dir.join(format!("{n}.pub")).exists();
+    if !taken(base) {
+        return base.to_string();
+    }
+    (2..)
+        .map(|i| format!("{base}_{i}"))
+        .find(|n| !taken(n))
+        .unwrap_or_else(|| base.to_string())
+}
+
+/// Makes an ed25519 key pair in `dir` (made if missing), in OpenSSH's
+/// format, protected by `passphrase` if given. Never overwrites a key: the
+/// name is `name` if free, else the next free one. The folder is private to
+/// you (0700 on Unix) and so is the key (0600).
+pub fn create_key(dir: &Path, name: &str, comment: &str, passphrase: Option<&str>) -> Result<Key> {
+    use ssh_key::rand_core::OsRng;
+    let io = |what: &str, e: std::io::Error| Error::Unsupported(format!("couldn't {what}: {e}"));
+    std::fs::create_dir_all(dir).map_err(|e| io("make the .ssh folder", e))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = std::fs::metadata(dir).map(|m| m.permissions().mode() & 0o777);
+        // Only tightened, never loosened.
+        if mode.is_ok_and(|m| m & 0o077 != 0) {
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+                .map_err(|e| io("make the .ssh folder private", e))?;
+        }
+    }
+    let crypto = |e: ssh_key::Error| Error::Unsupported(format!("couldn't make the key: {e}"));
+    let mut key = PrivateKey::random(&mut OsRng, ssh_key::Algorithm::Ed25519).map_err(crypto)?;
+    key.set_comment(comment);
+    let public = key.public_key().to_openssh().map_err(crypto)?;
+    let key = match passphrase.filter(|p| !p.is_empty()) {
+        Some(p) => key.encrypt(&mut OsRng, p).map_err(crypto)?,
+        None => key,
+    };
+    let text = key.to_openssh(ssh_key::LineEnding::LF).map_err(crypto)?;
+    let name = free_key_name(dir, name);
+    let path = dir.join(&name);
+    write_new(&path, text.as_bytes(), 0o600).map_err(|e| io("save the key", e))?;
+    write_new(
+        &PathBuf::from(format!("{}.pub", path.display())),
+        format!("{public}\n").as_bytes(),
+        0o644,
+    )
+    .map_err(|e| io("save the public key", e))?;
+    Ok(read_key(&path))
+}
+
+/// Writes a file that mustn't exist yet, with `mode` on Unix.
+fn write_new(path: &Path, bytes: &[u8], mode: u32) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(mode);
+    }
+    #[cfg(not(unix))]
+    let _ = mode;
+    let mut file = options.open(path)?;
+    file.write_all(bytes)
+}
+
+/// The `~/.ssh/config` lines that make SSH use `key` for `host`, to show
+/// before adding them.
+pub fn config_entry(host: &str, key: &Path, dir: &Path) -> String {
+    // ~/.ssh/name where it's in ~/.ssh, as people write it.
+    let file = match key.strip_prefix(dir) {
+        Ok(rest) => format!("~/.ssh/{}", rest.to_string_lossy().replace('\\', "/")),
+        Err(_) => key.to_string_lossy().into_owned(),
+    };
+    let file = if file.contains(' ') {
+        format!("\"{file}\"")
+    } else {
+        file
+    };
+    format!("Host {host}\n  IdentityFile {file}\n")
+}
+
+/// Adds `entry` (from [`config_entry`]) to the end of `dir/config`, made
+/// (private to you) if missing; what's there is kept as it is.
+pub fn add_config_entry(dir: &Path, entry: &str) -> Result<()> {
+    let path = dir.join("config");
+    let old = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut text = old.clone();
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    if !text.is_empty() {
+        text.push('\n');
+    }
+    text.push_str(entry);
+    let io = |e: std::io::Error| Error::Unsupported(format!("couldn't write ~/.ssh/config: {e}"));
+    if old.is_empty() && !path.exists() {
+        std::fs::create_dir_all(dir).map_err(io)?;
+        write_new(&path, text.as_bytes(), 0o600).map_err(io)
+    } else {
+        std::fs::write(&path, text).map_err(io)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1032,6 +1164,72 @@ mod tests {
             Some(t.dir.join("nothing.sock").to_string_lossy().into_owned()),
         );
         assert!(!gone.running);
+    }
+
+    #[test]
+    fn creates_keys_without_overwriting_any() {
+        let t = crate::testutil::TempRepo::new();
+        let dir = t.dir.join("home").join(".ssh");
+        let first = create_key(&dir, "id_ed25519", "rocky@box", None).unwrap();
+        let second = create_key(&dir, "id_ed25519", "second", Some("a long passphrase")).unwrap();
+        assert!(first.path.ends_with("id_ed25519") && second.path.ends_with("id_ed25519_2"));
+        assert_eq!(
+            (first.passphrase, second.passphrase),
+            (Some(false), Some(true))
+        );
+        assert_eq!(first.comment, "rocky@box");
+        assert_eq!(first.kind, "ED25519");
+        assert_ne!(first.fingerprint, second.fingerprint);
+        assert!(
+            first
+                .public
+                .as_deref()
+                .is_some_and(|p| p.starts_with("ssh-ed25519 "))
+        );
+        // It decrypts with its passphrase.
+        let text = std::fs::read_to_string(&second.path).unwrap();
+        let k = PrivateKey::from_openssh(&text).unwrap();
+        assert!(k.decrypt("a long passphrase").is_ok() && k.decrypt("wrong").is_err());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(&dir), 0o700);
+            assert_eq!(mode(&first.path), 0o600);
+        }
+        // ssh-keygen reads it (and gets the same public key), where there is one.
+        if let Ok(out) = Command::new("ssh-keygen")
+            .arg("-y")
+            .arg("-f")
+            .arg(&first.path)
+            .output()
+            && out.status.success()
+        {
+            let derived = String::from_utf8_lossy(&out.stdout);
+            let ours = first.public.unwrap();
+            let blob = |s: &str| s.split_whitespace().nth(1).map(str::to_string);
+            assert_eq!(blob(&derived), blob(&ours));
+        }
+        // A taken name is never written over, even by its .pub alone.
+        std::fs::write(dir.join("id_ed25519_3.pub"), "x").unwrap();
+        assert_eq!(free_key_name(&dir, "id_ed25519"), "id_ed25519_4");
+    }
+
+    #[test]
+    fn adds_a_config_entry_keeping_whats_there() {
+        let t = crate::testutil::TempRepo::new();
+        let dir = t.dir.join(".ssh");
+        let entry = config_entry("github.com", &dir.join("id_ed25519"), &dir);
+        assert_eq!(entry, "Host github.com\n  IdentityFile ~/.ssh/id_ed25519\n");
+        add_config_entry(&dir, &entry).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("config")).unwrap(), entry);
+        std::fs::write(dir.join("config"), "Host *\n  AddKeysToAgent yes").unwrap();
+        add_config_entry(&dir, &entry).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.join("config")).unwrap(),
+            format!("Host *\n  AddKeysToAgent yes\n\n{entry}")
+        );
+        assert!(config_entry("x", Path::new("/k/my key"), &dir).contains("\"/k/my key\""));
     }
 
     #[test]
