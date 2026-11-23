@@ -623,7 +623,8 @@ pub fn test_connection(ssh: &Ssh, user: &str, host: &str, port: Option<u16>) -> 
 }
 
 /// Whether signing in to `host` over SSH works right now, asking nobody
-/// anything (`BatchMode`): for choosing SSH when it would just work.
+/// anything (`BatchMode`), and the host says who you are (as GitHub and
+/// GitLab do): for choosing SSH when it would just work.
 pub fn works_quietly(ssh: &Ssh, user: &str, host: &str) -> bool {
     let mut cmd = ssh.command();
     cmd.args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8"])
@@ -637,7 +638,11 @@ pub fn works_quietly(ssh: &Ssh, user: &str, host: &str) -> bool {
             String::from_utf8_lossy(&o.stdout),
             String::from_utf8_lossy(&o.stderr)
         );
-        matches!(classify(o.status.code(), &text), Connection::SignedIn(_))
+        // Only when the host says who: that's a forge, and it works.
+        matches!(
+            classify(o.status.code(), &text),
+            Connection::SignedIn(Some(_))
+        )
     })
 }
 
@@ -1437,10 +1442,8 @@ pub fn https_url(url: &str) -> Option<String> {
 /// The SSH address for an HTTPS one (`https://github.com/o/r` →
 /// `git@github.com:o/r.git`).
 pub fn ssh_url(url: &str) -> Option<String> {
-    let rest = url
-        .trim()
-        .strip_prefix("https://")
-        .or_else(|| url.trim().strip_prefix("http://"))?;
+    // Only HTTPS: a plain-HTTP server isn't one with SSH alongside.
+    let rest = url.trim().strip_prefix("https://")?;
     let (authority, path) = rest.split_once('/')?;
     // Credentials and a web port don't carry over.
     let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
@@ -2187,6 +2190,11 @@ mod tests {
             Some("ssh://git@ssh.github.com:443/o/r.git")
         );
         assert_eq!(port_443_url("git@gitlab.com:o/r.git"), None);
+        assert_eq!(
+            ssh_url("http://127.0.0.1:8080/team/app.git"),
+            None,
+            "plain HTTP"
+        );
     }
 
     #[test]
