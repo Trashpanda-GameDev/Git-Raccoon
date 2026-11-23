@@ -7485,3 +7485,154 @@ fn keeps_push_clear_of_the_right_hand_buttons_when_narrow() {
     }
     assert!(push.right() <= 1000.0, "{push:?}");
 }
+
+/// A stand-in GitHub that keeps the SSH keys added to it.
+fn keys_server() -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    use std::io::{BufRead as _, BufReader, Read as _, Write as _};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let keys = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let held = std::sync::Arc::clone(&keys);
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut first = String::new();
+            let _ = reader.read_line(&mut first);
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                    break;
+                }
+                if let Some(n) = line.to_lowercase().strip_prefix("content-length:") {
+                    length = n.trim().parse().unwrap_or(0);
+                }
+            }
+            let mut body = vec![0; length];
+            let _ = reader.read_exact(&mut body);
+            let (status, reply) = if first.starts_with("POST /api/v3/user/keys") {
+                let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+                let key = v["key"].as_str().unwrap_or_default().to_string();
+                held.lock().unwrap().push(key.clone());
+                (
+                    201,
+                    serde_json::json!({ "id": 1, "title": v["title"], "key": key }).to_string(),
+                )
+            } else if first.starts_with("GET /api/v3/user/keys") {
+                let list: Vec<serde_json::Value> = held
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .enumerate()
+                    .map(|(i, k)| serde_json::json!({ "id": i, "title": "t", "key": k }))
+                    .collect();
+                (200, serde_json::Value::from(list).to_string())
+            } else {
+                (404, "{}".to_string())
+            };
+            let mut stream = stream;
+            let _ = write!(
+                stream,
+                "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                reply.len()
+            );
+        }
+    });
+    (base, keys)
+}
+
+#[test]
+fn manages_ssh_keys_in_settings() {
+    use egui::accesskit::Role;
+    use git_raccoon::forge::Kind;
+    use git_raccoon::forge::accounts::{self, Account};
+    let home = std::env::temp_dir().join(format!("git-raccoon-ssh-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    let dir = home.join(".ssh");
+    git_raccoon_core::ssh::set_ssh_dir(Some(dir.clone()));
+    let key = git_raccoon_core::ssh::create_key(&dir, "id_ed25519", "rocky@box", None).unwrap();
+    let (base, on_github) = keys_server();
+    accounts::use_memory_store();
+    let account = Account {
+        kind: Kind::GitHub,
+        base,
+        login: "rocky".into(),
+        client: None,
+    };
+    accounts::save(
+        &account,
+        &accounts::Secret {
+            token: "t".into(),
+            refresh: None,
+            expires: None,
+        },
+    )
+    .unwrap();
+    let place = format!("{} (rocky)", account.place());
+    let mut h = harness(Settings {
+        accounts: vec![account],
+        ..Settings::default()
+    });
+    h.run_ok();
+    press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    h.get_by_role_and_label(Role::Button, "SSH").click();
+    wait_for(&mut h, "the keys", |_| true);
+    let start = Instant::now();
+    while h
+        .query_by_label("Add id_ed25519 to ".to_string().as_str())
+        .is_none()
+        && h.query_by_label(&format!("Add id_ed25519 to {place}"))
+            .is_none()
+    {
+        assert!(
+            start.elapsed() < Duration::from_secs(20),
+            "the keys never showed"
+        );
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    h.run_ok();
+    h.get_by_label_contains("not in the agent");
+    screenshot(&mut h, "97-ssh-settings");
+
+    // Onto the account: it's there afterwards.
+    h.get_by_label(&format!("Add id_ed25519 to {place}"))
+        .click();
+    let start = Instant::now();
+    while h.query_by_label_contains("is on ").is_none() {
+        assert!(start.elapsed() < Duration::from_secs(20), "not added");
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let sent = on_github.lock().unwrap().clone();
+    let public = key.public.clone().unwrap();
+    assert_eq!(sent.len(), 1);
+    assert!(public.starts_with(&sent[0]), "the key, without its comment");
+    let start = Instant::now();
+    while h
+        .query_by_label(&format!("Add id_ed25519 to {place}"))
+        .is_some()
+    {
+        assert!(start.elapsed() < Duration::from_secs(20), "still offered");
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    // A new key, without a passphrase.
+    h.get_by_label_contains("Create a key").click();
+    h.run_ok();
+    h.get_by_label("No passphrase").click();
+    h.run_ok();
+    h.get_by_label("Create the key").click();
+    let start = Instant::now();
+    while !dir.join("id_ed25519_2").exists()
+        || h.query_by_label("Add id_ed25519_2 to the agent").is_none()
+    {
+        assert!(start.elapsed() < Duration::from_secs(20), "no new key");
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(dir.join("id_ed25519_2.pub").exists());
+    git_raccoon_core::ssh::set_ssh_dir(None);
+    let _ = std::fs::remove_dir_all(&home);
+}

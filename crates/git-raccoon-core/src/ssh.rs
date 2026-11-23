@@ -145,8 +145,21 @@ fn quiet_window(cmd: &mut Command) {
 #[cfg(not(windows))]
 fn quiet_window(_: &mut Command) {}
 
+/// A folder to use instead of `~/.ssh` (for tests).
+static DIR_OVERRIDE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+/// Uses `dir` instead of `~/.ssh` (None: back to `~/.ssh`). For tests.
+pub fn set_ssh_dir(dir: Option<PathBuf>) {
+    if let Ok(mut d) = DIR_OVERRIDE.lock() {
+        *d = dir;
+    }
+}
+
 /// The user's `~/.ssh` folder.
 pub fn ssh_dir() -> Option<PathBuf> {
+    if let Some(d) = DIR_OVERRIDE.lock().ok().and_then(|d| d.clone()) {
+        return Some(d);
+    }
     let home = env("HOME").or_else(|| env("USERPROFILE"))?;
     Some(PathBuf::from(home).join(".ssh"))
 }
@@ -1019,6 +1032,147 @@ pub fn use_ssh_for_git_everywhere(ssh: &Path) -> Result<()> {
     .map(drop)
 }
 
+impl Ssh {
+    /// The `ssh` the app's own Git uses: Windows' when it was chosen for
+    /// the app (see [`use_for_app`]), else the one Git would run.
+    pub fn for_app() -> Ssh {
+        match used_by_app() {
+            Some(p) => Ssh::from_program(&p.to_string_lossy(), "Git Raccoon"),
+            None => Ssh::for_git(None),
+        }
+    }
+}
+
+/// Adds a key to the agent (`ssh-add`), asking for its passphrase in the
+/// app when it has one.
+pub fn add_to_agent(ssh: &Ssh, key: &Path) -> Result<()> {
+    let mut cmd = Command::new(&ssh.add);
+    quiet_window(&mut cmd);
+    crate::cli::asking_add(&mut cmd);
+    let out = cmd
+        .arg(key)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| Error::Unsupported(format!("{} couldn't be run: {e}", ssh.add)))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let said = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    let lower = said.to_lowercase();
+    Err(Error::Command(
+        if lower.contains("could not open a connection")
+            || lower.contains("error connecting to agent")
+        {
+            "No SSH agent is running to add it to.".into()
+        } else if lower.contains("bad passphrase") || lower.contains("incorrect passphrase") {
+            "That passphrase isn't the key's.".into()
+        } else if lower.contains("unprotected private key") {
+            "SSH won't use this key: others can read the file. Make it private to you first.".into()
+        } else if said.is_empty() {
+            "ssh-add didn't add it.".into()
+        } else {
+            said
+        },
+    ))
+}
+
+/// A host SSH trusts, from `known_hosts`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnownHost {
+    /// Its names ("github.com", "[git.example.com]:2222"); empty for a
+    /// hashed entry, which doesn't say.
+    pub names: Vec<String>,
+    /// "ED25519", "RSA", "ECDSA"…
+    pub kind: String,
+    pub fingerprint: Option<String>,
+    /// Its line in the file (from 1).
+    pub line: usize,
+}
+
+/// The hosts in `dir/known_hosts`, as written (markers like
+/// `@cert-authority` and `@revoked` left out).
+pub fn known_hosts(dir: &Path) -> Vec<KnownHost> {
+    let text = std::fs::read_to_string(dir.join("known_hosts")).unwrap_or_default();
+    parse_known_hosts(&text)
+}
+
+pub fn parse_known_hosts(text: &str) -> Vec<KnownHost> {
+    text.lines()
+        .enumerate()
+        .filter_map(|(i, line)| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') || line.starts_with('@') {
+                return None;
+            }
+            let mut words = line.split_whitespace();
+            let hosts = words.next()?;
+            let algorithm = words.next()?;
+            let blob = words.next()?;
+            let names = if hosts.starts_with("|1|") {
+                Vec::new()
+            } else {
+                hosts.split(',').map(str::to_string).collect()
+            };
+            Some(KnownHost {
+                names,
+                kind: kind_name(algorithm),
+                fingerprint: fingerprint_of(&format!("{algorithm} {blob}")),
+                line: i + 1,
+            })
+        })
+        .collect()
+}
+
+/// What marks the lines the app writes to turn on adding keys to the
+/// agent when first used, so turning it off removes only those.
+const ADD_KEYS_MARK: &str = "# Git Raccoon: add keys to the agent when they're first used";
+
+/// Whether `dir/config` has SSH add keys to the agent when first used (the
+/// app's lines, or the user's own `AddKeysToAgent yes`).
+pub fn adds_keys_to_agent(dir: &Path) -> bool {
+    let text = std::fs::read_to_string(dir.join("config")).unwrap_or_default();
+    text.lines().any(|l| {
+        let l = l.trim().to_lowercase();
+        l.starts_with("addkeystoagent") && !l.ends_with("no")
+    })
+}
+
+/// Turns adding keys to the agent when first used on (adding the app's
+/// marked lines to `dir/config`) or off (removing only those).
+pub fn set_adds_keys_to_agent(dir: &Path, on: bool) -> Result<()> {
+    let path = dir.join("config");
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    if on {
+        if adds_keys_to_agent(dir) {
+            return Ok(());
+        }
+        return add_config_entry(
+            dir,
+            &format!("{ADD_KEYS_MARK}\nHost *\n  AddKeysToAgent yes\n"),
+        );
+    }
+    let Some(at) = text.find(ADD_KEYS_MARK) else {
+        return Ok(());
+    };
+    let block = format!("{ADD_KEYS_MARK}\nHost *\n  AddKeysToAgent yes\n");
+    let rest = text[at..]
+        .strip_prefix(&block)
+        .unwrap_or(&text[at + ADD_KEYS_MARK.len()..]);
+    // What was before (without the blank line put before the block), then
+    // what was after it.
+    let before = text[..at].trim_end_matches('\n');
+    let mut kept = String::new();
+    if !before.is_empty() {
+        kept.push_str(before);
+        kept.push('\n');
+    }
+    kept.push_str(rest);
+    std::fs::write(&path, kept)
+        .map_err(|e| Error::Unsupported(format!("couldn't write ~/.ssh/config: {e}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1524,6 +1678,53 @@ mod tests {
         if let WindowsAdvice::UseSystemSsh(p) = windows_advice(&Ssh::for_git(None), &w) {
             assert!(p.is_file());
         }
+    }
+
+    #[test]
+    fn reads_known_hosts() {
+        let hosts = parse_known_hosts(
+            "# comment\ngithub.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\n|1|abc=|def= ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\n@revoked * ssh-rsa AAAA\n[git.example.com]:2222,10.0.0.1 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\n",
+        );
+        assert_eq!(hosts.len(), 3);
+        assert_eq!(hosts[0].names, ["github.com"]);
+        // GitHub's published ed25519 fingerprint.
+        assert_eq!(
+            hosts[0].fingerprint.as_deref(),
+            Some("SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU")
+        );
+        assert!(hosts[1].names.is_empty(), "hashed");
+        assert_eq!(hosts[2].names, ["[git.example.com]:2222", "10.0.0.1"]);
+        assert_eq!(hosts[2].line, 5);
+    }
+
+    #[test]
+    fn turns_adding_keys_to_the_agent_on_and_off() {
+        let t = crate::testutil::TempRepo::new();
+        let dir = t.dir.join(".ssh");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mine = "Host work\n  HostName git.example.com\n";
+        std::fs::write(dir.join("config"), mine).unwrap();
+        assert!(!adds_keys_to_agent(&dir));
+        set_adds_keys_to_agent(&dir, true).unwrap();
+        assert!(adds_keys_to_agent(&dir));
+        let on = std::fs::read_to_string(dir.join("config")).unwrap();
+        assert!(
+            on.starts_with(mine) && on.contains("AddKeysToAgent yes"),
+            "{on}"
+        );
+        set_adds_keys_to_agent(&dir, true).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.join("config")).unwrap(),
+            on,
+            "once"
+        );
+        set_adds_keys_to_agent(&dir, false).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("config")).unwrap(), mine);
+        // The user's own line is theirs: shown as on, never removed.
+        std::fs::write(dir.join("config"), "Host *\n  AddKeysToAgent confirm\n").unwrap();
+        assert!(adds_keys_to_agent(&dir));
+        set_adds_keys_to_agent(&dir, false).unwrap();
+        assert!(adds_keys_to_agent(&dir));
     }
 
     #[test]

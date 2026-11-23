@@ -5,6 +5,11 @@ release page). Newest first; a version's heading is just its number.
 
 ## 0.5.28
 
+- **Settings › SSH**: your SSH keys in one place, each saying whether it's in the agent and on which of your GitHub and GitLab accounts, with *Copy public key*, *Add to the agent* (the passphrase asked in the app), *Add to GitHub/GitLab* and *Show in folder*.
+  - *Create a key…* makes an ed25519 key in `~/.ssh` (with a passphrase, or none after a warning) without a terminal, never overwriting one, and can add a `~/.ssh/config` entry for a host, shown first. *Use an existing key…* adds one from elsewhere.
+  - The agent: which one, whether it's running, and *Add keys to the agent when they're first used*.
+  - The hosts SSH trusts, and *Test connections* to your accounts' hosts ("Signed in to github.com as rocky.", or exactly why not).
+  - Signing in to GitHub now also asks to manage SSH keys; an older sign-in is offered a fresh one when it's needed.
 - **SSH on Windows uses the agent that has your keys**: when your keys are loaded in Windows' OpenSSH agent, Git Raccoon's Git uses Windows' own ssh, so they're used (Git for Windows' bundled ssh can't see them, and asks for the passphrase every time). Only Git Raccoon's commands change; your own `core.sshCommand` still wins.
 
 ## 0.5.27

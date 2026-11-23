@@ -2885,6 +2885,15 @@ impl App {
                     self.settings_open = false;
                     self.run_command(&ctx, Command::Feedback);
                 }
+                Some(crate::ui::settings::Action::PickSshKey) => {
+                    let mut dialog = rfd::FileDialog::new().set_title("An SSH private key");
+                    if let Some(dir) = git_raccoon_core::ssh::ssh_dir().filter(|d| d.is_dir()) {
+                        dialog = dialog.set_directory(dir);
+                    }
+                    if let Some(file) = dialog.pick_file() {
+                        crate::ui::ssh_settings::picked(&ctx, file);
+                    }
+                }
                 Some(crate::ui::settings::Action::BrowseCloneDir) => {
                     if let Some(dir) = rfd::FileDialog::new()
                         .set_title("Where clones go")

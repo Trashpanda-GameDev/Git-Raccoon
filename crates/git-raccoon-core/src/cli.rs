@@ -102,6 +102,20 @@ fn git_asking(path: &str, ask: bool) -> Command {
     cmd
 }
 
+/// Lets `ssh-add` ask for a key's passphrase in the app (it has no
+/// `BatchMode`: with nobody to ask, it fails rather than wait).
+pub(crate) fn asking_add(cmd: &mut Command) {
+    if let Some(ask) = crate::askpass::current() {
+        cmd.env(crate::askpass::ENV, &ask.value);
+        if unset("SSH_ASKPASS") {
+            cmd.env("SSH_ASKPASS", &ask.program)
+                .env("SSH_ASKPASS_REQUIRE", "force");
+        }
+    } else {
+        cmd.env("SSH_ASKPASS_REQUIRE", "never");
+    }
+}
+
 /// Lets a plain `ssh` (not through Git) ask its questions (passphrases, new
 /// hosts) in the app, as Git's do; with nobody to ask, it never waits on a
 /// terminal (`BatchMode`).

@@ -35,6 +35,8 @@ pub enum Action {
     CheckForUpdates,
     /// Restart into the downloaded version.
     RestartToUpdate,
+    /// Choose an SSH key file from elsewhere.
+    PickSshKey,
 }
 
 /// A part of the settings.
@@ -44,6 +46,7 @@ pub enum Section {
     Appearance,
     Git,
     Accounts,
+    Ssh,
     Tools,
     Agents,
     Updates,
@@ -51,10 +54,11 @@ pub enum Section {
 }
 
 impl Section {
-    const ALL: [Section; 7] = [
+    const ALL: [Section; 8] = [
         Section::Appearance,
         Section::Git,
         Section::Accounts,
+        Section::Ssh,
         Section::Tools,
         Section::Agents,
         Section::Updates,
@@ -67,6 +71,7 @@ impl Section {
             Section::Git => "Git",
             Section::Accounts => "Accounts",
             Section::Tools => "Tools",
+            Section::Ssh => "SSH",
             Section::Agents => "Agents",
             Section::Updates => "Updates and privacy",
             Section::About => "About",
@@ -79,6 +84,7 @@ impl Section {
             Section::Git => icon::GIT_BRANCH,
             Section::Accounts => icon::USER_CIRCLE,
             Section::Tools => icon::TERMINAL_WINDOW,
+            Section::Ssh => icon::KEY,
             Section::Agents => icon::ROBOT,
             Section::Updates => icon::ARROWS_CLOCKWISE,
             Section::About => icon::INFO,
@@ -95,6 +101,9 @@ impl Section {
                 "GitHub and GitLab accounts, for pull requests, issues and cloning."
             }
             Section::Tools => "Other programs Git Raccoon works with.",
+            Section::Ssh => {
+                "Keys for signing in to GitHub, GitLab and other hosts without a password."
+            }
             Section::Agents => {
                 "AI agents, such as Claude Code, working with Git Raccoon: they read freely, and ask before changing anything."
             }
@@ -132,12 +141,12 @@ impl Section {
             }
             Section::Agents => settings.agents = d.agents,
             Section::Updates => settings.no_update_checks = d.no_update_checks,
-            Section::Accounts | Section::About => {}
+            Section::Accounts | Section::Ssh | Section::About => {}
         }
     }
 
     fn resettable(self) -> bool {
-        !matches!(self, Section::Accounts | Section::About)
+        !matches!(self, Section::Accounts | Section::Ssh | Section::About)
     }
 }
 
@@ -249,6 +258,24 @@ const ROWS: &[Row] = &[
         name: "Signed in",
         hint: "Tokens are kept in your system's keychain.",
         words: "accounts github gitlab sign in out token login",
+    },
+    Row {
+        section: Section::Ssh,
+        name: "Your keys",
+        hint: "In ~/.ssh, and on your signed-in accounts.",
+        words: "ssh keys key public private passphrase ed25519 create github gitlab",
+    },
+    Row {
+        section: Section::Ssh,
+        name: "SSH agent",
+        hint: "Remembers your keys' passphrases.",
+        words: "ssh agent passphrase ssh-add windows openssh",
+    },
+    Row {
+        section: Section::Ssh,
+        name: "Hosts",
+        hint: "Trusted, from known_hosts.",
+        words: "ssh hosts known_hosts trust fingerprint test connection",
     },
     Row {
         section: Section::Tools,
@@ -1512,6 +1539,13 @@ fn control(
                 );
             });
         }
+        "Your keys" => match crate::ui::ssh_settings::keys_row(ui, &settings.accounts) {
+            Some(true) => *action = Some(Action::PickSshKey),
+            Some(false) => *action = Some(Action::AddAccount),
+            None => {}
+        },
+        "SSH agent" => crate::ui::ssh_settings::agent_row(ui, &settings.accounts),
+        "Hosts" => crate::ui::ssh_settings::hosts_row(ui, &settings.accounts),
         "Signed in" => {
             if settings.accounts.is_empty() {
                 hint(ui, "None yet.");
