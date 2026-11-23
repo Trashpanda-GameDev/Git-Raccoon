@@ -5,6 +5,7 @@ mod app;
 pub mod changelog;
 pub mod commands;
 pub mod crash;
+mod emoji;
 pub mod feedback;
 pub mod forge;
 pub mod forge_view;

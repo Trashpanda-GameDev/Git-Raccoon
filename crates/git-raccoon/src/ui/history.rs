@@ -1529,6 +1529,8 @@ fn commit_menu(
     if let Some(open) = opened {
         chosen = Some(Click::Branch(open));
     }
+    copy_sha(ui, &c.id);
+    ui.separator();
     let on_branch = head.is_some();
     let target = head.unwrap_or("HEAD");
     let label = commit_label(&c.id, &c.summary);
@@ -1588,6 +1590,20 @@ fn commit_menu(
         }
     }
     chosen
+}
+
+/// "Copy SHA" (the whole one) and "Copy short SHA" (the first seven).
+fn copy_sha(ui: &mut egui::Ui, id: &str) {
+    let short = &id[..7.min(id.len())];
+    for (text, value) in [("Copy SHA", id), ("Copy short SHA", short)] {
+        let item = ui.button(format!("{}  {text}", icon::COPY));
+        ui.ctx()
+            .accesskit_node_builder(item.id, |n| n.set_label(text));
+        if item.on_hover_text(value).clicked() {
+            ui.ctx().copy_text(value.to_string());
+            ui.close();
+        }
+    }
 }
 
 /// "a1b2c3d Fix the thing", for dialogs about a commit.

@@ -481,6 +481,7 @@ fn body(
                     // What's drawn, not the space it's in.
                     let top = ui.cursor().top();
                     add(ui, c);
+                    scroll_while_dragging(ui);
                     ui.cursor().top() - top
                 })
         })
@@ -952,6 +953,40 @@ pub enum Action {
 /// from the sidebar or from a label on the graph, onto either.
 #[derive(Clone)]
 struct DragBranch(String);
+
+/// How near a section's top or bottom edge a dragged branch starts it
+/// scrolling, and how fast it scrolls (points a second) right at the edge.
+const DRAG_EDGE: f32 = 28.0;
+const DRAG_SPEED: f32 = 700.0;
+
+/// While a branch is dragged near the top or bottom of the section the
+/// pointer is in, scrolls that section that way, faster the nearer the
+/// edge, so a branch further up or down can be reached.
+fn scroll_while_dragging(ui: &mut egui::Ui) {
+    let ctx = ui.ctx().clone();
+    if egui::DragAndDrop::payload::<DragBranch>(&ctx).is_none() {
+        return;
+    }
+    let Some(pos) = ctx.pointer_interact_pos() else {
+        return;
+    };
+    let seen = ui.clip_rect();
+    if !seen.x_range().contains(pos.x) || !seen.y_range().contains(pos.y) {
+        return;
+    }
+    let edge = DRAG_EDGE.min(seen.height() / 3.0);
+    // Positive scrolls the contents down, showing what's above.
+    let towards = if pos.y < seen.top() + edge {
+        (seen.top() + edge - pos.y) / edge
+    } else if pos.y > seen.bottom() - edge {
+        -(pos.y - (seen.bottom() - edge)) / edge
+    } else {
+        return;
+    };
+    let dt = ctx.input(|i| i.stable_dt).min(0.1);
+    ui.scroll_with_delta(egui::vec2(0.0, towards * DRAG_SPEED * dt));
+    ctx.request_repaint();
+}
 
 /// Lets a row or label be dragged as the branch `name` ("origin/x" for a
 /// remote one).

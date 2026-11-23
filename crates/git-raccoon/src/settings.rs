@@ -197,6 +197,9 @@ pub struct Settings {
     pub sidebar_hidden: Vec<String>,
     /// Local branches pinned to the top of the sidebar, by repository path.
     pub pinned_branches: std::collections::BTreeMap<String, Vec<String>>,
+    /// Sidebar sections and folders closed, by repository path, so they
+    /// stay closed after a restart.
+    pub sidebar_collapsed: std::collections::BTreeMap<String, Vec<String>>,
     /// Review comments not sent yet, by request (see `ForgeView::drafts_key`).
     pub review_drafts: std::collections::BTreeMap<String, Vec<crate::forge::review::Draft>>,
     /// AI agents may connect (over MCP, through `git-raccoon mcp`). Off
@@ -382,6 +385,7 @@ impl Default for Settings {
             sidebar_hidden: Vec::new(),
             review_drafts: std::collections::BTreeMap::new(),
             pinned_branches: std::collections::BTreeMap::new(),
+            sidebar_collapsed: std::collections::BTreeMap::new(),
             agents: false,
             columns: Column::ALL.to_vec(),
             themes: Vec::new(),

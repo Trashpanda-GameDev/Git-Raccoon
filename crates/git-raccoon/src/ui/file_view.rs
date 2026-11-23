@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use eframe::egui::{self, Color32, RichText, Sense, Stroke};
 use git_raccoon_core::file_history::{Blame, Change};
+use git_raccoon_core::search::{Query, SearchField};
 
 use crate::format;
 use crate::theme;
@@ -46,9 +47,40 @@ pub fn history(
             if changes.is_empty() {
                 return message(ui, "No commits changed this file.", theme::muted());
             }
+            // Narrowed by what's typed in the search box at the top.
+            let query = search_box(ui);
+            let shown: Vec<&Change> = match &query {
+                Ok(q) if !q.is_empty() => changes.iter().filter(|c| q.matches_change(c)).collect(),
+                _ => changes.iter().collect(),
+            };
+            match &query {
+                Err(e) => {
+                    ui.horizontal(|ui| {
+                        ui.add_space(12.0);
+                        ui.label(
+                            RichText::new("Can't read the date")
+                                .size(12.0)
+                                .color(theme::danger()),
+                        )
+                        .on_hover_text(e);
+                    });
+                }
+                Ok(q) if !q.is_empty() => {
+                    let text = match shown.len() {
+                        0 => "No matches".to_string(),
+                        n => format!("{n} of {}", changes.len()),
+                    };
+                    ui.horizontal(|ui| {
+                        ui.add_space(12.0);
+                        ui.label(RichText::new(text).size(12.0).color(theme::muted()));
+                    });
+                }
+                Ok(_) => {}
+            }
+            ui.add_space(4.0);
             let area = egui::ScrollArea::vertical().auto_shrink([false, false]);
-            widgets::gapless_rows(ui, area, 44.0, changes.len(), |ui, range| {
-                for c in &changes[range] {
+            widgets::gapless_rows(ui, area, 44.0, shown.len(), |ui, range| {
+                for c in &shown[range] {
                     let (rect, response) = ui.allocate_exact_size(
                         egui::vec2(ui.available_width(), 44.0),
                         Sense::click(),
@@ -89,6 +121,44 @@ pub fn history(
             });
         });
     action
+}
+
+pub fn search_id() -> egui::Id {
+    egui::Id::new("file-history-search")
+}
+
+/// The search box over a file's history, with the filters' button; what's
+/// typed is kept while the app runs, for each file's history alike.
+fn search_box(ui: &mut egui::Ui) -> Result<Query, String> {
+    let key = search_id().with("query");
+    let mut query: String = ui.data(|d| d.get_temp(key)).unwrap_or_default();
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(egui_phosphor::regular::MAGNIFYING_GLASS)
+                .color(theme::muted())
+                .size(14.0),
+        );
+        let field = ui.add(
+            egui::TextEdit::singleline(&mut query)
+                .id(search_id())
+                .hint_text("Find in this file's history")
+                .desired_width(ui.available_width() - 44.0),
+        );
+        ui.ctx()
+            .accesskit_node_builder(field.id, |n| n.set_label("Search this file's history"));
+        if (field.has_focus() || field.lost_focus())
+            && ui.input(|i| i.key_pressed(egui::Key::Escape))
+        {
+            query.clear();
+        }
+        if crate::ui::search_bar::filters_button(ui, &mut query, search_id()) {
+            ui.memory_mut(|m| m.request_focus(search_id()));
+        }
+    });
+    ui.data_mut(|d| d.insert_temp(key, query.clone()));
+    Query::parse(&query, SearchField::Text)
 }
 
 /// The oldest and newest commit times in a blame, for its age stripes.

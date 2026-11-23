@@ -1623,8 +1623,6 @@ pub struct RepoView {
     pub images: Keyed<DiffKey, Result<Arc<ImagePair>, String>>,
     pub search: Search,
     pub sidebar_filter: String,
-    /// Sidebar sections and folders the user collapsed.
-    pub collapsed: std::collections::HashSet<String>,
     _watcher: Option<RepoWatcher>,
     /// Whether the working tree is watched; if not, the status is polled.
     watching_files: bool,
@@ -1718,7 +1716,6 @@ impl RepoView {
             images: Keyed::default(),
             search: Search::default(),
             sidebar_filter: String::new(),
-            collapsed: std::collections::HashSet::new(),
             _watcher: watcher,
             watching_files,
             history_changed,

@@ -26,6 +26,50 @@ pub struct Comment {
     pub suggestions: Vec<Suggestion>,
     /// It's in a thread on the code (GitHub keeps those apart).
     pub on_code: bool,
+    /// Emoji people reacted to it with, and how many of each.
+    pub reactions: Vec<Reaction>,
+}
+
+/// One kind of reaction to a comment, by its short name ("thumbsup",
+/// "tada", or any other emoji's name on GitLab) and how many gave it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Reaction {
+    pub name: String,
+    pub count: u32,
+}
+
+impl Reaction {
+    /// GitHub's reactions (as its REST API names them, or GraphQL's
+    /// "THUMBS_UP"), by the names GitLab and the emoji table use.
+    pub fn github(key: &str) -> Option<&'static str> {
+        Some(match key {
+            "+1" | "THUMBS_UP" => "thumbsup",
+            "-1" | "THUMBS_DOWN" => "thumbsdown",
+            "laugh" | "LAUGH" => "laughing",
+            "hooray" | "HOORAY" => "tada",
+            "confused" | "CONFUSED" => "confused",
+            "heart" | "HEART" => "heart",
+            "rocket" | "ROCKET" => "rocket",
+            "eyes" | "EYES" => "eyes",
+            _ => return None,
+        })
+    }
+
+    /// Tallies names given one at a time (GitLab lists each award), in
+    /// the order each was first given.
+    pub fn tally<'a>(names: impl IntoIterator<Item = &'a str>) -> Vec<Reaction> {
+        let mut out: Vec<Reaction> = Vec::new();
+        for name in names {
+            match out.iter_mut().find(|r| r.name == name) {
+                Some(r) => r.count += 1,
+                None => out.push(Reaction {
+                    name: name.to_string(),
+                    count: 1,
+                }),
+            }
+        }
+        out
+    }
 }
 
 /// A change suggested in a comment: lines `start..=end` of the file (as

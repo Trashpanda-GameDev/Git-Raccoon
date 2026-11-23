@@ -100,7 +100,8 @@ Moving around:
 ### The sidebar
 
 - **Click** an item to jump to its commit. The **filter** box at the top narrows the lists.
-- **Click a heading** to collapse its section; **drag the line** between sections to resize them.
+- **Click a heading** to collapse its section (it stays collapsed for that repository, after a restart too); **drag the line** between sections to resize them.
+- **Drag a branch** onto another to merge it; near the top or bottom of a section, the list scrolls to reach the rest.
 - **Right-click a heading** to hide sections you don't use (also in Settings › Appearance › Sidebar).
 - **Right-click a local branch › Pin to top** to keep it at the top of *Local* (pinned branches are listed by name, with a pin); *Unpin* puts it back.
 
@@ -119,9 +120,26 @@ Click a file to see its diff. Switch between:
 
 Diffs have syntax highlighting, the changed words marked, and image previews. Long lines scroll sideways.
 
+With a file open, **↑** and **↓** open the previous or next file in its list (a commit's files, or the staged or unstaged changes).
+
 ### Search
 
-**Ctrl+F** finds commits by message, author or SHA, or by the files they touch (the file button). **Enter** and **Shift+Enter** go through the matches; **Esc** closes it.
+**Ctrl+F** finds commits by message, author or SHA, or by the files they touch (the file button). **Enter** and **Shift+Enter** go through the matches; **Esc** closes it. The whole history is searched, as you type, without building an index first.
+
+**Filters** narrow it down, here and in a [file's history](#looking-back-file-history-and-blame) (the funnel button lists them); a commit has to match them all, and the words typed besides:
+
+| Filter | Finds commits |
+| --- | --- |
+| `author:ada` | written by someone whose name or email has "ada" in it |
+| `committer:ada` | committed by them |
+| `message:cache` | with "cache" in the message |
+| `sha:3f2a` | whose SHA starts with 3f2a |
+| `path:src/ui` | that changed a file whose path has src/ui in it |
+| `after:2026-11-01` | written on or after that day |
+| `before:2026-11` | written before that month |
+| `date:2026-11-23` | written on that day (or in that month, or year: `date:2026`) |
+
+Dates can also be `today`, `yesterday`, or ago: `after:3d`, `after:2w`, `after:6m`, `after:1y`. Put words with spaces in quotes: `author:"Ada Lovelace"`.
 
 ## Committing
 
@@ -295,7 +313,7 @@ When you're done, press **Finish review**: add a summary if you like, choose **C
 
 Drafts can be edited or deleted. They're kept on GitHub (in your pending review) or GitLab (as draft notes) as you write them, so they're there on the website or another computer too, and drafts started there show up here. Comments on the whole request stay on your computer until you finish, as GitHub can't hold them in a review.
 
-Your own posted comments have a pencil (edit) and a bin (delete) beside them.
+Your own posted comments have a pencil (edit) and a bin (delete) beside them. Emoji people reacted with show under each comment, with how many ("👍 2"); one without an emoji here shows its name (":party_parrot: 1").
 
 ### Suggested changes
 
@@ -381,7 +399,7 @@ Right-click a commit in the graph:
 
 In any diff, turn on:
 
-- **History**: every commit that changed the file (following renames), down the side. Click one to see its change.
+- **History**: every commit that changed the file (following renames), down the side. Click one to see its change. The box at its top (or **Ctrl+F**) searches it: words find commits by message, author, SHA or the files they changed, and the [search filters](#search) work here too, such as `author:ada before:2026-06` or `path:tests`.
 - **Blame**: who last changed each line, and when. Click a commit to go to it. It's most useful with **Whole file**.
 
 They can be on together, and are remembered.

@@ -103,14 +103,71 @@ pub fn show<T>(
     mut row: impl FnMut(&mut egui::Ui, &T, Shown),
     mut folder: impl FnMut(&egui::Response, &str, Vec<&T>),
 ) {
+    let id = egui::Id::new(&salt);
+    // The files as shown (not in folded folders), for the arrow keys, and
+    // the one to bring into view, if the keys moved to it.
+    let reveal = ui.data_mut(|d| d.remove_temp::<String>(id.with(REVEAL)));
+    let mut shown_paths = Vec::new();
+    let mut row = |ui: &mut egui::Ui, item: &T, shown: Shown| {
+        let top = ui.cursor().top();
+        row(ui, item, shown);
+        if reveal.as_deref() == Some(path(item)) {
+            let rect =
+                egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), top..=ui.cursor().top());
+            ui.scroll_to_rect(rect, None);
+        }
+        shown_paths.push(path(item).to_string());
+    };
+    rows(ui, id, items, &path, tree, &mut row, &mut folder);
+    ui.data_mut(|d| d.insert_temp(id.with(SHOWN), shown_paths));
+}
+
+const SHOWN: &str = "shown files";
+const REVEAL: &str = "reveal file";
+
+/// The files the list `salt` showed last, in order (those in folded
+/// folders left out).
+fn shown(ctx: &egui::Context, salt: impl Hash + std::fmt::Debug) -> Vec<String> {
+    let id = egui::Id::new(&salt);
+    ctx.data(|d| d.get_temp::<Vec<String>>(id.with(SHOWN)))
+        .unwrap_or_default()
+}
+
+/// The file shown after (or before) `current` in the list `salt`.
+pub fn step(
+    ctx: &egui::Context,
+    salt: impl Hash + std::fmt::Debug,
+    current: &str,
+    down: bool,
+) -> Option<String> {
+    let files = shown(ctx, salt);
+    let at = files.iter().position(|f| f == current)?;
+    let next = if down { at + 1 } else { at.checked_sub(1)? };
+    files.get(next).cloned()
+}
+
+/// Scrolls the list `salt` to show `path` the next time it is drawn.
+pub fn reveal(ctx: &egui::Context, salt: impl Hash + std::fmt::Debug, path: &str) {
+    let id = egui::Id::new(&salt);
+    ctx.data_mut(|d| d.insert_temp(id.with(REVEAL), path.to_string()));
+}
+
+fn rows<T>(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    items: &[T],
+    path: &impl Fn(&T) -> &str,
+    tree: bool,
+    row: &mut impl FnMut(&mut egui::Ui, &T, Shown),
+    folder: &mut impl FnMut(&egui::Response, &str, Vec<&T>),
+) {
     if !tree {
         for item in items {
             row(ui, item, Shown::PATH);
         }
         return;
     }
-    let id = egui::Id::new(&salt);
-    let sorted = order(items, &path, true);
+    let sorted = order(items, path, true);
     let shown = Folders::new(sorted.iter().map(|i| path(i)));
     // The folders the last file was in, and the depth of a folded one
     // among them (whose contents are hidden).

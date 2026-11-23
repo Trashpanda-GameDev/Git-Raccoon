@@ -4,15 +4,22 @@
 use crate::{Result, cli};
 
 /// A commit that changed the file.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Change {
     pub id: String,
     pub summary: String,
+    /// The rest of the message, after the summary.
+    pub body: String,
     pub author: String,
-    /// Seconds since the Unix epoch.
+    pub email: String,
+    pub committer: String,
+    pub committer_email: String,
+    /// When it was written: seconds since the Unix epoch.
     pub time: i64,
     /// The file's path in that commit (it may have been renamed since).
     pub path: String,
+    /// Every file the commit changed (this one among them), for searching.
+    pub files: Vec<String>,
 }
 
 /// At most this many commits are listed.
@@ -27,7 +34,9 @@ pub fn history(path: &str, file: &str) -> Result<Vec<Change>> {
             "log",
             "--follow",
             &max,
-            "--format=%x1e%H%x1f%an%x1f%at%x1f%s",
+            // The message's body can span lines: it ends at \x1d, before
+            // the file's name.
+            "--format=%x1e%H%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1f%at%x1f%s%x1f%b%x1d",
             "--name-only",
             "--",
             file,
@@ -35,25 +44,69 @@ pub fn history(path: &str, file: &str) -> Result<Vec<Change>> {
         None,
     )?;
     let mut changes = Vec::new();
-    for record in out.split('\x1e').map(str::trim).filter(|r| !r.is_empty()) {
-        let mut lines = record.lines();
-        let header = lines.next().unwrap_or_default();
+    for record in out.split('\x1e').filter(|r| !r.trim().is_empty()) {
+        let (header, names) = record.split_once('\x1d').unwrap_or((record, ""));
         let fields: Vec<&str> = header.split('\x1f').collect();
-        let [id, author, time, summary] = fields[..] else {
+        let [
+            id,
+            author,
+            email,
+            committer,
+            committer_email,
+            time,
+            summary,
+            body,
+        ] = fields[..]
+        else {
             continue;
         };
         // The path it had then: the last name listed (after a rename, the new one).
-        let at = lines
+        let at = names
+            .lines()
             .map(str::trim)
             .rfind(|l| !l.is_empty())
             .unwrap_or(file);
         changes.push(Change {
-            id: id.to_string(),
+            id: id.trim().to_string(),
             summary: summary.to_string(),
+            body: body.trim().to_string(),
             author: author.to_string(),
+            email: email.to_string(),
+            committer: committer.to_string(),
+            committer_email: committer_email.to_string(),
             time: time.parse().unwrap_or(0),
             path: at.to_string(),
+            files: Vec::new(),
         });
+    }
+    // Every file each one changed, in one more call.
+    if !changes.is_empty() {
+        let ids: String = changes.iter().map(|c| format!("{}\n", c.id)).collect();
+        let out = cli::run(
+            path,
+            &[
+                "log",
+                "--no-walk=unsorted",
+                "--stdin",
+                "--format=%x1e%H",
+                "--name-only",
+            ],
+            Some(&ids),
+        )?;
+        let mut files: std::collections::HashMap<&str, Vec<String>> =
+            std::collections::HashMap::new();
+        for record in out.split('\x1e').filter(|r| !r.trim().is_empty()) {
+            let mut lines = record.lines().map(str::trim).filter(|l| !l.is_empty());
+            if let Some(id) = lines.next() {
+                files.insert(id, lines.map(str::to_string).collect());
+            }
+        }
+        for c in &mut changes {
+            c.files = files.remove(c.id.as_str()).unwrap_or_default();
+            if !c.files.contains(&c.path) {
+                c.files.push(c.path.clone());
+            }
+        }
     }
     Ok(changes)
 }

@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use super::http::{self, Auth, encode, text};
 use super::review::{
     Anchor, Change, Check, Comment, Commit, DiffRefs, Draft, Event, File, Finish, Line, Merge,
-    Method, Outcome, Overview, State, Suggestion, Thread, Verdict,
+    Method, Outcome, Overview, Reaction, State, Suggestion, Thread, Verdict,
 };
 use super::{Checks, Choices, Issue, NewRequest, Request, Review, Session, soft, timestamp};
 
@@ -135,7 +135,56 @@ fn note(n: &Value) -> Comment {
             })
             .collect(),
         on_code: !n["position"].is_null(),
+        reactions: Vec::new(),
     }
+}
+
+/// The most notes whose reactions are asked for (one request each).
+const MAX_AWARDED: usize = 200;
+
+/// The emoji each note was awarded, by note id. GitLab lists them per
+/// note, so they're asked for a few at a time; a note whose awards can't
+/// be read just shows none.
+fn awards(
+    s: &Session,
+    number: u64,
+    notes: &[String],
+) -> std::collections::HashMap<String, Vec<Reaction>> {
+    let notes = &notes[..notes.len().min(MAX_AWARDED)];
+    let workers = 8.min(notes.len().max(1));
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|w| {
+                scope.spawn(move || {
+                    notes
+                        .iter()
+                        .skip(w)
+                        .step_by(workers)
+                        .filter_map(|id| {
+                            let list = get(
+                                s,
+                                &format!(
+                                    "/merge_requests/{number}/notes/{id}/award_emoji?per_page=100"
+                                ),
+                            )
+                            .ok()?;
+                            let names = list
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|a| a["name"].as_str());
+                            let reactions = Reaction::tally(names);
+                            (!reactions.is_empty()).then(|| (id.clone(), reactions))
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap_or_default())
+            .collect()
+    })
 }
 
 fn line_of(old: &Value, new: &Value) -> Option<Line> {
@@ -371,6 +420,34 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
             id,
             comments: notes.iter().map(|n| note(n)).collect(),
         });
+    }
+    // The emoji people reacted with.
+    let ids: Vec<String> = o
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Comment(c) => Some(c.id.clone()),
+            _ => None,
+        })
+        .chain(
+            o.threads
+                .iter()
+                .flat_map(|t| t.comments.iter().map(|c| c.id.clone())),
+        )
+        .collect();
+    let mut awarded = awards(s, number, &ids);
+    let comments = o
+        .events
+        .iter_mut()
+        .filter_map(|e| match e {
+            Event::Comment(c) => Some(c),
+            _ => None,
+        })
+        .chain(o.threads.iter_mut().flat_map(|t| t.comments.iter_mut()));
+    for c in comments {
+        if let Some(r) = awarded.remove(&c.id) {
+            c.reactions = r;
+        }
     }
     // Your draft notes (only you see them).
     let drafts = soft(
@@ -865,6 +942,9 @@ mod tests {
                         "position":{"old_path":"a.rs","new_path":"a.rs","old_line":null,"new_line":1}}]}]"#
                     .into(),
             ),
+            // Reactions to the two notes (not GitLab's own).
+            (200, r#"[{"name":"thumbsup"}]"#.into()),
+            (200, r#"[{"name":"thumbsup"}]"#.into()),
             // A draft note of yours, kept there.
             (
                 200,
@@ -915,6 +995,18 @@ mod tests {
             ("77", "a.rs", "y", "z")
         );
         assert_eq!(o.events.len(), 3);
+        // Reactions, asked for each person's note.
+        let Event::Comment(hi) = &o.events[0] else {
+            panic!("a comment first")
+        };
+        assert_eq!(
+            hi.reactions,
+            [Reaction {
+                name: "thumbsup".into(),
+                count: 1
+            }]
+        );
+        assert_eq!(o.threads[0].comments[0].reactions.len(), 1);
         assert!(
             matches!(&o.events[1], Event::Review { verdict: Verdict::Approved, author, .. } if author == "rocky")
         );
@@ -976,27 +1068,27 @@ mod tests {
             seen[2].0,
             "GET /api/v4/projects/team%2Fsub%2Fapp/pipelines/99/jobs?per_page=100"
         );
-        assert_eq!(seen[8].0, format!("POST {api}/draft_notes"));
-        let first: Value = serde_json::from_str(&seen[8].2).unwrap();
+        assert_eq!(seen[10].0, format!("POST {api}/draft_notes"));
+        let first: Value = serde_json::from_str(&seen[10].2).unwrap();
         assert_eq!(first["position"]["head_sha"], "h");
         assert_eq!(first["position"]["new_line"], 1);
         assert_eq!(first["position"]["line_range"]["start"]["type"], "old");
-        let reply: Value = serde_json::from_str(&seen[9].2).unwrap();
+        let reply: Value = serde_json::from_str(&seen[11].2).unwrap();
         assert_eq!(reply["in_reply_to_discussion_id"], "d3");
-        assert_eq!(seen[10].0, format!("POST {api}/draft_notes/bulk_publish"));
-        assert_eq!(seen[11].0, format!("POST {api}/notes"));
-        assert_eq!(seen[12].0, format!("POST {api}/approve"));
-        assert_eq!(seen[13].0, "PUT /api/v4/suggestions/batch_apply");
-        assert_eq!(seen[14].0, format!("PUT {api}/rebase"));
-        assert_eq!(seen[15].0, format!("PUT {api}/notes/3"));
-        assert_eq!(seen[15].2, r#"{"body":"Why z?"}"#);
-        assert_eq!(seen[16].0, format!("DELETE {api}/notes/3"));
-        assert_eq!(seen[6].0, format!("GET {api}/draft_notes?per_page=100"));
-        assert_eq!(seen[17].0, format!("PUT {api}/draft_notes/55"));
-        assert_eq!(seen[17].2, r#"{"note":"Sure now"}"#);
-        assert_eq!(seen[18].0, format!("DELETE {api}/draft_notes/55"));
+        assert_eq!(seen[12].0, format!("POST {api}/draft_notes/bulk_publish"));
+        assert_eq!(seen[13].0, format!("POST {api}/notes"));
+        assert_eq!(seen[14].0, format!("POST {api}/approve"));
+        assert_eq!(seen[15].0, "PUT /api/v4/suggestions/batch_apply");
+        assert_eq!(seen[16].0, format!("PUT {api}/rebase"));
+        assert_eq!(seen[17].0, format!("PUT {api}/notes/3"));
+        assert_eq!(seen[17].2, r#"{"body":"Why z?"}"#);
+        assert_eq!(seen[18].0, format!("DELETE {api}/notes/3"));
+        assert_eq!(seen[8].0, format!("GET {api}/draft_notes?per_page=100"));
+        assert_eq!(seen[19].0, format!("PUT {api}/draft_notes/55"));
+        assert_eq!(seen[19].2, r#"{"note":"Sure now"}"#);
+        assert_eq!(seen[20].0, format!("DELETE {api}/draft_notes/55"));
         assert_eq!(
-            serde_json::from_str::<Value>(&seen[13].2).unwrap(),
+            serde_json::from_str::<Value>(&seen[15].2).unwrap(),
             json!({"ids": [77], "commit_message": "Use z"})
         );
     }

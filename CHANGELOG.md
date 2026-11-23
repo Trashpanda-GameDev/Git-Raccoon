@@ -3,6 +3,16 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.29
+
+- **Search a file's history**: with *History* on, the box at the top of the list (or Ctrl+F) finds the commits that changed the file by message, author, SHA, or any file they changed, as you type.
+- **Search filters**, in a file's history and in the graph's search: `author:`, `committer:`, `message:`, `sha:`, `path:`, and dates with `after:`, `before:` and `date:` (`2026-11-23`, `2026-11`, `2026`, `yesterday`, or `2w` ago). They combine, with words besides: `loader author:ada after:2026-06`. The funnel button lists them. The search runs through the whole history as you type, without building an index.
+- **Copy a commit's SHA**: right-click a commit › *Copy SHA* or *Copy short SHA*.
+- **Arrow keys go through the files**: with a file open, ↑ and ↓ open the previous or next one in its list (a commit's files, or the staged or unstaged changes).
+- **Reactions on comments**: the emoji people reacted to a pull or merge request's comments with show under them, with how many ("👍 2"), on GitHub and GitLab; one without an emoji here shows its name. Emoji names in comments (`:tada:`) show as the emoji.
+- **Collapsed sidebar sections stay collapsed** after a restart, for each repository.
+- **Dragging a branch scrolls the sidebar**: hold it near the top or bottom of a section to reach the branches out of view.
+
 ## 0.5.28
 
 - **Set up SSH for GitHub or GitLab, start to finish**: one window takes you from no key to a working push, for your signed-in account: a key (yours, or a new one), remembered by the agent, added to your account, a connection test, and the repository's remote switched to SSH. Steps already done are ticked and skipped, each says what it changes first, and each can be done by hand instead. Open it from Settings › SSH, the clone dialog, a remote's menu, or an SSH error.

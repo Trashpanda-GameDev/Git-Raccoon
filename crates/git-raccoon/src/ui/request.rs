@@ -839,13 +839,39 @@ fn posted(
         });
     }
     let frame = Some((state.gitlab, state.on_branch, &mut state.batch));
+    let body = crate::emoji::replace_short_names(&c.body);
     body_with_suggestions(
         ui,
         &mut state.markdown,
-        (&c.body, &c.suggestions),
+        (&body, &c.suggestions),
         frame,
         action,
     );
+    reactions(ui, &c.reactions);
+}
+
+/// The emoji people reacted to a comment with, each with how many: "👍 2".
+/// One we have no emoji for shows its name (":party_parrot: 1").
+fn reactions(ui: &mut egui::Ui, reactions: &[review::Reaction]) {
+    if reactions.is_empty() {
+        return;
+    }
+    ui.add_space(4.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+        for r in reactions {
+            let text = format!("{} {}", crate::emoji::shown(&r.name), r.count);
+            let people = if r.count == 1 { "person" } else { "people" };
+            egui::Frame::new()
+                .fill(theme::bg_raised())
+                .stroke(egui::Stroke::new(1.0, theme::border()))
+                .corner_radius(10)
+                .inner_margin(egui::Margin::symmetric(7, 1))
+                .show(ui, |ui| ui.label(RichText::new(text).size(12.0)))
+                .inner
+                .on_hover_text(format!(":{}: · {} {people}", r.name, r.count));
+        }
+    });
 }
 
 /// A thread: its comments, drafts answering it, and Reply and Resolve.

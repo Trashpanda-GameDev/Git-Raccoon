@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use super::http::{self, Auth, text};
 use super::review::{
     self, Anchor, Change, Check, Comment, Commit, DiffRefs, Draft, Event, File, Finish, Line,
-    Merge, Method, Outcome, Overview, State, Suggestion, Thread, Verdict,
+    Merge, Method, Outcome, Overview, Reaction, State, Suggestion, Thread, Verdict,
 };
 use super::{Checks, Choices, Issue, NewRequest, Request, Review, Session, soft, timestamp};
 
@@ -172,7 +172,7 @@ const THREADS: &str = "query($owner: String!, $name: String!, $n: Int!, $after: 
         diffSide startDiffSide
         comments(first: 100) {
           pageInfo { hasNextPage endCursor }
-          nodes { databaseId body createdAt diffHunk author { login } }
+          nodes { databaseId body createdAt diffHunk author { login } reactionGroups { content reactors { totalCount } } }
         }
       }
     }
@@ -184,7 +184,7 @@ const MORE_COMMENTS: &str = "query($id: ID!, $after: String) {
   node(id: $id) { ... on PullRequestReviewThread {
     comments(first: 100, after: $after) {
       pageInfo { hasNextPage endCursor }
-      nodes { databaseId body createdAt diffHunk author { login } }
+      nodes { databaseId body createdAt diffHunk author { login } reactionGroups { content reactors { totalCount } } }
     }
   } }
 }";
@@ -278,6 +278,24 @@ fn line_on(side: Option<&str>, n: Option<u64>) -> Option<Line> {
     })
 }
 
+/// The reactions REST lists with a comment ({"+1": 2, "heart": 1, ...}),
+/// in GitHub's order.
+fn rest_reactions(v: &Value) -> Vec<Reaction> {
+    [
+        "+1", "-1", "laugh", "hooray", "confused", "heart", "rocket", "eyes",
+    ]
+    .into_iter()
+    .filter_map(|key| {
+        let count = u32::try_from(v[key].as_u64()?).ok()?;
+        let name = Reaction::github(key)?;
+        (count > 0).then(|| Reaction {
+            name: name.to_string(),
+            count,
+        })
+    })
+    .collect()
+}
+
 fn thread(v: &Value) -> Thread {
     let comments: Vec<Comment> = v["comments"]["nodes"]
         .as_array()
@@ -290,6 +308,19 @@ fn thread(v: &Value) -> Thread {
             created: timestamp(c["createdAt"].as_str().unwrap_or_default()),
             suggestions: Vec::new(),
             on_code: true,
+            reactions: c["reactionGroups"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|g| {
+                    let count = u32::try_from(g["reactors"]["totalCount"].as_u64()?).ok()?;
+                    let name = Reaction::github(g["content"].as_str()?)?;
+                    (count > 0).then(|| Reaction {
+                        name: name.to_string(),
+                        count,
+                    })
+                })
+                .collect(),
         })
         .collect();
     let outdated = v["isOutdated"].as_bool().unwrap_or(false) || v["line"].is_null();
@@ -435,6 +466,7 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
             created: timestamp(c["created_at"].as_str().unwrap_or_default()),
             suggestions: Vec::new(),
             on_code: false,
+            reactions: rest_reactions(&c["reactions"]),
         }));
     }
     for review in reviews.as_array().into_iter().flatten() {
@@ -941,6 +973,46 @@ mod tests {
     use super::super::http::mock;
     use super::super::{Kind, Project};
     use super::*;
+
+    #[test]
+    fn reads_reactions() {
+        let rest = json!({"+1": 2, "-1": 0, "laugh": 0, "hooray": 1, "confused": 0,
+            "heart": 0, "rocket": 3, "eyes": 0, "total_count": 6, "url": "u"});
+        let names: Vec<(String, u32)> = rest_reactions(&rest)
+            .into_iter()
+            .map(|r| (r.name, r.count))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("thumbsup".into(), 2),
+                ("tada".into(), 1),
+                ("rocket".into(), 3)
+            ]
+        );
+        let t = thread(&json!({"id": "t", "line": 3, "comments": {"nodes": [{
+            "databaseId": 1, "body": "b", "createdAt": "2026-11-01T00:00:00Z",
+            "author": {"login": "a"},
+            "reactionGroups": [
+                {"content": "THUMBS_UP", "reactors": {"totalCount": 1}},
+                {"content": "EYES", "reactors": {"totalCount": 0}},
+                {"content": "HEART", "reactors": {"totalCount": 4}}
+            ]
+        }]}}));
+        assert_eq!(
+            t.comments[0].reactions,
+            [
+                Reaction {
+                    name: "thumbsup".into(),
+                    count: 1
+                },
+                Reaction {
+                    name: "heart".into(),
+                    count: 4
+                }
+            ]
+        );
+    }
 
     fn session(base: &str) -> Session {
         Session::new(

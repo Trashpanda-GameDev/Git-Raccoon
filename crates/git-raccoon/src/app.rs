@@ -1184,6 +1184,14 @@ impl App {
                         repo.refresh(ctx);
                         repo.forge_stale = true;
                     }
+                    // With a file's history showing, it searches that.
+                    Command::Find
+                        if self.settings.diff_history
+                            && repo.active_file.is_some()
+                            && repo.conflict.is_none() =>
+                    {
+                        ctx.memory_mut(|m| m.request_focus(crate::ui::file_view::search_id()));
+                    }
                     Command::Find => {
                         repo.active_file = None;
                         repo.planner = None;
@@ -1771,6 +1779,35 @@ impl App {
             }
             return;
         }
+        // With a file open, the arrows go through the list it's in,
+        // opening each file in turn.
+        if repo.active_file.is_some() && repo.conflict.is_none() && repo.planner.is_none() {
+            let (down, up, plain) = ctx.input(|i| {
+                (
+                    i.key_pressed(egui::Key::ArrowDown),
+                    i.key_pressed(egui::Key::ArrowUp),
+                    i.modifiers.is_none(),
+                )
+            });
+            let open_request = repo.forge.as_ref().is_some_and(|f| f.open.is_some());
+            if (down || up) && plain && !open_request {
+                use crate::ui::file_list;
+                let current = repo.active_file.clone().unwrap_or_default();
+                if repo.working_selected {
+                    let side = repo.active_side;
+                    let salt = ("tree", side == git_raccoon_core::working::Side::Staged);
+                    if let Some(next) = file_list::step(ctx, salt, &current, down) {
+                        file_list::reveal(ctx, salt, &next);
+                        repo.file_selection.only(side, &next);
+                        repo.open_working_file(side, next);
+                    }
+                } else if let Some(next) = file_list::step(ctx, "commit files", &current, down) {
+                    file_list::reveal(ctx, "commit files", &next);
+                    repo.active_file = Some(next);
+                }
+                return;
+            }
+        }
         // Nor while something is shown in the graph's place (a request
         // has keys of its own).
         let request = repo.forge.as_ref().is_some_and(|f| f.open.is_some());
@@ -2185,13 +2222,23 @@ impl App {
                         .get(root.trim_end_matches(['/', '\\']))
                         .cloned()
                         .unwrap_or_default();
-                    sidebar::show(
+                    // Which sections are closed is kept in the settings, by
+                    // the repository's folder, so it lasts past a restart.
+                    let key = root.trim_end_matches(['/', '\\']).to_string();
+                    let mut collapsed: std::collections::HashSet<String> = self
+                        .settings
+                        .sidebar_collapsed
+                        .get(&key)
+                        .map(|keys| keys.iter().cloned().collect())
+                        .unwrap_or_default();
+                    let before = collapsed.len();
+                    let shown = sidebar::show(
                         ui,
                         &repo.refs,
                         &repo.extras,
                         &root,
                         &mut repo.sidebar_filter,
-                        &mut repo.collapsed,
+                        &mut collapsed,
                         sidebar::Shown {
                             selected: selected.as_deref(),
                             forge: repo.forge.as_ref(),
@@ -2199,7 +2246,18 @@ impl App {
                             hidden: &hidden,
                             pinned: &pinned,
                         },
-                    )
+                    );
+                    // Toggling adds or removes one, so the count tells.
+                    if collapsed.len() != before {
+                        let mut keys: Vec<String> = collapsed.into_iter().collect();
+                        keys.sort();
+                        if keys.is_empty() {
+                            self.settings.sidebar_collapsed.remove(&key);
+                        } else {
+                            self.settings.sidebar_collapsed.insert(key, keys);
+                        }
+                    }
+                    shown
                 })
                 .inner;
             match jump {

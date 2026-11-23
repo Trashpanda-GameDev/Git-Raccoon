@@ -432,6 +432,48 @@ fn browses_history_details_diffs_and_images() {
 }
 
 #[test]
+fn narrows_a_search_with_filters() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::F);
+    h.run_ok();
+    let found = |h: &mut Harness<'_, App>| {
+        settle(h);
+        std::thread::sleep(Duration::from_millis(300));
+        settle(h);
+        let repo = h.state().repo().unwrap();
+        repo.search_rows()
+            .iter()
+            .filter_map(|r| repo.rows.get(*r).map(|c| c.summary.clone()))
+            .collect::<Vec<_>>()
+    };
+    // "lanes", then a filter from the list: written in the last 15 days.
+    h.get_by_label("Search commits").type_text("lanes");
+    h.get_by_label("Search filters").click();
+    h.run_ok();
+    screenshot(&mut h, "7b-search-filters");
+    h.get_by_label("after:").click();
+    h.run_ok();
+    assert_eq!(h.state().repo().unwrap().search.query, "lanes after:");
+    h.get_by_label("Search commits").type_text("15d");
+    h.run_ok();
+    assert_eq!(h.state().repo().unwrap().search.query, "lanes after:15d");
+    assert_eq!(found(&mut h), ["Colour lanes"]);
+    screenshot(&mut h, "7c-search-filtered");
+    // A date it can't read says so.
+    h.get_by_label("Search commits").type_text("x");
+    found(&mut h);
+    h.get_by_label("Can't read the date");
+    // Who wrote it.
+    h.get_by_label("Search commits").click();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+    h.get_by_label("Search commits")
+        .type_text(r#"author:"rocky raccoon" message:icon"#);
+    assert_eq!(found(&mut h), ["Redraw icon and rename loader", "Add icon"]);
+}
+
+#[test]
 fn searches_the_whole_history() {
     let sample = Sample::build();
     let mut h = harness(Settings::default());
@@ -782,6 +824,58 @@ fn diff_text(h: &Harness<'_, App>) -> String {
             .join("\n"),
         other => panic!("diff not loaded: {:?}", other.map(|r| r.as_ref().err())),
     }
+}
+
+#[test]
+fn arrow_keys_move_through_the_open_files_list() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    settle(&mut h);
+    let active = |h: &Harness<'_, App>| h.state().repo().unwrap().active_file.clone();
+
+    // A commit's files: README.md, then src/loader.rs.
+    h.get_by_label("Add repository loader").click();
+    settle(&mut h);
+    h.get_by_label("README.md").click();
+    settle(&mut h);
+    assert_eq!(active(&h).as_deref(), Some("README.md"));
+    h.key_press(Key::ArrowDown);
+    settle(&mut h);
+    assert_eq!(active(&h).as_deref(), Some("src/loader.rs"));
+    // Past the end it stays where it is.
+    h.key_press(Key::ArrowDown);
+    settle(&mut h);
+    assert_eq!(active(&h).as_deref(), Some("src/loader.rs"));
+    h.key_press(Key::ArrowUp);
+    settle(&mut h);
+    assert_eq!(active(&h).as_deref(), Some("README.md"));
+    h.key_press(Key::Escape);
+    settle(&mut h);
+
+    // The working changes' unstaged files.
+    sample.write("a.txt", "a\n");
+    sample.write("b.txt", "b\n");
+    sample.write("c.txt", "c\n");
+    wait_for(&mut h, "the changes", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.unstaged.len() == 3)
+    });
+    h.get_by_label("Working changes").click();
+    settle(&mut h);
+    h.get_by_label("a.txt").click();
+    settle(&mut h);
+    h.key_press(Key::ArrowDown);
+    settle(&mut h);
+    h.key_press(Key::ArrowDown);
+    settle(&mut h);
+    let repo = h.state().repo().unwrap();
+    assert_eq!(repo.active_file.as_deref(), Some("c.txt"));
+    assert_eq!(repo.file_selection.paths, ["c.txt"], "picked along the way");
+    assert!(diff_text(&h).contains('c'));
 }
 
 #[test]
@@ -1930,6 +2024,69 @@ fn right_clicking_a_label_on_the_graph_shows_its_menu() {
 }
 
 #[test]
+fn scrolls_the_sidebar_while_a_branch_is_dragged_to_its_edge() {
+    let sample = Sample::build();
+    {
+        // More branches than Local has room for.
+        let repo = Repository::open(sample.path()).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        for i in 0..40 {
+            repo.branch(&format!("zz-extra-{i:02}"), &head, false)
+                .unwrap();
+        }
+    }
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    settle(&mut h);
+    let last_shown = |h: &Harness<'_, App>| {
+        let bottom = h.get_by_label("Resize Local").rect().top();
+        (0..40)
+            .rev()
+            .find(|i| {
+                h.query_by_label(&format!("zz-extra-{i:02}"))
+                    .is_some_and(|n| n.rect().bottom() <= bottom + 1.0)
+            })
+            .unwrap_or(0)
+    };
+    let before = last_shown(&h);
+    assert!(before < 39, "the last ones are out of sight: {before}");
+
+    // Pick up main and hold it just above the bottom of Local.
+    let from = h.get_all_by_label("main").next().unwrap().rect().center();
+    let edge = h.get_by_label("Resize Local").rect().top() - 4.0;
+    h.event(egui::Event::PointerMoved(from));
+    h.run_ok();
+    h.event(egui::Event::PointerButton {
+        pos: from,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_ok();
+    let to = egui::pos2(from.x, edge);
+    for i in 1..=10 {
+        #[expect(clippy::cast_precision_loss, reason = "a few steps")]
+        h.event(egui::Event::PointerMoved(
+            from + (to - from) * (i as f32 / 10.0),
+        ));
+        h.step();
+    }
+    for _ in 0..60 {
+        h.event(egui::Event::PointerMoved(to));
+        h.step();
+    }
+    let after = last_shown(&h);
+    assert!(after > before, "scrolled down: {before} -> {after}");
+    h.event(egui::Event::PointerButton {
+        pos: to,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_ok();
+}
+
+#[test]
 fn merges_by_dragging_labels_on_the_graph() {
     use egui::accesskit::Role;
     let sample = Sample::build();
@@ -2081,6 +2238,39 @@ fn sidebar_sections_share_the_height_and_collapse_in_place() {
         "{heads:?}"
     );
     screenshot(&mut h, "71-sidebar-collapsed");
+}
+
+#[test]
+fn closed_sidebar_sections_stay_closed_after_a_restart() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    settle(&mut h);
+    let open_sections = |h: &Harness<'_, App>| {
+        // An open Tags shows its tags; a closed one only its heading.
+        h.query_all_by_label("v0.1.0").count()
+    };
+    assert!(open_sections(&h) > 0);
+    h.get_by_label("Tags").click();
+    h.get_by_label("Stashes").click();
+    settle(&mut h);
+    assert_eq!(open_sections(&h), 0, "Tags is closed");
+
+    let saved = h.state().settings().clone();
+    let mut again = harness(saved);
+    open(&mut again, sample.path());
+    settle(&mut again);
+    assert_eq!(open_sections(&again), 0, "Tags is still closed");
+    // Opening it again is remembered too.
+    again.get_by_label("Tags").click();
+    settle(&mut again);
+    assert!(open_sections(&again) > 0);
+    let saved = again.state().settings().clone();
+    assert_eq!(saved.sidebar_collapsed.len(), 1);
+    assert_eq!(
+        saved.sidebar_collapsed.values().next().unwrap(),
+        &vec!["stashes".to_string()]
+    );
 }
 
 #[test]
@@ -3624,6 +3814,11 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
                 "suggestions": [{"id": 5, "from_line": 3, "to_line": 3, "from_content": "Another\n",
                     "to_content": "One more\n", "applied": false, "appliable": true}],
                 "position": {"old_path": "README.md", "new_path": "README.md", "old_line": null, "new_line": 3}}]}]"#.into()),
+        // Reactions, by note.
+        ("GET /api/v4/projects/team%2Fapp/merge_requests/12/notes/1/award_emoji", r#"[{"name": "thumbsup"},
+            {"name": "thumbsup"}, {"name": "party_parrot"}]"#.into()),
+        ("GET /api/v4/projects/team%2Fapp/merge_requests/12/notes/2/award_emoji", r#"[{"name": "tada"}]"#.into()),
+        ("GET /api/v4/projects/team%2Fapp/merge_requests/12/notes/7/award_emoji", "[]".into()),
         ("GET /api/v4/projects/team%2Fapp/merge_requests/13", mr(13, "Faster start", "cache")),
         ("GET /api/v4/projects/team%2Fapp/merge_requests/13/approvals", r#"{"approved_by": []}"#.into()),
         ("GET /api/v4/projects/team%2Fapp/merge_requests/13/diffs", "[]".into()),
@@ -3712,6 +3907,10 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     h.get_by_label("good");
     h.get_by_label("Why another?");
     h.get_by_label_contains("README.md, line 3");
+    // What people reacted with: emoji, or the name of one there's none for.
+    h.get_by_label("👍 2");
+    h.get_by_label(":party_parrot: 1");
+    h.get_by_label("🎉 1");
     screenshot(&mut h, "50-merge-request");
 
     // Its commits, marked in the graph; and back.
@@ -5793,6 +5992,79 @@ fn selected_summary_of(app: &App) -> Option<String> {
 }
 
 #[test]
+fn searches_a_files_history_with_filters() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    h.get_by_label("Redraw icon and rename loader").click();
+    settle(&mut h);
+    h.get_by_label_contains("src/repo_loader.rs").click();
+    settle(&mut h);
+    h.get_by_label("History").click();
+    wait_for(&mut h, "the history", |app| {
+        app.repo()
+            .unwrap()
+            .open_history()
+            .is_some_and(|r| r.is_ok())
+    });
+    settle(&mut h);
+    let rows = [
+        "Redraw icon and rename loader",
+        "Reject bare repositories when loading",
+        "Add repository loader",
+    ];
+    // Rows in the list: under its search box.
+    let listed = |h: &Harness<'_, App>| -> Vec<&str> {
+        let field = h.get_by_label("Search this file's history").rect();
+        rows.into_iter()
+            .filter(|r| {
+                h.query_all_by_label(r).any(|n| {
+                    let at = n.rect();
+                    at.top() > field.bottom() && field.x_range().contains(at.center().x)
+                })
+            })
+            .collect()
+    };
+    // Words: in the message (or author, SHA, or a file it changed). Ctrl+F
+    // goes to this search while the history shows.
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::F);
+    h.run_ok();
+    assert!(h.get_by_label("Search this file's history").is_focused());
+    h.get_by_label("Search this file's history")
+        .type_text("bare");
+    settle(&mut h);
+    h.get_by_label("1 of 3");
+    assert_eq!(listed(&h), ["Reject bare repositories when loading"]);
+    // A filter from the funnel: written more than 10 days ago.
+    h.get_by_label("Search this file's history").click();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+    h.key_press(Key::Backspace);
+    settle(&mut h);
+    h.get_all_by_label("Search filters").last().unwrap().click();
+    h.run_ok();
+    h.get_by_label("before:").click();
+    h.run_ok();
+    h.get_by_label("Search this file's history")
+        .type_text("10d");
+    settle(&mut h);
+    screenshot(&mut h, "48c-file-history-search");
+    assert_eq!(
+        listed(&h),
+        [
+            "Reject bare repositories when loading",
+            "Add repository loader"
+        ]
+    );
+    // A file the commit changed besides this one.
+    h.get_by_label("Search this file's history").click();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+    h.get_by_label("Search this file's history")
+        .type_text("path:readme");
+    settle(&mut h);
+    assert_eq!(listed(&h), ["Add repository loader"]);
+}
+
+#[test]
 fn shows_a_files_history_and_blame_beside_its_diff() {
     let sample = Sample::build();
     let mut h = harness(Settings::default());
@@ -6884,6 +7156,38 @@ fn copies_branch_and_tag_names() {
     }
     screenshot(&mut h, "70-copy-name");
     assert_eq!(copy(&mut h), "feature/graph");
+}
+
+#[test]
+fn copies_a_commits_sha_from_its_menu() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    settle(&mut h);
+    let copy = |h: &mut Harness<'_, App>, item: &str| -> String {
+        h.get_by_label("Colour lanes").click_secondary();
+        h.run_ok();
+        h.get_by_label(item).click();
+        h.step();
+        let copied = h
+            .output()
+            .platform_output
+            .commands
+            .iter()
+            .find_map(|c| match c {
+                egui::OutputCommand::CopyText(text) => Some(text.clone()),
+                _ => None,
+            })
+            .expect("something was copied");
+        h.run_ok();
+        copied
+    };
+    let sha = copy(&mut h, "Copy SHA");
+    let repo = Repository::open(sample.path()).unwrap();
+    let commit = repo.find_commit(Oid::from_str(&sha).unwrap()).unwrap();
+    assert_eq!(commit.summary(), Some("Colour lanes"));
+    assert_eq!(sha.len(), 40);
+    assert_eq!(copy(&mut h, "Copy short SHA"), sha[..7]);
 }
 
 #[test]

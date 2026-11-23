@@ -7,7 +7,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
 use git_raccoon_core::repo::History;
-use git_raccoon_core::search::{self, SearchField};
+use git_raccoon_core::search::{self, Query, SearchField};
 
 /// Stop collecting once this many commits match.
 pub const MAX_MATCHES: usize = 10_000;
@@ -72,6 +72,11 @@ impl Default for Search {
 impl Search {
     pub fn is_active(&self) -> bool {
         !self.query.trim().is_empty()
+    }
+
+    /// What's typed, read: the words and filters, or why it can't be read.
+    pub fn parsed(&self) -> Result<Query, String> {
+        Query::parse(&self.query, self.field)
     }
 
     /// Call after editing `query` or `field`.
@@ -166,37 +171,42 @@ impl Search {
         let (tx, rx) = mpsc::channel();
         let generation = self.generation.clone();
         let mine = generation.fetch_add(1, Ordering::SeqCst) + 1;
-        let query = self.query.clone();
-        let field = self.field;
+        let query = match self.parsed() {
+            Ok(q) if !q.is_empty() => q,
+            Ok(_) => {
+                // Only a filter being typed ("author:"): nothing to find yet.
+                self.running = false;
+                return;
+            }
+            Err(e) => {
+                self.error = Some(e);
+                self.running = false;
+                return;
+            }
+        };
         std::thread::spawn(move || {
             let mut start = 0;
             loop {
-                let update = match search::search(
-                    &history,
-                    &query,
-                    field,
-                    start,
-                    search::SLICE,
-                    &generation,
-                    mine,
-                ) {
-                    Ok(r) if r.cancelled => return,
-                    Ok(r) => {
-                        let next = r.next;
-                        if tx.send(Update::Found { rows: r.rows, next }).is_err() {
-                            return;
-                        }
-                        ctx.request_repaint();
-                        match next {
-                            Some(n) => {
-                                start = n;
-                                continue;
+                let update =
+                    match search::search(&history, &query, start, search::SLICE, &generation, mine)
+                    {
+                        Ok(r) if r.cancelled => return,
+                        Ok(r) => {
+                            let next = r.next;
+                            if tx.send(Update::Found { rows: r.rows, next }).is_err() {
+                                return;
                             }
-                            None => return,
+                            ctx.request_repaint();
+                            match next {
+                                Some(n) => {
+                                    start = n;
+                                    continue;
+                                }
+                                None => return,
+                            }
                         }
-                    }
-                    Err(e) => Update::Failed(e.to_string()),
-                };
+                        Err(e) => Update::Failed(e.to_string()),
+                    };
                 let _ = tx.send(update);
                 ctx.request_repaint();
                 return;

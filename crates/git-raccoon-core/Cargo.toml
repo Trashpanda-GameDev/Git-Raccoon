@@ -8,6 +8,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 git2 = "0.20"
 notify = "8"
 ssh-key = { version = "0.6", default-features = false, features = ["std", "ed25519", "encryption", "rand_core", "getrandom"] }
