@@ -168,9 +168,14 @@ pub fn show(
                             action = Some(Action::MarkResolved);
                         }
                         if total > 0 && agents.connected && agents.proposal.is_none() {
-                            ui.menu_button(format!("{}  Ask an agent", icon::ROBOT), |ui| {
-                                ask_agent(ui, &open.file);
-                            });
+                            let ask = ui
+                                .menu_button(icon::ROBOT, |ui| {
+                                    ask_agent(ui, &open.file);
+                                })
+                                .response
+                                .on_hover_text("Ask an agent to propose a resolution");
+                            ui.ctx()
+                                .accesskit_node_builder(ask.id, |n| n.set_label("Ask an agent"));
                         }
                         if total > 0 && open.panes {
                             let chosen = crate::ui::conflict_panes::all_chosen(open, total);
@@ -186,11 +191,8 @@ pub fn show(
                         }
                         if total > 0 && !open.panes {
                             let why = ui
-                                .selectable_label(
-                                    open.why_open,
-                                    format!("{}  Why?", icon::QUESTION),
-                                )
-                                .on_hover_text("The commits on each side that changed these lines");
+                                .selectable_label(open.why_open, icon::QUESTION)
+                                .on_hover_text("Why it happened: the commits on each side that changed these lines");
                             ui.ctx().accesskit_node_builder(why.id, |n| {
                                 n.set_label("Why it happened");
                             });
@@ -198,11 +200,12 @@ pub fn show(
                                 open.why_open = !open.why_open;
                             }
                         }
-                        if ui
-                            .button(format!("{}  Edit", icon::PENCIL_SIMPLE))
-                            .on_hover_text("Write the whole file yourself")
-                            .clicked()
-                        {
+                        let edit = ui
+                            .button(icon::PENCIL_SIMPLE)
+                            .on_hover_text("Edit: write the whole file yourself");
+                        ui.ctx()
+                            .accesskit_node_builder(edit.id, |n| n.set_label("Edit"));
+                        if edit.clicked() {
                             action = Some(Action::StartEdit);
                         }
                         // Cards, or panes.
@@ -221,7 +224,7 @@ pub fn show(
                             }
                         }
                         // One side's version of the whole file.
-                        ui.menu_button(format!("Whole file  {}", icon::CARET_DOWN), |ui| {
+                        let whole = ui.menu_button(format!("{}{}", icon::FILE, icon::CARET_DOWN), |ui| {
                             for (name, side) in [(ours, true), (theirs, false)] {
                                 if ui
                                     .button(format!("Use {name}'s file"))
@@ -235,6 +238,11 @@ pub fn show(
                                 }
                             }
                         });
+                        let whole = whole
+                            .response
+                            .on_hover_text("Whole file: use one side's version of it");
+                        ui.ctx()
+                            .accesskit_node_builder(whole.id, |n| n.set_label("Whole file"));
                     });
                 });
             });
@@ -1115,9 +1123,7 @@ fn ask_agent(ui: &mut egui::Ui, file: &str) {
         .corner_radius(4)
         .inner_margin(egui::Margin::same(6))
         .show(ui, |ui| {
-            ui.add(
-                egui::Label::new(RichText::new(&prompt).monospace().size(12.0)).selectable(true),
-            );
+            ui.add(egui::Label::new(RichText::new(&prompt).size(12.0)).selectable(true));
         });
     ui.add_space(4.0);
     if ui.button(format!("{}  Copy", icon::COPY)).clicked() {

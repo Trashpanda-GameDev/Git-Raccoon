@@ -5351,6 +5351,7 @@ fn merges_resolves_conflicts_continues_and_aborts() {
     menu_item(&mut h, "clash", "Merge into main");
     // Said before anything is touched.
     h.get_by_label_contains("This will conflict in 1 file: README.md.");
+    screenshot(&mut h, "26-merge-would-conflict");
     h.get_by_role_and_label(Role::Button, "Merge").click();
     wait_for(&mut h, "the conflict", |app| conflicted(app) == 1);
     h.get_by_label("Merging clash into main");
@@ -5363,7 +5364,7 @@ fn merges_resolves_conflicts_continues_and_aborts() {
     });
     screenshot(&mut h, "28-conflict");
     // Without an agent connected, nothing about agents.
-    assert!(h.query_by_label_contains("Ask an agent").is_none());
+    assert!(h.query_by_label("Ask an agent").is_none());
     // Why: the commit on each side that changed the line.
     h.get_by_label("Why it happened").click();
     h.run_ok();
@@ -7245,9 +7246,10 @@ fn agents_propose_conflict_resolutions_for_the_person_to_choose() {
         app.repo().unwrap().conflict.is_some()
     });
     h.run_ok();
-    h.get_by_label_contains("Ask an agent").click();
+    h.get_by_label("Ask an agent").click();
     h.run_ok();
     h.get_by_label_contains("propose_resolution");
+    screenshot(&mut h, "91-ask-an-agent");
     h.key_press(egui::Key::Escape);
     h.run_ok();
 
