@@ -37,6 +37,8 @@ pub enum Action {
     RestartToUpdate,
     /// Choose an SSH key file from elsewhere.
     PickSshKey,
+    /// The guided SSH setup for an account (by its place in the list).
+    SetUpSsh(usize),
 }
 
 /// A part of the settings.
@@ -1550,8 +1552,9 @@ fn control(
             });
         }
         "Your keys" => match crate::ui::ssh_settings::keys_row(ui, &settings.accounts) {
-            Some(true) => *action = Some(Action::PickSshKey),
-            Some(false) => *action = Some(Action::AddAccount),
+            Some(crate::ui::ssh_settings::Ask::PickKey) => *action = Some(Action::PickSshKey),
+            Some(crate::ui::ssh_settings::Ask::SignIn) => *action = Some(Action::AddAccount),
+            Some(crate::ui::ssh_settings::Ask::SetUp(i)) => *action = Some(Action::SetUpSsh(i)),
             None => {}
         },
         "SSH agent" => crate::ui::ssh_settings::agent_row(ui, &settings.accounts),

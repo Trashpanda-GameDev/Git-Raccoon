@@ -284,10 +284,19 @@ fn note(ui: &mut egui::Ui, page: &mut Page) -> bool {
     sign_in
 }
 
+/// What the keys row asks of the app.
+pub enum Ask {
+    /// Choose a key file from elsewhere.
+    PickKey,
+    /// Sign in again (to manage keys).
+    SignIn,
+    /// The guided setup for this account (by its place in the list).
+    SetUp(usize),
+}
+
 /// Your keys: each with whether it's in the agent and on which accounts,
-/// and the ways to make or choose one. Returns `true` when an action is
-/// asked of the app: `Some(true)` choose a key file, `Some(false)` sign in.
-pub fn keys_row(ui: &mut egui::Ui, accounts: &[Account]) -> Option<bool> {
+/// and the ways to make or choose one.
+pub fn keys_row(ui: &mut egui::Ui, accounts: &[Account]) -> Option<Ask> {
     let page = shared(ui.ctx());
     let Ok(mut page) = page.lock() else {
         return None;
@@ -447,7 +456,7 @@ pub fn keys_row(ui: &mut egui::Ui, accounts: &[Account]) -> Option<bool> {
                     });
                 }
                 if ui.button("Use an existing key…").clicked() {
-                    wants = Some(true);
+                    wants = Some(Ask::PickKey);
                 }
             });
         });
@@ -456,7 +465,23 @@ pub fn keys_row(ui: &mut egui::Ui, accounts: &[Account]) -> Option<bool> {
     create_form(ui, &mut page, dir.as_deref(), &hosts);
     picked_form(ui, &mut page, dir.as_deref(), &hosts);
     if note(ui, &mut page) {
-        wants = Some(false);
+        wants = Some(Ask::SignIn);
+    }
+    // Everything at once, for an account.
+    if !accounts.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            for (i, a) in accounts.iter().enumerate() {
+                let b = ui.button(format!(
+                    "{}  Set up SSH for {}…",
+                    icon::MAGIC_WAND,
+                    a.place()
+                ));
+                named(ui, &b, &format!("Set up SSH for {}", a.place()));
+                if b.clicked() {
+                    wants = Some(Ask::SetUp(i));
+                }
+            }
+        });
     }
     wants
 }

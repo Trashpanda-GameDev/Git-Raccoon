@@ -7841,3 +7841,113 @@ fn switches_a_remote_between_https_and_ssh() {
     git_raccoon_core::ssh::set_ssh_dir(None);
     let _ = std::fs::remove_dir_all(&home);
 }
+
+/// The guided setup, from no key to a repository using SSH.
+#[cfg(unix)]
+#[test]
+fn sets_up_ssh_from_nothing() {
+    use egui::accesskit::Role;
+    use git_raccoon::forge::Kind;
+    use git_raccoon::forge::accounts::{self, Account};
+    use std::os::unix::fs::PermissionsExt as _;
+    let sample = Sample::build();
+    let home = std::env::temp_dir().join(format!("git-raccoon-setup-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).unwrap();
+    let dir = home.join(".ssh");
+    git_raccoon_core::ssh::set_ssh_dir(Some(dir.clone()));
+    let fake = home.join("ssh");
+    std::fs::write(
+        &fake,
+        "#!/bin/sh\necho \"Hi rocky! You've successfully authenticated, but GitHub does not provide shell access.\" >&2\nexit 1\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    git(
+        &sample,
+        &["config", "core.sshCommand", &fake.to_string_lossy()],
+    );
+    git(
+        &sample,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "https://127.0.0.1/rocky/app.git",
+        ],
+    );
+    let (base, on_github) = keys_server();
+    accounts::use_memory_store();
+    let account = Account {
+        kind: Kind::GitHub,
+        base,
+        login: "rocky".into(),
+        client: None,
+    };
+    accounts::save(
+        &account,
+        &accounts::Secret {
+            token: "t".into(),
+            refresh: None,
+            expires: None,
+        },
+    )
+    .unwrap();
+    let place = account.place();
+    let mut h = harness(Settings {
+        accounts: vec![account],
+        ..Settings::default()
+    });
+    open(&mut h, sample.path());
+    let until = |h: &mut Harness<'_, App>, what: &str, done: &dyn Fn(&Harness<'_, App>) -> bool| {
+        let start = Instant::now();
+        while !done(h) {
+            assert!(
+                start.elapsed() < Duration::from_secs(20),
+                "waiting for {what}"
+            );
+            h.step();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        h.run_ok();
+    };
+
+    menu_item(&mut h, "origin", "Set up SSH…");
+    until(&mut h, "the setup", &|h| {
+        h.query_by_label("Create the key").is_some()
+    });
+    h.get_by_label(&format!("Set up SSH for {place}"));
+    // 1. A key, without a passphrase (so 2, the agent, is done too).
+    h.get_by_label("No passphrase").click();
+    h.run_ok();
+    h.get_by_label("Create the key").click();
+    until(&mut h, "the key", &|h| {
+        h.query_by_label(&format!("Add to {place}")).is_some()
+    });
+    assert!(dir.join("id_ed25519").exists());
+    screenshot(&mut h, "101-ssh-setup");
+    // 3. On the account.
+    h.get_by_label(&format!("Add to {place}")).click();
+    // 4. Tested by itself; 5. this repository.
+    until(&mut h, "the last step", &|h| {
+        h.query_by_label("Use SSH for origin").is_some()
+    });
+    assert_eq!(on_github.lock().unwrap().len(), 1);
+    h.get_by_label("Use SSH for origin").click();
+    until(&mut h, "done", &|h| {
+        h.query_by_label_contains("SSH is set up for").is_some()
+    });
+    wait_for(&mut h, "the SSH address", |app| {
+        app.repo()
+            .unwrap()
+            .refs
+            .remotes
+            .iter()
+            .any(|r| r.name == "origin" && r.url.as_deref() == Some("git@127.0.0.1:rocky/app.git"))
+    });
+    h.get_by_role_and_label(Role::Button, "Done").click();
+    h.run_ok();
+    assert!(h.query_by_label("Create the key").is_none());
+    git_raccoon_core::ssh::set_ssh_dir(None);
+    let _ = std::fs::remove_dir_all(&home);
+}

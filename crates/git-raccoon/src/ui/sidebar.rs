@@ -927,6 +927,8 @@ pub enum Action {
     },
     /// Test signing in to a remote over SSH.
     TestRemote(String),
+    /// The guided SSH setup, for a remote's host.
+    SetUpSsh(String),
     /// Rebase the checked-out branch onto this one.
     Rebase(String),
     /// Open this repository (a submodule or worktree) in a tab.
@@ -1687,6 +1689,11 @@ pub fn show(
                                         "Use SSH instead…",
                                         true,
                                         change(ssh_url, "Use SSH"),
+                                    ));
+                                    items.push((
+                                        "Set up SSH…",
+                                        true,
+                                        Action::SetUpSsh((*name).to_string()),
                                     ));
                                 }
                             }

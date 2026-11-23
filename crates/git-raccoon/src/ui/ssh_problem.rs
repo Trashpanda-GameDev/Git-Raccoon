@@ -209,7 +209,8 @@ pub enum Fix {
     Retry,
     /// Run these (changing the remote's address, then the operation).
     Run(Op),
-    /// Open Settings › SSH.
+    /// Open Settings › SSH (or the guided setup, when signed in to the
+    /// host).
     Settings,
     Close,
 }

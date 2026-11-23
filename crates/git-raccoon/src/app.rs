@@ -38,6 +38,8 @@ pub struct App {
     askpass: Option<git_raccoon_core::askpass::Server>,
     /// The question being shown.
     prompt: Option<crate::ui::askpass::Prompt>,
+    /// Setting up SSH for an account, step by step.
+    ssh_setup: Option<crate::ui::ssh_setup::Setup>,
     /// A question shown by [`App::ask`] (tests): not cancelled for want
     /// of a running Git.
     prompt_kept: bool,
@@ -223,6 +225,7 @@ impl App {
             }],
             active: 0,
             next_tab: 1,
+            ssh_setup: None,
             prompt_kept: false,
             askpass: None,
             prompt: None,
@@ -468,6 +471,11 @@ impl App {
                 }
             }
             Some(clone::Action::Cancel) => self.clone_form = None,
+            Some(clone::Action::SetUpSsh) => {
+                if let Some(account) = form.account.and_then(|i| self.settings.accounts.get(i)) {
+                    self.ssh_setup = Some(crate::ui::ssh_setup::Setup::new(account.clone(), None));
+                }
+            }
             Some(clone::Action::Stop) => {
                 if let Some(c) = &self.cloning {
                     c.cancel.store(true, Ordering::Relaxed);
@@ -570,6 +578,7 @@ impl App {
             || self
                 .all_repos()
                 .any(|r| r.ssh_problem.as_ref().is_some_and(|p| p.asking()))
+            || self.ssh_setup.as_ref().is_some_and(crate::ui::ssh_setup::Setup::asking)
             || self.prompt_kept;
         if !git_running && let Some(prompt) = self.prompt.take() {
             prompt.request.answer(None);
@@ -2757,6 +2766,17 @@ impl App {
         if let Some(op) = dialog::show(&ctx, &mut repo.dialog, &repo.refs) {
             repo.run(&ctx, op);
         }
+        // The guided SSH setup, asked for from a remote's menu.
+        if let Some(remote) = repo.wants_ssh_setup.take() {
+            match ssh_setup_for(repo, &remote, &self.settings.accounts) {
+                Some(setup) => self.ssh_setup = Some(setup),
+                None => {
+                    self.error = Some(format!(
+                        "Sign in to {remote}'s host (Settings › Accounts) to set up SSH for it here, or use Settings › SSH."
+                    ));
+                }
+            }
+        }
         // A fetch, pull or push that failed over SSH: why, and the fix.
         let path = repo.path().to_string();
         if let Some(problem) = &mut repo.ssh_problem {
@@ -2774,9 +2794,16 @@ impl App {
                     repo.run(&ctx, op);
                 }
                 Some(Fix::Settings) => {
+                    let remote = problem.remote.clone();
                     repo.ssh_problem = None;
-                    crate::ui::settings::open_on(&ctx, crate::ui::settings::Section::Ssh);
-                    self.settings_open = true;
+                    // The guided setup when signed in to the host, else the page.
+                    match ssh_setup_for(repo, &remote, &self.settings.accounts) {
+                        Some(setup) => self.ssh_setup = Some(setup),
+                        None => {
+                            crate::ui::settings::open_on(&ctx, crate::ui::settings::Section::Ssh);
+                            self.settings_open = true;
+                        }
+                    }
                 }
                 Some(Fix::Close) => repo.ssh_problem = None,
                 None => {}
@@ -2934,6 +2961,13 @@ impl App {
                     self.settings_open = false;
                     self.run_command(&ctx, Command::Feedback);
                 }
+                Some(crate::ui::settings::Action::SetUpSsh(i)) => {
+                    if let Some(account) = self.settings.accounts.get(i) {
+                        self.settings_open = false;
+                        self.ssh_setup =
+                            Some(crate::ui::ssh_setup::Setup::new(account.clone(), None));
+                    }
+                }
                 Some(crate::ui::settings::Action::PickSshKey) => {
                     let mut dialog = rfd::FileDialog::new().set_title("An SSH private key");
                     if let Some(dir) = git_raccoon_core::ssh::ssh_dir().filter(|d| d.is_dir()) {
@@ -2955,6 +2989,27 @@ impl App {
             }
         }
         self.palette(&ctx);
+        // Setting up SSH, step by step.
+        if let Some(setup) = &mut self.ssh_setup {
+            use crate::ui::ssh_setup::Done;
+            match crate::ui::ssh_setup::show(&ctx, setup) {
+                Some(Done::Run(op)) => {
+                    let path = setup.repo.as_ref().map(|r| r.path.clone());
+                    if let Op::SetRemoteUrl { url, .. } = &op {
+                        setup.remote_changed(url.clone());
+                    }
+                    if let Some(repo) = self
+                        .repo
+                        .as_mut()
+                        .filter(|r| Some(r.path()) == path.as_deref())
+                    {
+                        repo.run(&ctx, op);
+                    }
+                }
+                Some(Done::Close) => self.ssh_setup = None,
+                None => {}
+            }
+        }
         if let Some(tab) = &mut self.licenses
             && !crate::ui::licenses::show(&ctx, tab)
         {
@@ -3031,6 +3086,47 @@ impl App {
 /// Does what a branch, tag, stash, remote or worktree's menu asked for (in
 /// the sidebar, or on a label in the graph), where only the repository is
 /// involved; the sidebar's other actions are the app's.
+/// The guided SSH setup for a remote: with the signed-in account for its
+/// host, and the remote to switch to SSH at the end.
+fn ssh_setup_for(
+    repo: &RepoView,
+    remote: &str,
+    accounts: &[crate::forge::Account],
+) -> Option<crate::ui::ssh_setup::Setup> {
+    let url = repo
+        .refs
+        .remotes
+        .iter()
+        .find(|r| r.name == remote)?
+        .url
+        .clone()?;
+    let host = match git_raccoon_core::ssh::parse_url(&url) {
+        Some(u) => u.host,
+        None => {
+            let rest = url.split("://").nth(1)?;
+            let authority = rest.split('/').next()?;
+            let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+            host.split(':').next()?.to_string()
+        }
+    };
+    let host = match host.as_str() {
+        "ssh.github.com" => "github.com".to_string(),
+        "altssh.gitlab.com" => "gitlab.com".to_string(),
+        _ => host,
+    };
+    let account = accounts
+        .iter()
+        .find(|a| crate::ui::ssh_settings::account_host(a) == host)?;
+    Some(crate::ui::ssh_setup::Setup::new(
+        account.clone(),
+        Some(crate::ui::ssh_setup::ForRepo {
+            path: repo.path().to_string(),
+            remote: remote.to_string(),
+            url,
+        }),
+    ))
+}
+
 fn repo_action(repo: &mut RepoView, ctx: &egui::Context, action: sidebar::Action) {
     match action {
         sidebar::Action::OpenWeb(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
@@ -3056,6 +3152,8 @@ fn repo_action(repo: &mut RepoView, ctx: &egui::Context, action: sidebar::Action
             repo.confirm_remote_url(name, url, how);
         }
         sidebar::Action::TestRemote(name) => repo.test_remote(&name),
+        // The app opens it, with the account for the remote's host.
+        sidebar::Action::SetUpSsh(name) => repo.wants_ssh_setup = Some(name),
         sidebar::Action::Merge { source, target } => repo.ask_merge(source, target),
         sidebar::Action::Rebase(onto) => repo.confirm_rebase(onto),
         sidebar::Action::OpenPath(p) => repo.open_request = Some(p),

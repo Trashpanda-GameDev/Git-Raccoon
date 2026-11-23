@@ -92,6 +92,8 @@ pub enum Action {
     Cancel,
     /// Stop the clone in progress.
     Stop,
+    /// Set up SSH for the chosen account.
+    SetUpSsh,
 }
 
 /// One of the account's repositories, to pick: a dropdown with a field to
@@ -179,7 +181,7 @@ fn repository_picker(ui: &mut egui::Ui, form: &mut Form) {
 
 /// SSH or HTTPS, for an address that can be either: SSH chosen when the
 /// key already works with that host (unless picked by hand).
-fn connect_with(ui: &mut egui::Ui, form: &mut Form) {
+fn connect_with(ui: &mut egui::Ui, form: &mut Form, action: &mut Option<Action>) {
     use git_raccoon_core::ssh;
     let is_ssh = ssh::parse_url(&form.url).is_some();
     let other = if is_ssh {
@@ -221,8 +223,10 @@ fn connect_with(ui: &mut egui::Ui, form: &mut Form) {
         ui.horizontal(|ui| {
             let ssh_button = ui.selectable_label(is_ssh, "SSH");
             let https_button = ui.selectable_label(!is_ssh, "HTTPS");
-            ui.ctx().accesskit_node_builder(ssh_button.id, |n| n.set_label("Connect with SSH"));
-            ui.ctx().accesskit_node_builder(https_button.id, |n| n.set_label("Connect with HTTPS"));
+            ui.ctx()
+                .accesskit_node_builder(ssh_button.id, |n| n.set_label("Connect with SSH"));
+            ui.ctx()
+                .accesskit_node_builder(https_button.id, |n| n.set_label("Connect with HTTPS"));
             if (ssh_button.clicked() && !is_ssh) || (https_button.clicked() && is_ssh) {
                 form.scheme_chosen = true;
                 form.set_url(other.clone());
@@ -239,16 +243,24 @@ fn connect_with(ui: &mut egui::Ui, form: &mut Form) {
             Some(false) => {
                 ui.label(
                     RichText::new(format!(
-                        "SSH isn't set up for {host} yet (Settings › SSH): HTTPS signs in with your account."
+                        "SSH isn't set up for {host} yet: HTTPS signs in with your account."
                     ))
                     .size(12.0)
                     .color(theme::muted()),
                 );
+                if form.account.is_some() && ui.button(format!("Set up SSH for {host}…")).clicked()
+                {
+                    *action = Some(Action::SetUpSsh);
+                }
             }
             None => {
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label(RichText::new(format!("Checking SSH with {host}…")).size(12.0).color(theme::muted()));
+                    ui.label(
+                        RichText::new(format!("Checking SSH with {host}…"))
+                            .size(12.0)
+                            .color(theme::muted()),
+                    );
                 });
             }
         }
@@ -288,7 +300,7 @@ fn details(ui: &mut egui::Ui, form: &mut Form, accounts: &[Account], action: &mu
                 form.set_url(url);
             }
             ui.end_row();
-            connect_with(ui, form);
+            connect_with(ui, form, action);
             label(ui, "Where to clone to");
             ui.horizontal(|ui| {
                 field_sized(

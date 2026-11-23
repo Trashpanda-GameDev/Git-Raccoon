@@ -5,6 +5,7 @@ release page). Newest first; a version's heading is just its number.
 
 ## 0.5.28
 
+- **Set up SSH for GitHub or GitLab, start to finish**: one window takes you from no key to a working push, for your signed-in account: a key (yours, or a new one), remembered by the agent, added to your account, a connection test, and the repository's remote switched to SSH. Steps already done are ticked and skipped, each says what it changes first, and each can be done by hand instead. Open it from Settings › SSH, the clone dialog, a remote's menu, or an SSH error.
 - **Settings › SSH**: your SSH keys in one place, each saying whether it's in the agent and on which of your GitHub and GitLab accounts, with *Copy public key*, *Add to the agent* (the passphrase asked in the app), *Add to GitHub/GitLab* and *Show in folder*.
   - *Create a key…* makes an ed25519 key in `~/.ssh` (with a passphrase, or none after a warning) without a terminal, never overwriting one, and can add a `~/.ssh/config` entry for a host, shown first. *Use an existing key…* adds one from elsewhere.
   - The agent: which one, whether it's running, and *Add keys to the agent when they're first used*.

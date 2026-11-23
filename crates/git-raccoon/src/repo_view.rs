@@ -1599,6 +1599,8 @@ pub struct RepoView {
     pub auto_fetch_error: Option<String>,
     /// A fetch, pull or push that failed over SSH, being looked into.
     pub(crate) ssh_problem: Option<crate::ui::ssh_problem::SshProblem>,
+    /// The guided SSH setup was asked for, for this remote.
+    pub(crate) wants_ssh_setup: Option<String>,
     pub extras: Extras,
     /// A repository (a submodule or worktree) to open in a tab.
     pub open_request: Option<String>,
@@ -1710,6 +1712,7 @@ impl RepoView {
             auto_fetch: None,
             auto_fetch_error: None,
             ssh_problem: None,
+            wants_ssh_setup: None,
             refresh_started: std::time::Instant::now(),
             diff: Keyed::default(),
             images: Keyed::default(),
