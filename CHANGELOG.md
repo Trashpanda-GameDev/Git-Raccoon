@@ -3,6 +3,10 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.24
+
+- **Feedback works with no repository open**: the button on the start screen did nothing. So do *What's new*, *Check for updates* and zooming.
+
 ## 0.5.23
 
 - **Let AI agents work with Git Raccoon** (Settings › Agents, off unless you turn it on): Claude Code, Claude Desktop, Cursor and others connect over MCP through `git-raccoon mcp`, with the setup ready to copy.

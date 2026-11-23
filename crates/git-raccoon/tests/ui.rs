@@ -5941,6 +5941,18 @@ fn zooms_with_ctrl_and_the_keys_or_the_wheel() {
 }
 
 #[test]
+fn takes_feedback_with_no_repository_open() {
+    // On the welcome screen too (#84).
+    let mut h = harness(Settings::default());
+    h.run_ok();
+    assert!(h.state().repo().is_none());
+    h.get_by_label("Send feedback: a bug, a thought or an idea")
+        .click();
+    h.run_ok();
+    h.get_by_label("Feedback title");
+}
+
+#[test]
 fn shows_whats_new_after_an_update_and_takes_feedback() {
     let current = env!("CARGO_PKG_VERSION");
     // A fresh install: nothing to show, but the version is noted.

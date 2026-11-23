@@ -886,6 +886,7 @@ impl App {
 
     /// Whether a command can run right now.
     fn can_run(&self, command: &Command) -> bool {
+        // Without a repository: what's about the app, not a repository.
         let Some(repo) = &self.repo else {
             return matches!(
                 command,
@@ -898,6 +899,12 @@ impl App {
                     | Command::OpenRepo
                     | Command::CloneRepo
                     | Command::NewRepo
+                    | Command::Feedback
+                    | Command::WhatsNew
+                    | Command::CheckForUpdates
+                    | Command::ZoomIn
+                    | Command::ZoomOut
+                    | Command::ZoomReset
             );
         };
         let busy = repo.op_running();
