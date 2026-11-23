@@ -842,6 +842,183 @@ pub fn add_config_entry(dir: &Path, entry: &str) -> Result<()> {
     }
 }
 
+/// Windows' OpenSSH Authentication Agent service, as `sc` reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Service {
+    Running,
+    /// Stopped, but would start (manual or automatic).
+    Stopped,
+    /// Turned off: it needs an administrator to turn on.
+    Disabled,
+    /// Not installed (Windows' OpenSSH isn't there).
+    Missing,
+    Unknown,
+}
+
+/// Reads `sc query ssh-agent` and `sc qc ssh-agent`.
+pub fn parse_service(query: &str, config: &str) -> Service {
+    let both = format!("{query}\n{config}").to_uppercase();
+    if both.contains("1060") || both.contains("DOES NOT EXIST") {
+        Service::Missing
+    } else if query.to_uppercase().contains("RUNNING") {
+        Service::Running
+    } else if config.to_uppercase().contains("DISABLED") {
+        Service::Disabled
+    } else if query.to_uppercase().contains("STOPPED") {
+        Service::Stopped
+    } else {
+        Service::Unknown
+    }
+}
+
+/// On Windows, the two SSH setups Git may use: Windows' own OpenSSH (with
+/// its agent service) and Git for Windows' bundled ssh (with its own
+/// agent, if one was started).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowsSsh {
+    pub system_ssh: Option<PathBuf>,
+    pub system_agent: Option<Agent>,
+    pub service: Service,
+    pub git_ssh: Option<PathBuf>,
+    pub git_agent: Option<Agent>,
+}
+
+/// What to do about it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WindowsAdvice {
+    /// Your keys are in Windows' agent, but Git would use its own ssh,
+    /// which can't see them: use Windows' ssh (for the app's own Git).
+    UseSystemSsh(PathBuf),
+    /// No agent has keys, and Windows' agent service is turned off.
+    TurnOnService,
+    /// Nothing to change.
+    Nothing,
+}
+
+/// Where Git for Windows keeps its own ssh, from `git --exec-path`
+/// (…/Git/mingw64/libexec/git-core → …/Git/usr/bin/ssh.exe).
+pub fn git_bundled_ssh(exec_path: &str) -> Option<PathBuf> {
+    let p = Path::new(exec_path.trim());
+    let root = p.ancestors().nth(3)?;
+    Some(root.join("usr").join("bin").join("ssh.exe"))
+}
+
+/// Looks at both setups (on Windows; elsewhere there's nothing to find).
+pub fn windows_ssh() -> Option<WindowsSsh> {
+    if !cfg!(windows) {
+        return None;
+    }
+    let root = env("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+    let system_ssh = Some(
+        Path::new(&root)
+            .join("System32")
+            .join("OpenSSH")
+            .join("ssh.exe"),
+    )
+    .filter(|p| p.is_file());
+    let system_agent = system_ssh.as_ref().map(|p| {
+        let ssh = Ssh::from_program(&p.to_string_lossy(), "ssh");
+        agent_at(&ssh, Some(r"\\.\pipe\openssh-ssh-agent".into()))
+    });
+    let sc = |args: &[&str]| -> String {
+        let mut cmd = Command::new("sc");
+        cmd.args(args).stdin(Stdio::null());
+        quiet_window(&mut cmd);
+        cmd.output()
+            .map(|o| {
+                format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&o.stdout),
+                    String::from_utf8_lossy(&o.stderr)
+                )
+            })
+            .unwrap_or_default()
+    };
+    let service = parse_service(&sc(&["query", "ssh-agent"]), &sc(&["qc", "ssh-agent"]));
+    let git_ssh = crate::cli::run_quiet(".", &["--exec-path"])
+        .ok()
+        .and_then(|p| git_bundled_ssh(&p))
+        .filter(|p| p.is_file());
+    let git_agent = match (&git_ssh, env("SSH_AUTH_SOCK")) {
+        (Some(p), Some(socket)) => {
+            let ssh = Ssh::from_program(&p.to_string_lossy(), "ssh");
+            Some(agent_at(&ssh, Some(socket)))
+        }
+        _ => None,
+    };
+    Some(WindowsSsh {
+        system_ssh,
+        system_agent,
+        service,
+        git_ssh,
+        git_agent,
+    })
+}
+
+/// What to do, given the `ssh` Git would run (`git`, from
+/// [`Ssh::for_git`]) and what's on this computer. The user's own choice
+/// (`GIT_SSH_COMMAND`, `core.sshCommand`, `GIT_SSH`) always stands.
+pub fn windows_advice(git: &Ssh, w: &WindowsSsh) -> WindowsAdvice {
+    if git.from != "ssh" {
+        return WindowsAdvice::Nothing;
+    }
+    let has_keys = |a: &Option<Agent>| a.as_ref().is_some_and(|a| a.running && !a.keys.is_empty());
+    if let Some(system) = &w.system_ssh
+        && has_keys(&w.system_agent)
+        && !has_keys(&w.git_agent)
+        && w.git_ssh.is_some()
+    {
+        return WindowsAdvice::UseSystemSsh(system.clone());
+    }
+    if !has_keys(&w.system_agent)
+        && !has_keys(&w.git_agent)
+        && matches!(w.service, Service::Disabled | Service::Stopped)
+    {
+        return WindowsAdvice::TurnOnService;
+    }
+    WindowsAdvice::Nothing
+}
+
+/// Makes the app's own Git commands use `ssh` (None: Git's usual one).
+/// The user's own `GIT_SSH_COMMAND` and `GIT_SSH` still win; nothing
+/// outside the app changes.
+pub fn use_for_app(ssh: Option<&Path>) {
+    crate::cli::set_ssh_command(ssh.map(|p| p.to_string_lossy().into_owned()));
+}
+
+/// The `ssh` the app's own Git commands use instead of Git's usual one.
+pub fn used_by_app() -> Option<PathBuf> {
+    crate::cli::ssh_command().map(PathBuf::from)
+}
+
+/// Looks at Windows' two setups and, when the keys are where Git's own ssh
+/// can't see them, makes the app's Git use Windows' ssh. Returns what it
+/// found, and the advice. Blocks (it runs `ssh-add` and `sc`).
+pub fn check_windows() -> Option<(WindowsSsh, WindowsAdvice)> {
+    let w = windows_ssh()?;
+    let advice = windows_advice(&Ssh::for_git(None), &w);
+    if let WindowsAdvice::UseSystemSsh(p) = &advice {
+        use_for_app(Some(p));
+    }
+    Some((w, advice))
+}
+
+/// How to turn Windows' agent service on (it takes an administrator).
+pub const TURN_ON_SERVICE: &str =
+    "Get-Service ssh-agent | Set-Service -StartupType Automatic; Start-Service ssh-agent";
+
+/// Makes Git everywhere (not just in Git Raccoon) use `ssh`, by setting
+/// the user's `core.sshCommand`. Only when they ask.
+pub fn use_ssh_for_git_everywhere(ssh: &Path) -> Result<()> {
+    let value = format!("\"{}\"", ssh.to_string_lossy().replace('\\', "/"));
+    crate::cli::run(
+        ".",
+        &["config", "--global", "core.sshCommand", &value],
+        None,
+    )
+    .map(drop)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1237,6 +1414,116 @@ mod tests {
             format!("Host *\n  AddKeysToAgent yes\n\n{entry}")
         );
         assert!(config_entry("x", Path::new("/k/my key"), &dir).contains("\"/k/my key\""));
+    }
+
+    #[test]
+    fn chooses_the_agent_with_the_keys_on_windows() {
+        let agent = |keys: usize| Agent {
+            kind: AgentKind::WindowsOpenSsh,
+            socket: None,
+            running: true,
+            keys: (0..keys)
+                .map(|i| AgentKey {
+                    bits: 256,
+                    fingerprint: format!("SHA256:{i}"),
+                    comment: String::new(),
+                    kind: "ED25519".into(),
+                })
+                .collect(),
+            problem: None,
+        };
+        let system = PathBuf::from(r"C:\Windows\System32\OpenSSH\ssh.exe");
+        let both = |system_keys, git_keys: Option<usize>, service| WindowsSsh {
+            system_ssh: Some(system.clone()),
+            system_agent: Some(agent(system_keys)),
+            service,
+            git_ssh: Some(PathBuf::from(r"C:\Program Files\Git\usr\bin\ssh.exe")),
+            git_agent: git_keys.map(agent),
+        };
+        let plain = Ssh::from_program("ssh", "ssh");
+        // Keys in Windows' agent only: use Windows' ssh.
+        assert_eq!(
+            windows_advice(&plain, &both(2, None, Service::Running)),
+            WindowsAdvice::UseSystemSsh(system.clone())
+        );
+        // Git's own agent has them: leave it.
+        assert_eq!(
+            windows_advice(&plain, &both(2, Some(1), Service::Running)),
+            WindowsAdvice::Nothing
+        );
+        // The user chose: theirs stands.
+        let theirs = Ssh::from_command("ssh -i key", "core.sshCommand");
+        assert_eq!(
+            windows_advice(&theirs, &both(2, None, Service::Running)),
+            WindowsAdvice::Nothing
+        );
+        // No keys anywhere, and the service is off.
+        let mut off = both(0, None, Service::Disabled);
+        off.system_agent = Some(Agent {
+            running: false,
+            ..agent(0)
+        });
+        assert_eq!(windows_advice(&plain, &off), WindowsAdvice::TurnOnService);
+        assert_eq!(
+            windows_advice(&plain, &both(0, None, Service::Running)),
+            WindowsAdvice::Nothing
+        );
+    }
+
+    #[test]
+    fn reads_windows_service_states_and_paths() {
+        assert_eq!(
+            parse_service(
+                "SERVICE_NAME: ssh-agent\n        STATE              : 4  RUNNING",
+                ""
+            ),
+            Service::Running
+        );
+        assert_eq!(
+            parse_service(
+                "        STATE              : 1  STOPPED",
+                "        START_TYPE         : 4   DISABLED"
+            ),
+            Service::Disabled
+        );
+        assert_eq!(
+            parse_service(
+                "        STATE              : 1  STOPPED",
+                "        START_TYPE         : 3   DEMAND_START"
+            ),
+            Service::Stopped
+        );
+        assert_eq!(
+            parse_service("[SC] EnumQueryServicesStatus:OpenService FAILED 1060:", ""),
+            Service::Missing
+        );
+        assert_eq!(
+            git_bundled_ssh("C:/Program Files/Git/mingw64/libexec/git-core\n"),
+            Some(
+                Path::new("C:/Program Files/Git")
+                    .join("usr")
+                    .join("bin")
+                    .join("ssh.exe")
+            )
+        );
+        if !cfg!(windows) {
+            assert_eq!(windows_ssh(), None);
+        }
+    }
+
+    /// On Windows (CI's runners have both setups): what's really there.
+    #[test]
+    fn looks_at_both_setups_on_windows() {
+        // Nothing to find but on Windows.
+        let Some(w) = windows_ssh() else {
+            return;
+        };
+        assert!(w.git_ssh.is_some(), "Git for Windows' own ssh: {w:?}");
+        assert_ne!(w.service, Service::Unknown, "{w:?}");
+        // Whatever it advises, it's one of the three, and never with no ssh.
+        if let WindowsAdvice::UseSystemSsh(p) = windows_advice(&Ssh::for_git(None), &w) {
+            assert!(p.is_file());
+        }
     }
 
     #[test]

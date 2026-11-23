@@ -30,6 +30,23 @@ fn git_quiet(path: &str) -> Command {
 /// whatever the user's own config says.
 static REMEMBER: AtomicBool = AtomicBool::new(false);
 
+/// The `ssh` the app's own Git commands use, when it isn't Git's usual one
+/// (on Windows: Windows' OpenSSH, whose agent has the keys).
+static SSH_COMMAND: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Sets (or clears) the `ssh` for the app's own Git commands; the user's
+/// own `GIT_SSH_COMMAND` still wins.
+pub fn set_ssh_command(ssh: Option<String>) {
+    if let Ok(mut s) = SSH_COMMAND.lock() {
+        *s = ssh;
+    }
+}
+
+/// The `ssh` set for the app's Git, if any.
+pub fn ssh_command() -> Option<String> {
+    SSH_COMMAND.lock().ok().and_then(|s| s.clone())
+}
+
 /// Turns remembering conflict resolutions on or off for the app's Git.
 pub fn set_remember(on: bool) {
     REMEMBER.store(on, Ordering::Relaxed);
@@ -50,6 +67,13 @@ fn git_asking(path: &str, ask: bool) -> Command {
         // Buffer output even into a pipe: by default Git flushes after every
         // record there, which makes a million-commit walk twice as slow.
         .env("GIT_FLUSH", "0");
+    // Windows' own ssh (say), quoted for Git's shell, when set for the app.
+    let chosen = ssh_command()
+        .filter(|_| unset("GIT_SSH_COMMAND") && unset("GIT_SSH"))
+        .map(|p| format!("\"{}\"", p.replace('\\', "/")));
+    if let Some(ssh) = &chosen {
+        cmd.env("GIT_SSH_COMMAND", ssh);
+    }
     if let Some(ask) = crate::askpass::current().filter(|_| ask) {
         // Questions (passwords, passphrases, new host keys) go to the app.
         // A user's own askpass programs win.
@@ -66,7 +90,8 @@ fn git_asking(path: &str, ask: bool) -> Command {
         // With nobody to ask, SSH would wait for a passphrase or host key on
         // a terminal the app doesn't have (or, started from one, block on it
         // unseen). Keys in an agent and known hosts still work.
-        cmd.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
+        let ssh = chosen.as_deref().unwrap_or("ssh");
+        cmd.env("GIT_SSH_COMMAND", format!("{ssh} -o BatchMode=yes"));
     }
     #[cfg(windows)]
     {
@@ -369,6 +394,28 @@ pub fn run_with_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gives_the_apps_git_the_chosen_ssh() {
+        if !unset("GIT_SSH_COMMAND") || !unset("GIT_SSH") {
+            return;
+        }
+        let env_of = |cmd: &Command| {
+            cmd.get_envs()
+                .find(|(k, _)| *k == "GIT_SSH_COMMAND")
+                .and_then(|(_, v)| v.map(|v| v.to_string_lossy().into_owned()))
+        };
+        set_ssh_command(Some(r"C:\Windows\System32\OpenSSH\ssh.exe".into()));
+        let with = env_of(&git_asking(".", false));
+        set_ssh_command(None);
+        let without = env_of(&git_asking(".", false));
+        // Quoted, with forward slashes, for Git's shell.
+        assert_eq!(
+            with.as_deref(),
+            Some(r#""C:/Windows/System32/OpenSSH/ssh.exe" -o BatchMode=yes"#)
+        );
+        assert_eq!(without.as_deref(), Some("ssh -o BatchMode=yes"));
+    }
 
     #[test]
     fn streams_progress_and_cancels() {

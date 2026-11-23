@@ -3,6 +3,10 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.28
+
+- **SSH on Windows uses the agent that has your keys**: when your keys are loaded in Windows' OpenSSH agent, Git Raccoon's Git uses Windows' own ssh, so they're used (Git for Windows' bundled ssh can't see them, and asks for the passphrase every time). Only Git Raccoon's commands change; your own `core.sshCommand` still wins.
+
 ## 0.5.27
 
 - **Push no longer hides under Search** in a narrow window: the middle buttons stay clear of the right-hand ones, which become icons when space runs short (and long repository and branch names are cut short, in full on hover).

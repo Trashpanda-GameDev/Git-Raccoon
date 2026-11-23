@@ -189,6 +189,12 @@ impl App {
     /// Creates the app with the given settings and no repo open.
     pub fn with_settings(ctx: &egui::Context, mut settings: Settings) -> Self {
         theme::apply(ctx);
+        // On Windows: when the keys are in Windows' agent, which Git's own
+        // ssh can't see, the app's Git uses Windows' ssh (in the background:
+        // it asks the agents).
+        if cfg!(windows) {
+            std::thread::spawn(git_raccoon_core::ssh::check_windows);
+        }
         // Updated since the last run: what's new in the versions since.
         let current = env!("CARGO_PKG_VERSION");
         let whats_new = settings
