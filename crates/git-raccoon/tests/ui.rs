@@ -3253,6 +3253,10 @@ fn asks_where_to_push_a_new_branch() {
     );
     h.get_by_label_contains("Where should fix/hazel-moves push to");
     h.get_by_label("Push to origin/fix/hazel-moves");
+    // Together, not spread across the bar: the button right after the name.
+    let field = h.get_by_label("Remote branch name").rect();
+    let button = h.get_by_label("Push to origin/fix/hazel-moves").rect();
+    assert!(button.left() - field.right() < 24.0, "{field:?} {button:?}");
     screenshot(&mut h, "25-push-to");
 
     // With two remotes, the other can be chosen; and another name there.
@@ -7450,4 +7454,34 @@ fn resolves_conflicts_in_panes() {
     h.run_ok();
     assert!(!h.state().settings().conflict_panes);
     h.get_by_label_contains("Stage all");
+}
+
+#[test]
+fn keeps_push_clear_of_the_right_hand_buttons_when_narrow() {
+    let sample = Sample::build();
+    git(
+        &sample,
+        &[
+            "switch",
+            "-q",
+            "-c",
+            "feature/NM3-683-magic-pouch-full-gate-with-a-long-name",
+        ],
+    );
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 700.0))
+        .wgpu()
+        .build_eframe(|cc| App::with_settings(&cc.egui_ctx, Settings::default()));
+    open(&mut h, sample.path());
+    h.state_mut().pretend_update_ready("9.9.9");
+    for _ in 0..4 {
+        h.run_ok();
+    }
+    screenshot(&mut h, "96-narrow-toolbar");
+    let push = h.get_by_label("Push").rect();
+    for other in ["Search", "Commands", "Settings"] {
+        let r = h.get_by_label(other).rect();
+        assert!(!push.intersects(r), "Push {push:?} under {other} {r:?}");
+    }
+    assert!(push.right() <= 1000.0, "{push:?}");
 }

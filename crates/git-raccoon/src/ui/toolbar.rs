@@ -83,14 +83,25 @@ pub fn show(
     let mut action = None;
     // Commits can only be searched in a repository.
     let searchable = repo.is_some();
+    // How much room each part took last time decides how they fit now:
+    // first the right-hand buttons as icons (compact), then the names on
+    // the left cut short (tight).
+    let width = ui.available_width();
+    let fit = Fit::recall(ui.ctx());
+    let compact = fit.left_full + fit.middle + fit.right_full + 36.0 > width;
+    let tight = compact && fit.left_full + fit.middle + fit.right_compact + 36.0 > width;
     ui.horizontal_centered(|ui| {
+        let bar_left = ui.max_rect().left();
+        let (mut left_used, mut middle_used) = (0.0, 0.0);
         if widgets::icon_button(ui, icon::SIDEBAR_SIMPLE, "Show or hide the sidebar").clicked() {
             action = Some(Action::ToggleSidebar);
         }
 
         if let Some(repo) = repo {
             ui.add_space(8.0);
-            let button = RichText::new(format!("{}  {}", repo.name, icon::CARET_DOWN)).strong();
+            let button =
+                RichText::new(format!("{}  {}", cut(repo.name, tight, 18), icon::CARET_DOWN))
+                    .strong();
             let menu = ui.menu_button(button, |ui| {
                 ui.set_width(420.0);
                 // Open, clone and new are on a new tab; closing is the tab's ✕.
@@ -113,8 +124,9 @@ pub fn show(
             });
             menu.response.on_hover_text(repo.path);
 
-            let branch = repo.branch.unwrap_or("detached HEAD");
-            egui::Frame::new()
+            let full_branch = repo.branch.unwrap_or("detached HEAD");
+            let branch = cut(full_branch, tight, 22);
+            let pill = egui::Frame::new()
                 .fill(theme::bg())
                 .corner_radius(10)
                 .inner_margin(egui::Margin::symmetric(8, 1))
@@ -124,7 +136,11 @@ pub fn show(
                             .size(12.0)
                             .color(theme::accent()),
                     );
-                });
+                })
+                .response;
+            if tight {
+                pill.on_hover_text(full_branch);
+            }
 
             ui.add_enabled_ui(!repo.refreshing, |ui| {
                 let glyph = if repo.refreshing {
@@ -171,9 +187,12 @@ pub fn show(
                     } else {
                         what.to_string()
                     };
-                    let button = ui.add(egui::Button::new(
-                        RichText::new(format!("{}  {text}", icon::ARROW_U_UP_LEFT)).size(12.0),
-                    ));
+                    let label = if tight {
+                        icon::ARROW_U_UP_LEFT.to_string()
+                    } else {
+                        format!("{}  {text}", icon::ARROW_U_UP_LEFT)
+                    };
+                    let button = ui.add(egui::Button::new(RichText::new(label).size(12.0)));
                     ui.ctx()
                         .accesskit_node_builder(button.id, |n| n.set_label("Undo"));
                     if button.on_hover_text(format!("{what} (Ctrl+Z)")).clicked() {
@@ -191,7 +210,11 @@ pub fn show(
             let after = ui.cursor().left() + 12.0;
             let width_id = ui.id().with("centre width");
             let width: f32 = ui.data(|d| d.get_temp(width_id)).unwrap_or(320.0);
-            let left = (bar.center().x - width / 2.0).max(after);
+            // Never under the right-hand buttons: slid left to end before them.
+            let right = if compact { fit.right_compact } else { fit.right_full };
+            let room = bar.right() - right - 12.0;
+            let left = (bar.center().x - width / 2.0).min(room - width).max(after);
+            left_used = after - 12.0 - bar_left;
             let mut centre = ui.new_child(
                 egui::UiBuilder::new()
                     .max_rect(egui::Rect::from_min_max(
@@ -223,9 +246,11 @@ pub fn show(
             }
             let used = centre.min_rect().width();
             ui.data_mut(|d| d.insert_temp(width_id, used));
+            middle_used = used;
         }
         // Settings and the command palette, at the far right.
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let right_start = ui.max_rect().right();
+        let right_group = ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if widgets::icon_button(ui, icon::GEAR_SIX, "Settings").clicked() {
                 action = Some(Action::Settings);
             }
@@ -256,15 +281,23 @@ pub fn show(
                 }
             }
             if let Some(version) = update {
+                let name = format!("Restart to update to {version}");
+                let text = if compact {
+                    icon::ARROW_CIRCLE_UP.to_string()
+                } else {
+                    format!("{}  {name}", icon::ARROW_CIRCLE_UP)
+                };
                 let button = egui::Button::new(
-                    RichText::new(format!("{}  Restart to update to {version}", icon::ARROW_CIRCLE_UP))
-                        .size(12.0)
-                        .color(theme::on_accent()),
+                    RichText::new(text).size(12.0).color(theme::on_accent()),
                 )
                 .fill(theme::accent_fill());
-                if ui
-                    .add(button)
-                    .on_hover_text("A new version is downloaded. Your tabs and settings are kept.")
+                let button = ui.add(button);
+                ui.ctx()
+                    .accesskit_node_builder(button.id, |n| n.set_label(name.as_str()));
+                if button
+                    .on_hover_text(format!(
+                        "{name}: a new version is downloaded. Your tabs and settings are kept."
+                    ))
                     .clicked()
                 {
                     action = Some(Action::RestartToUpdate);
@@ -273,9 +306,16 @@ pub fn show(
             let shortcut = crate::commands::shortcut(&crate::commands::Command::Palette)
                 .map(|s| ui.ctx().format_shortcut(&s))
                 .unwrap_or_default();
-            let button = ui.button(
-                RichText::new(format!("{}  Commands  {shortcut}", icon::COMMAND)).size(12.0),
-            );
+            let button = ui
+                .button(
+                    RichText::new(if compact {
+                        icon::COMMAND.to_string()
+                    } else {
+                        format!("{}  Commands  {shortcut}", icon::COMMAND)
+                    })
+                    .size(12.0),
+                )
+                .on_hover_text(format!("Commands ({shortcut})"));
             ui.ctx()
                 .accesskit_node_builder(button.id, |n| n.set_label("Commands"));
             if button
@@ -288,10 +328,16 @@ pub fn show(
                 let shortcut = crate::commands::shortcut(&crate::commands::Command::Find)
                     .map(|s| ui.ctx().format_shortcut(&s))
                     .unwrap_or_default();
-                let button = ui.button(
-                    RichText::new(format!("{}  Search  {shortcut}", icon::MAGNIFYING_GLASS))
+                let button = ui
+                    .button(
+                        RichText::new(if compact {
+                            icon::MAGNIFYING_GLASS.to_string()
+                        } else {
+                            format!("{}  Search  {shortcut}", icon::MAGNIFYING_GLASS)
+                        })
                         .size(12.0),
-                );
+                    )
+                    .on_hover_text(format!("Search ({shortcut})"));
                 ui.ctx()
                     .accesskit_node_builder(button.id, |n| n.set_label("Search"));
                 if button
@@ -302,6 +348,20 @@ pub fn show(
                 }
             }
         });
+        // How wide the right-hand buttons came out, for placing the middle
+        // ones next time; and how wide they are in full.
+        let right_used = right_start - right_group.response.rect.left();
+        let mut next = fit;
+        next.middle = middle_used;
+        if !tight {
+            next.left_full = left_used;
+        }
+        if compact {
+            next.right_compact = right_used;
+        } else {
+            next.right_full = right_used;
+        }
+        next.remember(ui.ctx());
         if opening {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(8.0);
@@ -311,6 +371,39 @@ pub fn show(
         }
     });
     action
+}
+
+/// How wide the toolbar's parts came out last time: the left one at full
+/// size, the middle one, and the right one in full and as icons.
+#[derive(Clone, Copy, Default)]
+struct Fit {
+    left_full: f32,
+    middle: f32,
+    right_full: f32,
+    right_compact: f32,
+}
+
+impl Fit {
+    fn id() -> egui::Id {
+        egui::Id::new("toolbar fit")
+    }
+
+    fn recall(ctx: &egui::Context) -> Fit {
+        ctx.data(|d| d.get_temp(Fit::id())).unwrap_or_default()
+    }
+
+    fn remember(self, ctx: &egui::Context) {
+        ctx.data_mut(|d| d.insert_temp(Fit::id(), self));
+    }
+}
+
+/// `text`, cut to `most` characters (with an ellipsis) when `tight`.
+fn cut(text: &str, tight: bool, most: usize) -> String {
+    if tight && text.chars().count() > most {
+        text.chars().take(most - 1).chain(['…']).collect()
+    } else {
+        text.to_string()
+    }
 }
 
 /// Fetch, pull and push; or, while one runs, its progress and Cancel.

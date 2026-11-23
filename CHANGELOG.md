@@ -3,6 +3,11 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.27
+
+- **Push no longer hides under Search** in a narrow window: the middle buttons stay clear of the right-hand ones, which become icons when space runs short (and long repository and branch names are cut short, in full on hover).
+- **Where to push a new branch, more compact**: the name field, *Push* and *Cancel* sit together instead of spread across the window.
+
 ## 0.5.26
 
 - **Conflicts as panes**: switch the conflict editor to panes (the two-column button in its header) for a focused view that takes the whole window: each side's whole file next to each other, with its commit, and the file as it will be saved below. Tick a whole conflict with the box at its first line, or click single lines; tick a side's header box to take it everywhere. **Save** writes every conflict you chose at once; the rest stay conflicts. Your choice of cards or panes is remembered.
