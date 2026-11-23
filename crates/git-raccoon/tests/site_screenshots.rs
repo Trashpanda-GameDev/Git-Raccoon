@@ -415,8 +415,79 @@ fn website_screenshots() {
     // Merge requests from a GitLab server, beside the graph.
     requests(&demo);
 
+    // SSH: the settings page, and a push it explains.
+    #[cfg(unix)]
+    ssh(&demo);
+
     // Resolving a merge's conflicts, as panes (last: it changes the repo).
     conflicts(&demo);
+}
+
+/// Settings › SSH, and a push that failed over SSH, explained.
+#[cfg(unix)]
+fn ssh(demo: &Demo) {
+    use egui::accesskit::Role;
+    use std::os::unix::fs::PermissionsExt as _;
+    let home = demo.dir.parent().unwrap().join("home");
+    let dir = home.join(".ssh");
+    git_raccoon_core::ssh::set_ssh_dir(Some(dir.clone()));
+    git_raccoon_core::ssh::create_key(&dir, "id_ed25519", "rocky@laptop", Some("a passphrase"))
+        .unwrap();
+    // Trusted hosts, with their published keys.
+    std::fs::write(
+        dir.join("known_hosts"),
+        "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\ngitlab.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAfuCHKVTjquxvt6CM6tdG4SLp1Btn/nOeHHE5UOzRdf\n",
+    )
+    .unwrap();
+    let mut h = harness(ThemeChoice::Raccoon, ThemeMode::Dark);
+    open(&mut h, &demo.dir);
+    press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    h.get_by_role_and_label(Role::Button, "SSH").click();
+    let start = Instant::now();
+    while h.query_by_label("Add id_ed25519 to the agent").is_none() {
+        assert!(start.elapsed() < Duration::from_secs(20), "no SSH page");
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    settle(&mut h);
+    shot(&mut h, "ssh-settings");
+    drop(h);
+
+    // A push the host refuses: why, with the fix.
+    let fake = home.join("ssh");
+    std::fs::write(
+        &fake,
+        "#!/bin/sh\necho 'debug1: Offering public key: ~/.ssh/id_ed25519 ED25519 SHA256:x agent' >&2\necho 'git@gitlab.com: Permission denied (publickey).' >&2\nexit 255\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut config = demo.repo.config().unwrap();
+    config
+        .set_str("core.sshCommand", &fake.to_string_lossy())
+        .unwrap();
+    demo.repo
+        .remote_set_url("origin", "git@gitlab.com:rocky/stash-box.git")
+        .unwrap();
+    let mut h = harness(ThemeChoice::Raccoon, ThemeMode::Dark);
+    open(&mut h, &demo.dir);
+    click(&mut h, "Push");
+    let start = Instant::now();
+    while h
+        .query_by_label_contains("didn't accept your SSH key")
+        .is_none()
+    {
+        assert!(start.elapsed() < Duration::from_secs(20), "no SSH problem");
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    settle(&mut h);
+    shot(&mut h, "ssh-error");
+    drop(h);
+    config.remove("core.sshCommand").unwrap();
+    demo.repo
+        .remote_set_url("origin", "https://github.com/rocky/stash-box.git")
+        .unwrap();
+    git_raccoon_core::ssh::set_ssh_dir(None);
 }
 
 /// A merge that conflicts in two places of the store, resolved as panes.

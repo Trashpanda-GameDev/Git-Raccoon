@@ -217,7 +217,47 @@ Options in the arrow menu:
 
 ### Passwords and keys
 
-Git Raccoon uses your existing Git setup: Git Credential Manager, other credential helpers, and your SSH agent. When Git needs a password, passphrase or a new host confirmed, it asks in a dialog. If you're [signed in to the forge](#signing-in), that account answers for you.
+Git Raccoon uses your existing Git setup: Git Credential Manager, other credential helpers, and your SSH agent. When Git needs a password, passphrase or a new host confirmed, it asks in a dialog. If you're [signed in to the forge](#signing-in), that account answers for you. For SSH, see [SSH](#ssh).
+
+## SSH
+
+SSH lets Git sign in to GitHub, GitLab and other hosts with a key on your computer instead of a password. Git Raccoon runs your own `ssh` and keeps your own setup: your `~/.ssh/config`, your agent and your `core.sshCommand` always win, and nothing outside `~/.ssh` and your repository's remotes is changed, and nothing without saying so first.
+
+### Setting it up
+
+**Set up SSH for GitHub/GitLab** does everything in one window, for an account you're [signed in to](#signing-in): a key (one you have, or a new one), remembered by the agent, added to your account, a connection test, and (from a repository) its remote switched to SSH. Steps already done are ticked and skipped; each says what it changes first, and each can be done by hand instead (*Copy it and add it myself*, then *Check again*). Open it from **Settings › SSH**, the clone dialog, a remote's menu (*Set up SSH…*), or an SSH error.
+
+### Settings › SSH
+
+![Settings › SSH: a key not yet in the agent, the agent, and trusted hosts matching their published keys.](../site/screenshots/ssh-settings.png)
+
+- **Your keys** in `~/.ssh` (and those your `~/.ssh/config` names), each with its type, fingerprint and comment, whether it's **in the agent**, and on which of your accounts. *Copy public key*, *Add to the agent* (its passphrase is asked in the app), *Add to GitHub/GitLab*, *Show in folder*.
+- **Create a key…** makes an ed25519 key in `~/.ssh` (with a passphrase, or none after a warning), never replacing one, and can add a `~/.ssh/config` entry for a host, shown first. **Use an existing key…** adds one from elsewhere to the agent, or uses it for a host.
+- **The agent**: which one (OpenSSH's, macOS's, 1Password, GnuPG's, Windows'), whether it's running, and **Add keys to the agent when they're first used**, so you type a passphrase once (it adds `AddKeysToAgent` to `~/.ssh/config`; turning it off removes only that).
+- **Hosts** SSH trusts (from `known_hosts`), marked when they match the keys GitHub and GitLab.com publish, and **Test connections** to your accounts' hosts ("Signed in to github.com as rocky.", or exactly why not).
+
+To add keys to an account, GitHub needs a sign-in that may manage SSH keys: signing in now asks for that, and an older sign-in is offered a fresh one when it's needed.
+
+### Trusting a host
+
+The first time SSH connects to a host, it asks whether to trust its key. Git Raccoon checks it against the keys the host publishes: "This is GitHub's published key", or a red warning when it isn't one (someone may be between you and the host: cancel, and try another network). For hosts that don't publish their keys where the app can check, compare the fingerprint with what whoever runs it says.
+
+When a host's key has **changed** since you trusted it, SSH refuses to connect. *Test connections* says what that can mean, checks the new key, and offers to replace the old one only when the new one is the published one.
+
+### When SSH fails
+
+![A push GitLab refused: the checks, and the fixes.](../site/screenshots/ssh-error.png)
+
+When a fetch, pull or push fails over SSH, Git Raccoon tests the connection and checks your keys, the agent and your account, then says what's wrong, with the checks it made, and offers the fix: *Add the key to GitHub and retry*, *Add it to the agent and retry*, *Check the host's key and retry*, *Use port 443* (GitHub, when a firewall blocks SSH's usual port), *Use HTTPS for origin instead*, or *Set up SSH…*. A background fetch that fails this way only says so in Fetch's tip.
+
+### SSH or HTTPS
+
+- **Cloning** one of your repositories offers *Connect with SSH / HTTPS*, choosing SSH when your key already works with that forge.
+- **A remote's menu** (right-click it in the sidebar) has *Use SSH instead* or *Use HTTPS instead*, *Use port 443* for GitHub, and *Test connection*. A changed address shows both first, and **Undo** puts it back.
+
+### On Windows
+
+Windows has two SSH setups: Git for Windows' own `ssh`, and Windows' OpenSSH with its agent service. Git uses its own, which can't see keys loaded in Windows' agent (so it asks for the passphrase every time). When your keys are in Windows' agent, Git Raccoon's own Git uses Windows' `ssh`; Settings › SSH says so, and offers **Use it for Git everywhere too** (which sets `core.sshCommand`). When Windows' agent service is turned off, it shows the PowerShell line that turns it on (as an administrator).
 
 ## Pull requests, merge requests and issues
 
@@ -412,6 +452,7 @@ Moving around the graph has [keys of its own](#the-graph).
 | **Appearance** | Light, dark or match system; the look; interface size (90–150%); how the graph's lines bend; the sidebar's sections. |
 | **Git** | How Pull and Fetch behave; how often to fetch in the background; diff and file list defaults. |
 | **Accounts** | Your GitHub and GitLab accounts. |
+| **SSH** | Your SSH keys, the agent, trusted hosts, and setting it all up ([SSH](#ssh)). |
 | **Tools** | The terminal to open (`{path}` stands for the folder), and where new clones go. |
 | **Updates and privacy** | Automatic updates, **Check for updates now**, and clearing recent repositories. |
 | **About** | The version, what's new, feedback, and licenses. |
@@ -438,9 +479,13 @@ Under the looks, **New theme** opens the editor:
 | Problem | What to do |
 | --- | --- |
 | "Git isn't installed, or isn't on PATH." | Install [Git](https://git-scm.com), then restart Git Raccoon. |
-| Fetching or pushing asks for a password every time. | Set up a credential helper (Git Credential Manager comes with Git for Windows), or use SSH with an SSH agent. |
+| Fetching or pushing asks for a password every time. | Set up a credential helper (Git Credential Manager comes with Git for Windows), or use SSH: *Set up SSH for GitHub/GitLab* in Settings › SSH. |
+| SSH asks for the passphrase every time. | Add the key to the agent (Settings › SSH), and turn on *Add keys to the agent when they're first used*. On Windows, see [On Windows](#on-windows). |
+| "Permission denied (publickey)" | The SSH error says which part is missing (a key, the agent, your account) and offers the fix. Or test it in Settings › SSH. |
+| Port 22 is blocked (at work, say). | For GitHub, *Use port 443* in the SSH error or the remote's menu; otherwise *Use HTTPS instead*. |
 | "Password authentication is not supported" (GitHub) | Sign in to GitHub in Settings › Accounts, or use a personal access token as the password. Remove an old saved password from your credential helper. |
 | "Not owned by current user" / "dubious ownership" | Git doesn't trust the folder. Its message shows the `git config --global --add safe.directory …` command that fixes it. |
-| "This host isn't known yet." | Confirm the new SSH host, after checking its fingerprint against the one it publishes. |
+| SSH asks whether to trust a host. | The question checks its key against the one GitHub or GitLab.com publishes; for other hosts, compare the fingerprint with what whoever runs it says. |
+| "Remote host identification has changed" | Don't connect until it's checked: *Test connections* in Settings › SSH checks the new key and replaces the old one only when it's the published one. |
 | Large files show as small text files. | The repository uses Git LFS: install [git-lfs](https://git-lfs.com) and run `git lfs pull`. |
 | Something else went wrong. | The error banner shows Git's own message. If it looks like a bug, please [report it](https://github.com/Trashpanda-GameDev/Git-Raccoon/issues). |

@@ -98,6 +98,22 @@ Designed in [docs/design/conflicts](docs/design/conflicts); built in the [Confli
 - [x] **An agent's proposal:** agent tools to read the conflicts and propose a file's resolution with its reasoning, shown as a proposal to *Use this* (undoable), *Edit it* or *Discard*; *Ask an agent* only while one is connected
 - [x] **Solve it once:** Settings › Git › *Remember how I resolve conflicts* (Git's `rerere`, for the app's Git only); a conflict seen before comes back resolved, marked *resolved as before*, with *Review* and *Redo by hand*, and still needs *Mark resolved*
 
+## SSH setup (0.5.28)
+
+Designed in [docs/design/ssh](docs/design/ssh); built in the [SSH setup milestone](https://github.com/Trashpanda-GameDev/Git-Raccoon/milestone/4). Throughout: the user's own `~/.ssh/config`, agent and `core.sshCommand` win; nothing outside `~/.ssh` and the repository's remotes is changed, and nothing without saying so first.
+
+- [x] **SSH status:** the keys in `~/.ssh` and those `~/.ssh/config` names (type, fingerprint, comment, passphrase or not); the agent (which one, running, its keys); what `ssh -G` would use for a host; a connection test that says who you're signed in as, or exactly why not
+- [x] **Settings › SSH:** your keys, each in the agent or not and on which signed-in accounts (*Copy public key*, *Add to the agent*, *Add to GitHub/GitLab*, *Show in folder*); *Create a key…* and *Use an existing key…*; the agent and *Add keys to the agent when first used*; trusted hosts and *Test connections*
+- [x] **Creating a key** in-process (ed25519, passphrase or not), written to `~/.ssh` privately, never overwriting a key, with an optional `~/.ssh/config` entry shown first
+- [x] **Keys on your accounts:** listed and added through GitHub, GitLab and self-managed GitLab; GitHub's sign-in asks for `write:public_key`, and older sign-ins are offered a fresh one when needed
+- [x] **Guided setup** (*Set up SSH for GitHub/GitLab*, from Settings, the clone dialog, a remote's menu or an SSH error): key, agent, account, test, and the repository's remote; steps done are ticked and skipped, each can be done by hand
+- [x] **Errors that know what's wrong:** a failed fetch, pull or push over SSH is diagnosed (key, agent, account, host trusted, reachable) with the fixes as buttons; background fetches say so quietly. Clones that fail over SSH still show Git's words, with a hint to Settings › SSH.
+- [x] **Trusting hosts:** checked against GitHub's published keys (its API, else built in) and GitLab.com's (built in, from its documentation); a changed key is explained, and replacing it offered only when the new one is published
+- [x] **SSH or HTTPS:** the clone dialog's choice (SSH when your key already works), a remote's *Use SSH/HTTPS instead*, *Use port 443* and *Test connection*, with undo
+- [x] **Windows:** the app's Git uses Windows' `ssh` when Windows' agent has the keys (its own commands only); *Use it for Git everywhere too*; how to turn the agent service on. The detection runs in CI on Windows.
+- [ ] Tried end to end on Windows, macOS and Linux with real GitHub and GitLab accounts (a new key, a key in another agent, a blocked port 22)
+- Later (with Profiles): a key per profile (two accounts on one host, through host aliases); signing commits with an SSH key.
+
 ## Designed (ready to build)
 
 ### Profiles: who you commit as, and with which accounts
@@ -144,23 +160,6 @@ Built in 0.5.18, with one set of words for GitHub and GitLab (what a forge doesn
   - [x] **Push and open in one step** ("Push 3 commits and open"), setting the upstream; draft or ready; then straight to the new request's view.
 - [x] Drafts kept on the forge (GitHub's pending review, GitLab's draft notes); editing and deleting your comments; a status line in the sidebar; outdated threads in Changes; GitLab fast-forward and bringing a request up to date; a new request as a view of its own.
 - Later: check logs and re-runs; editing the title, description, reviewers, assignees and labels; draft/ready, close/reopen; sidebar filters (*Mine*, *Review requested*), and a count of requests waiting on you.
-
-### SSH setup
-
-Mockups: [docs/design/ssh](docs/design/ssh). Build work: the [SSH setup milestone](https://github.com/Trashpanda-GameDev/Git-Raccoon/milestone/4).
-
-SSH already works once it's set up (Git Raccoon runs the user's own `ssh`, and asks for passphrases and new hosts in a dialog). This is about getting there, and staying there, without a terminal. Throughout: the user's own `~/.ssh/config`, agent and `core.sshCommand` win; nothing outside `~/.ssh` and the repository's remotes is changed, and nothing is changed without saying so first.
-
-- [ ] **SSH status (the base of the rest):** the keys in `~/.ssh` (type, fingerprint, comment, passphrase or not); the agent (running or not, which one, the keys in it); what SSH would use for a host (`ssh -G`: the key files, user, port, agent); and a connection test (`ssh -T`) that says who you're signed in as, or exactly why not.
-- [ ] **A. Settings › SSH:** your keys, each with whether it's in the agent and on which of your signed-in accounts (*Add to GitLab*, *Copy public key*, *Add to the agent*, *Show in folder*); *Create a key…* and *Use an existing key…*; the agent's state and *Add keys to the agent when first used*; trusted hosts and *Test connections*.
-- [ ] **Creating a key** in the app (ed25519, with a passphrase or not, a comment), written to `~/.ssh` with the right permissions, never overwriting a key; optionally a `~/.ssh/config` entry for a host.
-- [ ] **Keys on your accounts:** which keys GitHub and GitLab (and self-managed GitLab) know, and adding one through the signed-in account; for GitHub, a sign-in with the `write:public_key` permission (asked for once, when first needed).
-- [ ] **B. Guided setup** (*Set up SSH for GitHub/GitLab*, from Settings, the clone dialog, a remote's menu, or an SSH error): a key (an existing one, or a new one), in the agent, on the account, a connection test, and the repository's remote switched to SSH; steps already done are ticked and skipped.
-- [ ] **C. Errors that know what's wrong:** a failed fetch, pull, push or clone over SSH is diagnosed (no key, not in the agent, not on the account, host not trusted, host key changed, port 22 blocked, name not found) and the message offers the fix (*Add the key to GitHub and retry*, *Use HTTPS instead*, *Use port 443*), instead of pointing to a terminal.
-- [ ] **D. Trusting hosts:** a new host's key checked against the keys GitHub (its API) and GitLab.com publish ("This is GitHub's published key ✓"); others show the fingerprint to compare. A changed key for a known host is a red warning that explains the risk, and replacing it is offered only when the new key is the published one.
-- [ ] **E. SSH or HTTPS:** the clone dialog chooses (SSH when your key already works with that forge), and a remote's menu offers *Use SSH instead* / *Use HTTPS instead* and *Test connection*; GitHub's port 443 when port 22 is blocked.
-- [ ] **Windows:** Git for Windows' own SSH and agent, or Windows' OpenSSH agent: find which one has the keys and make the app's Git use that (for its own commands, leaving `core.sshCommand` alone unless asked); explain when Windows' agent service is turned off.
-- Later (with Profiles): a key per profile (two accounts on one host, through `~/.ssh/config` host aliases); signing commits with an SSH key.
 
 ### Find which commit broke something (bisect)
 

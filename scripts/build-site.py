@@ -34,7 +34,10 @@ def main():
             "toc": {"permalink": "#", "permalink_class": "anchor", "toc_depth": "2"}
         },
     )
-    content = md.convert((ROOT / "docs/guide.md").read_text(encoding="utf-8"))
+    # The guide's images point at the site's screenshots from docs/ (as
+    # GitHub shows it); on the site they're beside the page.
+    guide = (ROOT / "docs/guide.md").read_text(encoding="utf-8")
+    content = md.convert(guide.replace("](../site/screenshots/", "](screenshots/"))
     sections = [t for t in md.toc_tokens[0]["children"]] if md.toc_tokens else []
     toc = "\n".join(
         f'      <li><a href="#{t["id"]}">{html.escape(html.unescape(t["name"]))}</a></li>'

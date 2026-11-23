@@ -136,32 +136,19 @@ pub(crate) fn asking_env(cmd: &mut Command) {
     }
 }
 
-/// The repository's (or user's) `core.sshCommand`, looked up once per
-/// repository: setting `GIT_SSH_COMMAND` would otherwise hide it.
+/// The repository's (or user's) `core.sshCommand`: setting
+/// `GIT_SSH_COMMAND` would otherwise hide it. Read fresh each time (it can
+/// change while the app runs), in-process.
 fn users_ssh_command(path: &str) -> Option<String> {
-    static SEEN: std::sync::Mutex<Option<std::collections::HashMap<String, Option<String>>>> =
-        std::sync::Mutex::new(None);
-    let mut seen = SEEN.lock().ok()?;
-    let seen = seen.get_or_insert_with(Default::default);
-    if let Some(found) = seen.get(path) {
-        return found.clone();
-    }
-    let mut cmd = Command::new("git");
-    cmd.args(["-C", path, "config", "core.sshCommand"])
-        .stdin(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt as _;
-        cmd.creation_flags(0x0800_0000);
-    }
-    let found = cmd
-        .output()
+    let config = match git2::Repository::discover(path) {
+        Ok(repo) => repo.config().ok()?,
+        Err(_) => git2::Config::open_default().ok()?,
+    };
+    config
+        .get_string("core.sshCommand")
         .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|c| !c.is_empty());
-    seen.insert(path.to_string(), found.clone());
-    found
+        .map(|c| c.trim().to_string())
+        .filter(|c| !c.is_empty())
 }
 
 /// Whether an environment variable is unset or empty (Git ignores empty ones).

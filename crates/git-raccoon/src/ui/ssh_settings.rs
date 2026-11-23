@@ -390,6 +390,7 @@ pub fn keys_row(ui: &mut egui::Ui, accounts: &[Account]) -> Option<Ask> {
                     });
                 });
                 // On which accounts.
+                if !account_keys.is_empty() {
                 ui.horizontal_wrapped(|ui| {
                     for (account, listed) in &account_keys {
                         let place = format!("{} ({})", account.place(), account.login);
@@ -430,6 +431,7 @@ pub fn keys_row(ui: &mut egui::Ui, accounts: &[Account]) -> Option<Ask> {
                         }
                     }
                 });
+                }
                 if key.in_config {
                     ui.label(small("Named in ~/.ssh/config"));
                 }
