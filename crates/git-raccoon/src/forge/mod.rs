@@ -11,6 +11,7 @@ mod http;
 pub mod images;
 pub mod oauth;
 pub mod review;
+pub mod ssh_keys;
 pub mod templates;
 
 use serde::{Deserialize, Serialize};

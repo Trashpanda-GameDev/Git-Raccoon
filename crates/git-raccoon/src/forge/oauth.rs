@@ -67,7 +67,8 @@ fn urls(kind: Kind, base: &str) -> (String, String) {
 fn scope(kind: Kind) -> &'static str {
     match kind {
         // `workflow`: pushing commits that change GitHub Actions workflows.
-        Kind::GitHub => "repo read:org workflow",
+        // `write:public_key`: adding SSH keys to the account (Settings › SSH).
+        Kind::GitHub => "repo read:org workflow write:public_key",
         Kind::GitLab => "api",
     }
 }

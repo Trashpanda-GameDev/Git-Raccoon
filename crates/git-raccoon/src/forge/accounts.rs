@@ -170,7 +170,7 @@ pub fn session(account: &Account, project: &Project) -> Result<Session, String> 
 }
 
 /// An account's token, renewing an expired GitLab sign-in first.
-fn token(account: &Account) -> Result<String, String> {
+pub(super) fn token(account: &Account) -> Result<String, String> {
     let mut secret = load(account)?;
     let now = crate::settings::now();
     if let (Some(expires), Some(refresh)) = (secret.expires, secret.refresh.clone())

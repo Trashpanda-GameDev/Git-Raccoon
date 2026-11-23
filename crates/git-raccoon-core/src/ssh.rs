@@ -255,6 +255,13 @@ pub fn read_key(path: &Path) -> Key {
     key
 }
 
+/// A public key's SHA256 fingerprint, from its OpenSSH line
+/// ("ssh-ed25519 AAAA… comment").
+pub fn fingerprint_of(public: &str) -> Option<String> {
+    let key = PublicKey::from_openssh(public.trim()).ok()?;
+    Some(key.fingerprint(HashAlg::Sha256).to_string())
+}
+
 fn describe(key: &mut Key, public: &PublicKey) {
     key.kind = kind_name(public.algorithm().as_str());
     key.fingerprint = Some(public.fingerprint(HashAlg::Sha256).to_string());

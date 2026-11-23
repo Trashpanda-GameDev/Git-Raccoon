@@ -237,6 +237,32 @@ pub fn delete(forge: &str, url: &str, auth: &Auth<'_>) -> Result<Value, String> 
     read(forge, req.call())
 }
 
+/// GET or POST (with `body`), and get the status and JSON back whatever
+/// they are: for calls whose refusals say why in their body.
+pub fn call_answered(
+    url: &str,
+    auth: &Auth<'_>,
+    body: Option<&Value>,
+) -> Result<(u16, Value), String> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+    let response = match body {
+        Some(b) => with_auth(agent.post(url), auth)
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("Content-Type", "application/json")
+            .send(b.to_string()),
+        None => with_auth(agent.get(url), auth)
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .call(),
+    }
+    .map_err(|e| e.to_string())?;
+    let status = response.status().as_u16();
+    let text = response.into_body().read_to_string().unwrap_or_default();
+    Ok((status, serde_json::from_str(&text).unwrap_or(Value::Null)))
+}
+
 /// POST a form (OAuth), and get JSON back. Error statuses are answers
 /// here (OAuth reports "still waiting" that way), so they're read too.
 pub fn post_form(forge: &str, url: &str, form: &[(&str, &str)]) -> Result<Value, String> {
