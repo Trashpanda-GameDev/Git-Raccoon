@@ -1266,8 +1266,57 @@ pub struct ConflictFile {
     pub file: String,
     /// Its text as last read (or why it couldn't be read).
     pub text: Result<String, String>,
+    /// That text in pieces, each conflict with its base where Git has it
+    /// (`None`: no conflict markers).
+    pub chunks: Option<Vec<conflict::Chunk>>,
     /// The text being edited by hand, in Edit mode.
     pub edit: Option<String>,
+    /// The conflict in focus, and whether to scroll to it.
+    pub current: usize,
+    pub scroll: bool,
+    /// Lines ticked to make a conflict's result: (conflict, column, line),
+    /// columns being 0 base, 1 ours, 2 theirs.
+    pub ticked: std::collections::BTreeSet<(usize, u8, usize)>,
+    /// Each conflict's result as it stands (from the ticks, or typed).
+    pub results: std::collections::BTreeMap<usize, String>,
+}
+
+impl ConflictFile {
+    /// Reads `file` and finds its conflicts (with their bases).
+    pub fn load(path: &str, file: String) -> Self {
+        let mut open = ConflictFile {
+            file,
+            text: Err(String::new()),
+            chunks: None,
+            edit: None,
+            current: 0,
+            scroll: false,
+            ticked: std::collections::BTreeSet::new(),
+            results: std::collections::BTreeMap::new(),
+        };
+        open.reload(path);
+        open
+    }
+
+    /// Reads the file again; what was ticked or typed goes if it changed.
+    pub fn reload(&mut self, path: &str) {
+        let text = conflict::read(path, &self.file).map_err(|e| e.to_string());
+        if text == self.text {
+            return;
+        }
+        self.chunks = text.as_ref().ok().and_then(|t| conflict::parse(t));
+        if let Some(chunks) = &mut self.chunks {
+            conflict::with_bases(path, &self.file, chunks);
+        }
+        self.text = text;
+        self.ticked.clear();
+        self.results.clear();
+        let left = self
+            .chunks
+            .as_ref()
+            .map_or(0, |c| conflict::conflicts(c).count());
+        self.current = self.current.min(left.saturating_sub(1));
+    }
 }
 
 /// What this system calls its trash.
@@ -2206,12 +2255,7 @@ impl RepoView {
     /// Opens a conflicted file for resolving.
     pub fn open_conflict(&mut self, file: String) {
         self.active_file = None;
-        let text = conflict::read(self.path(), &file).map_err(|e| e.to_string());
-        self.conflict = Some(ConflictFile {
-            file,
-            text,
-            edit: None,
-        });
+        self.conflict = Some(ConflictFile::load(self.path(), file));
     }
 
     /// Picks a side for one conflict in the open file.
@@ -2225,6 +2269,23 @@ impl RepoView {
             file: open.file.clone(),
             expected: text.clone(),
             text: conflict::resolve(&chunks, index, pick),
+        };
+        self.run(ctx, op);
+    }
+
+    /// Writes `text` as the result of one conflict in the open file.
+    pub fn write_conflict_result(&mut self, ctx: &egui::Context, index: usize, text: &str) {
+        let Some(open) = &self.conflict else { return };
+        // From the file's own text: the bases filled in for showing aren't
+        // written into its other conflicts.
+        let Ok(current) = &open.text else { return };
+        let Some(chunks) = conflict::parse(current) else {
+            return;
+        };
+        let op = Op::WriteConflict {
+            file: open.file.clone(),
+            expected: current.clone(),
+            text: conflict::resolve_with(&chunks, index, text),
         };
         self.run(ctx, op);
     }
@@ -2462,17 +2523,20 @@ impl RepoView {
     /// the other side's changes in it, and what was picked or edited here,
     /// are replaced.
     pub fn confirm_take_side(&mut self, file: String, ours: bool) {
-        let (side, whose) = if ours {
-            ("ours", "the current branch's")
-        } else {
-            ("theirs", "the incoming")
+        // The sides by name: "main", "feature/login".
+        let state = self.status.as_ref().and_then(|s| s.in_progress.as_ref());
+        let (side, other) = match state {
+            Some(s) if ours => (s.ours.name.clone(), s.theirs.name.clone()),
+            Some(s) => (s.theirs.name.clone(), s.ours.name.clone()),
+            None if ours => ("ours".into(), "theirs".into()),
+            None => ("theirs".into(), "ours".into()),
         };
         self.dialog = Some(Dialog::Confirm {
-            title: format!("Use {side} for {file}?"),
+            title: format!("Use {side}'s {file}?"),
             body: format!(
-                "The whole file becomes {whose} version: the other side's changes in it, and anything picked or edited here, are replaced."
+                "The whole file becomes {side}'s version: {other}'s changes in it, and anything picked or edited here, are replaced."
             ),
-            button: format!("Use {side}"),
+            button: format!("Use {side}'s"),
             danger: true,
             op: Op::TakeSide { file, ours },
         });
@@ -3196,10 +3260,9 @@ impl RepoView {
         if let Some(open) = &self.conflict {
             if conflicted.contains(&open.file) {
                 if open.edit.is_none() {
-                    let file = open.file.clone();
-                    let text = conflict::read(self.path(), &file).map_err(|e| e.to_string());
+                    let path = self.path().to_string();
                     if let Some(open) = &mut self.conflict {
-                        open.text = text;
+                        open.reload(&path);
                     }
                 }
             } else {

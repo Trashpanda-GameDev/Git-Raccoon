@@ -309,7 +309,13 @@ If changes conflict, the conflicts take the place of the history:
 
 Sides are named by their branch (*main*, *feature/login*), not "ours" and "theirs", which swap meaning between a merge and a rebase.
 
-In a file: for each conflict, choose a side or both, or **Edit** the file yourself; when no conflicts are left, **Mark resolved**.
+In a file, each conflict shows three versions side by side: **Before** (what both sides started from) and each side's, with the commit that changed it. To resolve it:
+
+- **Take main** or **Take feature/login** for one side, or **Both ▾** in either order;
+- or tick the lines you want from any of the three, and touch up the **Result** below them, then **Use this result**;
+- or **Edit** the whole file yourself, or take one side's **Whole file**.
+
+**Ctrl+↑ / Ctrl+↓** move between conflicts. When none are left, **Mark resolved**.
 
 ## Rewriting history
 

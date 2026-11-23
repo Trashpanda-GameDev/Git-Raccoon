@@ -6,6 +6,7 @@ release page). Newest first; a version's heading is just its number.
 ## 0.5.25
 
 - **Conflicts in one place**: a merge, rebase, cherry-pick or revert that stops on conflicts now shows them all in place of the history: what's going on ("Rebasing feature/login onto main · commit 3 of 5: *Remember the last user*"), how far along you are, and every file with what it needs (*Resolve…*, *Keep main's* / *Delete it* for a file deleted on one side). Resolved files can be reviewed, or their conflict brought back. **Skip this commit** for rebases. Sides are named by branch, not "ours" and "theirs".
+- **A three-way editor for conflicts**: each conflict shows what both sides started from, next to each side's version (with the commit that changed it), whatever your Git's conflict style. Take one side or both (in either order), or tick the lines you want from any of the three and touch up the result. Ctrl+↑ / Ctrl+↓ move between conflicts.
 - **Restart to update from Settings**: when an update is downloaded, *Settings › Updates and privacy* has the *Restart to update* button too, so you don't have to close Settings to find it in the toolbar.
 
 ## 0.5.24

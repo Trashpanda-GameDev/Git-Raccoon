@@ -5264,6 +5264,33 @@ fn shows_a_rebases_conflicts_in_one_place() {
         .click();
     wait_for(&mut h, "back", |app| conflicted(app) == 2);
 
+    // README.md in the editor: the base (Git's default style has none in
+    // the file), and a result made of ticked lines, main's first.
+    h.get_by_label("Resolve README.md").click();
+    wait_for(&mut h, "the file", |app| {
+        app.repo().unwrap().conflict.is_some()
+    });
+    h.get_by_label("Take line 1 of Before in conflict 1");
+    h.get_by_label("Take line 1 of topic in conflict 1").click();
+    h.run_ok();
+    h.get_by_label("Take line 1 of main in conflict 1").click();
+    h.run_ok();
+    screenshot(&mut h, "31-conflict-editor");
+    h.get_by_label("Use this result for conflict 1").click();
+    wait_for(&mut h, "the result", |app| {
+        app.repo()
+            .unwrap()
+            .conflict
+            .as_ref()
+            .is_some_and(|c| c.chunks.is_none())
+    });
+    assert_eq!(
+        read(&sample, "README.md").as_deref(),
+        Some("# Sample\n\nmain version\ntopic version\n")
+    );
+    h.get_by_label("Mark resolved").click();
+    wait_for(&mut h, "resolved", |app| conflicted(app) == 1);
+
     // Skip the commit: the next one applies, and it's done.
     h.get_by_label("Skip this commit").click();
     wait_for(&mut h, "the rebase", |app| !in_progress(app));
@@ -5333,7 +5360,12 @@ fn merges_resolves_conflicts_continues_and_aborts() {
         app.repo().unwrap().conflict.is_some()
     });
     screenshot(&mut h, "28-conflict");
-    h.get_by_label("Use both for conflict 1").click();
+    // The three versions, named by branch; both sides, main's first.
+    h.get_by_label("Take main for conflict 1");
+    h.get_by_label("Take line 1 of clash in conflict 1");
+    h.get_by_label("Both sides for conflict 1").click();
+    h.run_ok();
+    h.get_by_label("main first, then clash").click();
     wait_for(&mut h, "the pick", |app| {
         app.repo()
             .unwrap()
@@ -5382,9 +5414,11 @@ fn merges_resolves_conflicts_continues_and_aborts() {
         })
     });
     // Taking a whole side would replace that edit, so it asks first.
-    h.get_by_label("Use theirs for the file").click();
+    h.get_by_label_contains("Whole file").click();
     h.run_ok();
-    h.get_by_label("Use theirs for README.md?");
+    h.get_by_label("Use clash's file").click();
+    h.run_ok();
+    h.get_by_label("Use clash's README.md?");
     h.get_by_label("Cancel").click();
     h.run_ok();
     assert_eq!(

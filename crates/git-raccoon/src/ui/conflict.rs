@@ -12,6 +12,8 @@ use crate::ui::widgets;
 
 pub enum Action {
     Pick(usize, Pick),
+    /// Write this as one conflict's result.
+    UseText(usize, String),
     /// Take one side's whole file.
     TakeSide {
         ours: bool,
@@ -25,34 +27,91 @@ pub enum Action {
 
 const OURS: Color32 = Color32::from_rgb(0x3f, 0xb9, 0x8a);
 const THEIRS: Color32 = Color32::from_rgb(0x5a, 0x9b, 0xf0);
+const BASE: Color32 = Color32::from_rgb(0xb3, 0x9d, 0xdb);
 
-pub fn show(ui: &mut egui::Ui, open: &mut ConflictFile, busy: bool) -> Option<Action> {
+/// The names of the two sides: what the files had ("ours"), and what's
+/// coming in ("theirs"), each with the commit's message if known.
+pub struct Names<'a> {
+    pub ours: &'a merge::Side,
+    pub theirs: &'a merge::Side,
+}
+
+pub fn show(
+    ui: &mut egui::Ui,
+    open: &mut ConflictFile,
+    names: &Names<'_>,
+    busy: bool,
+) -> Option<Action> {
     let mut action = None;
-    let chunks = open.text.as_ref().ok().and_then(|t| conflict::parse(t));
-    let remaining = chunks.as_ref().map_or(0, |c| {
-        c.iter().filter(|c| matches!(c, Chunk::Conflict(_))).count()
-    });
+    let total = open
+        .chunks
+        .as_ref()
+        .map_or(0, |c| conflict::conflicts(c).count());
+    let (ours, theirs) = (names.ours.name.as_str(), names.theirs.name.as_str());
 
-    // Header: the file, what's left, and whole-file actions.
+    // Ctrl+↓ / Ctrl+↑: the next or previous conflict (not while typing).
+    if total > 0 && !ui.ctx().text_edit_focused() {
+        let (down, up) = ui.input_mut(|i| {
+            (
+                i.consume_key(egui::Modifiers::COMMAND, egui::Key::ArrowDown),
+                i.consume_key(egui::Modifiers::COMMAND, egui::Key::ArrowUp),
+            )
+        });
+        if down || up {
+            open.current = if down {
+                (open.current + 1) % total
+            } else {
+                (open.current + total - 1) % total
+            };
+            open.scroll = true;
+        }
+    }
+
+    // Header: the file, where you are, and whole-file actions.
     egui::Frame::new()
         .inner_margin(egui::Margin::symmetric(12, 0))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.set_height(40.0);
                 ui.label(RichText::new(icon::WARNING).color(theme::danger()));
-                ui.label(RichText::new(&open.file).strong());
-                let status = if open.edit.is_some() {
-                    "editing".to_string()
+                ui.label(RichText::new(&open.file).strong().monospace());
+                if open.edit.is_some() {
+                    ui.label(RichText::new("editing").size(12.0).color(theme::muted()));
+                } else if total == 0 {
+                    ui.label(
+                        RichText::new("no conflicts left")
+                            .size(12.0)
+                            .color(theme::muted()),
+                    );
                 } else {
-                    match remaining {
-                        0 => "no conflicts left".to_string(),
-                        1 => "1 conflict".to_string(),
-                        n => format!("{n} conflicts"),
+                    ui.label(
+                        RichText::new(format!("conflict {} of {total}", open.current + 1))
+                            .size(12.0)
+                            .color(theme::muted()),
+                    );
+                    let previous = ui
+                        .add_enabled(total > 1, egui::Button::new(icon::CARET_UP).small())
+                        .on_hover_text("Previous conflict (Ctrl+↑)");
+                    ui.ctx()
+                        .accesskit_node_builder(previous.id, |n| n.set_label("Previous conflict"));
+                    if previous.clicked() {
+                        open.current = (open.current + total - 1) % total;
+                        open.scroll = true;
                     }
-                };
-                ui.label(RichText::new(status).size(12.0).color(theme::muted()));
+                    let next = ui
+                        .add_enabled(total > 1, egui::Button::new(icon::CARET_DOWN).small())
+                        .on_hover_text("Next conflict (Ctrl+↓)");
+                    ui.ctx()
+                        .accesskit_node_builder(next.id, |n| n.set_label("Next conflict"));
+                    if next.clicked() {
+                        open.current = (open.current + 1) % total;
+                        open.scroll = true;
+                    }
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if widgets::icon_button(ui, icon::X, "Close (Esc)").clicked() {
+                    if widgets::icon_button(ui, icon::X, "Back to all the conflicts (Esc)")
+                        .clicked()
+                    {
                         action = Some(Action::Close);
                     }
                     ui.add_enabled_ui(!busy, |ui| {
@@ -66,10 +125,7 @@ pub fn show(ui: &mut egui::Ui, open: &mut ConflictFile, busy: bool) -> Option<Ac
                             return;
                         }
                         let resolved = ui
-                            .add_enabled(
-                                remaining == 0,
-                                primary_if("Mark resolved", remaining == 0),
-                            )
+                            .add_enabled(total == 0, primary_if("Mark resolved", total == 0))
                             .on_disabled_hover_text("Resolve every conflict first")
                             .on_hover_text("Stage the file as it is now");
                         if resolved.clicked() {
@@ -77,25 +133,26 @@ pub fn show(ui: &mut egui::Ui, open: &mut ConflictFile, busy: bool) -> Option<Ac
                         }
                         if ui
                             .button(format!("{}  Edit", icon::PENCIL_SIMPLE))
-                            .on_hover_text("Write the result yourself")
+                            .on_hover_text("Write the whole file yourself")
                             .clicked()
                         {
                             action = Some(Action::StartEdit);
                         }
-                        if ui
-                            .button("Use theirs for the file")
-                            .on_hover_text("Take the incoming version of the whole file")
-                            .clicked()
-                        {
-                            action = Some(Action::TakeSide { ours: false });
-                        }
-                        if ui
-                            .button("Use ours for the file")
-                            .on_hover_text("Keep the current branch's version of the whole file")
-                            .clicked()
-                        {
-                            action = Some(Action::TakeSide { ours: true });
-                        }
+                        // One side's version of the whole file.
+                        ui.menu_button(format!("Whole file  {}", icon::CARET_DOWN), |ui| {
+                            for (name, side) in [(ours, true), (theirs, false)] {
+                                if ui
+                                    .button(format!("Use {name}'s file"))
+                                    .on_hover_text(format!(
+                                        "Take {name}'s version of the whole file"
+                                    ))
+                                    .clicked()
+                                {
+                                    action = Some(Action::TakeSide { ours: side });
+                                    ui.close();
+                                }
+                            }
+                        });
                     });
                 });
             });
@@ -106,7 +163,7 @@ pub fn show(ui: &mut egui::Ui, open: &mut ConflictFile, busy: bool) -> Option<Ac
         Stroke::new(1.0, theme::border()),
     );
 
-    egui::ScrollArea::both()
+    egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
             egui::Frame::new()
@@ -123,31 +180,36 @@ pub fn show(ui: &mut egui::Ui, open: &mut ConflictFile, busy: bool) -> Option<Ac
                             .accesskit_node_builder(editor.id, |n| n.set_label("Resolved text"));
                         return;
                     }
-                    match (&open.text, &chunks) {
-                        (Err(e), _) => {
-                            ui.label(RichText::new(e).color(theme::danger()));
-                        }
-                        (Ok(_), None) => {
-                            ui.label(
-                                RichText::new(
-                                    "No conflict markers in this file. It may be binary, or deleted on one side: pick a side for the whole file, or edit it and mark it resolved.",
-                                )
-                                .color(theme::muted()),
-                            );
-                        }
-                        (Ok(_), Some(chunks)) => {
-                            if let Some(a) = chunk_list(ui, chunks, busy) {
-                                action = Some(a);
-                            }
-                        }
+                    if let Err(e) = &open.text {
+                        ui.label(RichText::new(e).color(theme::danger()));
+                        return;
+                    }
+                    let Some(chunks) = open.chunks.clone() else {
+                        ui.label(
+                            RichText::new(
+                                "No conflict markers in this file. It may be binary, or deleted on one side: pick a side for the whole file, or edit it and mark it resolved.",
+                            )
+                            .color(theme::muted()),
+                        );
+                        return;
+                    };
+                    if let Some(a) = chunk_list(ui, open, &chunks, names, busy) {
+                        action = Some(a);
                     }
                 });
         });
     action
 }
 
-fn chunk_list(ui: &mut egui::Ui, chunks: &[Chunk], busy: bool) -> Option<Action> {
+fn chunk_list(
+    ui: &mut egui::Ui,
+    open: &mut ConflictFile,
+    chunks: &[Chunk],
+    names: &Names<'_>,
+    busy: bool,
+) -> Option<Action> {
     let mut action = None;
+    let total = conflict::conflicts(chunks).count();
     let mut n = 0;
     for chunk in chunks {
         match chunk {
@@ -169,68 +231,216 @@ fn chunk_list(ui: &mut egui::Ui, chunks: &[Chunk], busy: bool) -> Option<Action>
             Chunk::Conflict(c) => {
                 let index = n;
                 n += 1;
-                egui::Frame::new()
-                    .stroke(Stroke::new(1.0, theme::border()))
+                let focused = index == open.current;
+                let card = egui::Frame::new()
+                    .stroke(Stroke::new(
+                        if focused { 1.5 } else { 1.0 },
+                        if focused {
+                            theme::accent()
+                        } else {
+                            theme::border()
+                        },
+                    ))
                     .corner_radius(6)
-                    .inner_margin(egui::Margin::same(8))
+                    .inner_margin(egui::Margin::same(10))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                RichText::new(format!("Conflict {}", index + 1))
-                                    .strong()
-                                    .size(12.0),
-                            );
-                            ui.add_enabled_ui(!busy, |ui| {
-                                let picks = [
-                                    ("Use ours", Pick::Ours),
-                                    ("Use theirs", Pick::Theirs),
-                                    ("Use both", Pick::Both),
-                                ];
-                                for (label, pick) in picks {
-                                    let b = ui.button(label);
-                                    let name = format!("{label} for conflict {}", index + 1);
-                                    ui.ctx().accesskit_node_builder(b.id, |n| n.set_label(name));
-                                    if b.clicked() {
-                                        action = Some(Action::Pick(index, pick));
-                                    }
-                                }
-                            });
-                        });
-                        side(ui, &format!("Ours ({})", c.ours_label), &c.ours, OURS);
-                        if let Some(base) = &c.base {
-                            side(ui, "Before both changes", base, theme::muted());
+                        if let Some(a) = conflict_card(ui, open, c, (index, total), names, busy) {
+                            action = Some(a);
                         }
-                        side(
-                            ui,
-                            &format!("Theirs ({})", c.theirs_label),
-                            &c.theirs,
-                            THEIRS,
-                        );
-                    });
-                ui.add_space(6.0);
+                    })
+                    .response;
+                if card.contains_pointer() && ui.input(|i| i.pointer.any_pressed()) {
+                    open.current = index;
+                }
+                if focused && open.scroll {
+                    open.scroll = false;
+                    card.scroll_to_me(Some(egui::Align::TOP));
+                }
+                ui.add_space(8.0);
             }
         }
     }
     action
 }
 
-fn side(ui: &mut egui::Ui, title: &str, text: &str, colour: Color32) {
-    ui.add_space(4.0);
-    ui.label(RichText::new(title).size(11.0).color(colour));
-    egui::Frame::new()
-        .fill(colour.gamma_multiply(0.12))
-        .inner_margin(egui::Margin::symmetric(6, 4))
-        .corner_radius(4)
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            if text.is_empty() {
-                ui.label(RichText::new("(nothing)").italics().color(theme::muted()));
-            }
-            for line in text.lines() {
-                ui.label(RichText::new(line).monospace().color(theme::text()));
-            }
+/// One conflict: its base and both sides, each line ready to tick, the
+/// result they make (editable), and quick picks.
+fn conflict_card(
+    ui: &mut egui::Ui,
+    open: &mut ConflictFile,
+    c: &conflict::Conflict,
+    (index, total): (usize, usize),
+    names: &Names<'_>,
+    busy: bool,
+) -> Option<Action> {
+    let mut action = None;
+    let (ours, theirs) = (names.ours.name.as_str(), names.theirs.name.as_str());
+    let number = index + 1;
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(format!("Conflict {number} of {total}"))
+                .strong()
+                .size(12.0),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_enabled_ui(!busy, |ui| {
+                let both = ui.menu_button(format!("Both  {}", icon::CARET_DOWN), |ui| {
+                    if ui.button(format!("{ours} first, then {theirs}")).clicked() {
+                        action = Some(Action::Pick(index, Pick::Both));
+                        ui.close();
+                    }
+                    if ui.button(format!("{theirs} first, then {ours}")).clicked() {
+                        action = Some(Action::UseText(index, format!("{}{}", c.theirs, c.ours)));
+                        ui.close();
+                    }
+                });
+                let name = format!("Both sides for conflict {number}");
+                ui.ctx()
+                    .accesskit_node_builder(both.response.id, |n| n.set_label(name));
+                for (name, pick, colour) in
+                    [(theirs, Pick::Theirs, THEIRS), (ours, Pick::Ours, OURS)]
+                {
+                    let b = ui.add(
+                        egui::Button::new(RichText::new(format!("Take {name}")).color(colour))
+                            .stroke(Stroke::new(1.0, colour.gamma_multiply(0.5))),
+                    );
+                    let label = format!("Take {name} for conflict {number}");
+                    ui.ctx()
+                        .accesskit_node_builder(b.id, |n| n.set_label(label));
+                    if b.clicked() {
+                        action = Some(Action::Pick(index, pick));
+                    }
+                }
+            });
         });
+    });
+    ui.add_space(6.0);
+
+    // The three versions side by side; every line can be ticked.
+    let mut changed = false;
+    let base = c.base.as_ref().map(|b| {
+        (
+            0u8,
+            "Before".to_string(),
+            Some("before either changed it".to_string()),
+            b.as_str(),
+            BASE,
+        )
+    });
+    let columns: Vec<(u8, String, Option<String>, &str, Color32)> = base
+        .into_iter()
+        .chain([
+            (
+                1,
+                ours.to_string(),
+                names.ours.summary.clone(),
+                c.ours.as_str(),
+                OURS,
+            ),
+            (
+                2,
+                theirs.to_string(),
+                names.theirs.summary.clone(),
+                c.theirs.as_str(),
+                THEIRS,
+            ),
+        ])
+        .collect();
+    ui.columns(columns.len(), |cols| {
+        for (col, (column, title, about, text, colour)) in cols.iter_mut().zip(&columns) {
+            col.horizontal_wrapped(|ui| {
+                egui::Frame::new()
+                    .fill(colour.gamma_multiply(0.15))
+                    .corner_radius(4)
+                    .inner_margin(egui::Margin::symmetric(6, 1))
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(title).size(12.0).color(*colour));
+                    });
+                if let Some(about) = about {
+                    ui.label(RichText::new(about).size(11.0).color(theme::muted()));
+                }
+            });
+            egui::Frame::new()
+                .fill(colour.gamma_multiply(0.08))
+                .corner_radius(4)
+                .inner_margin(egui::Margin::symmetric(6, 4))
+                .show(col, |ui| {
+                    ui.set_width(ui.available_width());
+                    if text.is_empty() {
+                        ui.label(RichText::new("(nothing)").italics().color(theme::muted()));
+                    }
+                    for (line_no, line) in text.lines().enumerate() {
+                        let key = (index, *column, line_no);
+                        let mut on = open.ticked.contains(&key);
+                        let tick = ui.checkbox(&mut on, RichText::new(line).monospace());
+                        let label =
+                            format!("Take line {} of {title} in conflict {number}", line_no + 1);
+                        ui.ctx()
+                            .accesskit_node_builder(tick.id, |n| n.set_label(label));
+                        if tick.changed() {
+                            if on {
+                                open.ticked.insert(key);
+                            } else {
+                                open.ticked.remove(&key);
+                            }
+                            changed = true;
+                        }
+                    }
+                });
+        }
+    });
+
+    // The result: the ticked lines (yours, then theirs), or typed.
+    if changed {
+        let mut text = String::new();
+        for column in [1u8, 2, 0] {
+            let source = match column {
+                0 => c.base.as_deref().unwrap_or_default(),
+                1 => c.ours.as_str(),
+                _ => c.theirs.as_str(),
+            };
+            for (line_no, line) in source.lines().enumerate() {
+                if open.ticked.contains(&(index, column, line_no)) {
+                    text.push_str(line);
+                    text.push('\n');
+                }
+            }
+        }
+        open.results.insert(index, text);
+    }
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Result").strong().size(12.0));
+        ui.label(
+            RichText::new("tick lines above, or write it here")
+                .size(11.0)
+                .color(theme::muted()),
+        );
+    });
+    let ticked_any = open.ticked.iter().any(|t| t.0 == index);
+    let result = open.results.entry(index).or_default();
+    let field = ui.add(
+        egui::TextEdit::multiline(result)
+            .code_editor()
+            .desired_width(f32::INFINITY)
+            .desired_rows(2)
+            .hint_text("Nothing yet"),
+    );
+    ui.ctx().accesskit_node_builder(field.id, |n| {
+        n.set_label(format!("Result of conflict {number}"))
+    });
+    let ready = ticked_any || !result.is_empty();
+    let use_it = ui
+        .add_enabled(!busy && ready, primary_if("Use this result", ready))
+        .on_disabled_hover_text("Tick some lines, or write the result");
+    let label = format!("Use this result for conflict {number}");
+    ui.ctx()
+        .accesskit_node_builder(use_it.id, |n| n.set_label(label));
+    if use_it.clicked() {
+        action = Some(Action::UseText(index, result.clone()));
+    }
+    action
 }
 
 /// A primary button, greyed out unless `enabled`.

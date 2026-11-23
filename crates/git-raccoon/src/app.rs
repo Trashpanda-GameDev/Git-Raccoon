@@ -2400,8 +2400,27 @@ impl App {
                     return;
                 }
                 if let Some(open) = &mut repo.conflict {
-                    match conflict::show(ui, open, busy) {
+                    // The sides by name (from what's in progress).
+                    let state = repo.status.as_ref().and_then(|s| s.in_progress.clone());
+                    let fallback = (
+                        git_raccoon_core::merge::Side {
+                            name: "ours".into(),
+                            ..Default::default()
+                        },
+                        git_raccoon_core::merge::Side {
+                            name: "theirs".into(),
+                            ..Default::default()
+                        },
+                    );
+                    let names = conflict::Names {
+                        ours: state.as_ref().map_or(&fallback.0, |s| &s.ours),
+                        theirs: state.as_ref().map_or(&fallback.1, |s| &s.theirs),
+                    };
+                    match conflict::show(ui, open, &names, busy) {
                         Some(conflict::Action::Pick(i, pick)) => repo.pick_conflict(&ctx, i, pick),
+                        Some(conflict::Action::UseText(i, text)) => {
+                            repo.write_conflict_result(&ctx, i, &text);
+                        }
                         Some(conflict::Action::TakeSide { ours }) => {
                             let file = open.file.clone();
                             repo.confirm_take_side(file, ours);
