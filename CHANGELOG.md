@@ -5,7 +5,9 @@ release page). Newest first; a version's heading is just its number.
 
 ## 0.5.26
 
-- **Conflicts as panes**: switch the conflict editor to panes (the button next to *Edit*) for a focused view that takes the whole window: each side's whole file next to each other, with its commit, and the file as it will be saved below. Tick a whole conflict with the box at its first line, or click single lines; tick a side's header box to take it everywhere. **Save** writes every conflict you chose at once; the rest stay conflicts. Your choice of cards or panes is remembered.
+- **Conflicts as panes**: switch the conflict editor to panes (the two-column button in its header) for a focused view that takes the whole window: each side's whole file next to each other, with its commit, and the file as it will be saved below. Tick a whole conflict with the box at its first line, or click single lines; tick a side's header box to take it everywhere. **Save** writes every conflict you chose at once; the rest stay conflicts. Your choice of cards or panes is remembered.
+- **Ticked lines go in the order you tick them**: picking lines for a conflict's result (in cards or panes) puts them in the order you chose them, rather than always your side's first.
+- **A tidier conflict editor header**: *Whole file*, *Edit*, *Why?* and *Ask an agent* are icon buttons (their names show on hover), so the file's name and the way between conflicts stay in view.
 
 ## 0.5.25
 
