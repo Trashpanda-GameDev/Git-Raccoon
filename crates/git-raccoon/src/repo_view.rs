@@ -2306,6 +2306,65 @@ impl RepoView {
         self.run(ctx, op);
     }
 
+    /// What bringing `theirs` into the checked-out commit would do, as a
+    /// sentence for a question's body, worked out without touching any
+    /// files. `rebase` words it as places a rebase may stop. Empty when it
+    /// can't tell, or there's nothing to bring in.
+    pub fn conflict_forecast(&self, theirs: &str, rebase: bool) -> String {
+        let Ok(p) = merge::predict(self.path(), "HEAD", theirs) else {
+            return String::new();
+        };
+        if p.conflicts.is_empty() {
+            return if p.changed == 0 {
+                String::new()
+            } else if rebase {
+                "It applies cleanly, with no conflicts.".into()
+            } else {
+                "It merges cleanly, with no conflicts.".into()
+            };
+        }
+        let n = p.conflicts.len();
+        let files = if n == 1 { "file" } else { "files" };
+        let mut names = p
+            .conflicts
+            .iter()
+            .take(3)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        if n > 3 {
+            names.push_str(&format!(" and {} more", n - 3));
+        }
+        let lead = if rebase {
+            format!("It may stop for conflicts in {n} {files}: {names}.")
+        } else {
+            format!("This will conflict in {n} {files}: {names}.")
+        };
+        let clean = p.changed.saturating_sub(n);
+        let rest = match clean {
+            0 => String::new(),
+            1 => " Everything else (1 file) goes in cleanly.".into(),
+            c => format!(" Everything else ({c} files) goes in cleanly."),
+        };
+        format!("{lead}{rest} (Checked without touching your files.)")
+    }
+
+    /// The branch a pull from `from` (else the upstream) brings in, as of
+    /// the last fetch.
+    fn pull_source(&self, from: Option<&str>) -> Option<String> {
+        let upstream = self.head_upstream().map(|u| u.name.clone());
+        match from {
+            None => upstream,
+            Some(remote) => {
+                let branch = upstream
+                    .as_deref()
+                    .and_then(|u| u.split_once('/').map(|(_, b)| b.to_string()))
+                    .or_else(|| self.head_branch().map(str::to_string))?;
+                Some(format!("{remote}/{branch}"))
+            }
+        }
+    }
+
     /// Opens the merge question for `source` into `target` (the checked-out
     /// branch if `None`).
     pub fn ask_merge(&mut self, source: String, target: Option<String>) {
@@ -2326,8 +2385,11 @@ impl RepoView {
         if target == head {
             self.dialog = Some(Dialog::Choice {
                 title: format!("Merge {source} into {head}?"),
-                body: format!(
-                    "Brings {source}'s commits into {head}. If {head} has nothing new of its own, it simply moves forward (fast-forward); otherwise a merge commit joins them. If both changed the same lines, you'll resolve the conflicts first."
+                body: with_forecast(
+                    format!(
+                        "Brings {source}'s commits into {head}. If {head} has nothing new of its own, it simply moves forward (fast-forward); otherwise a merge commit joins them. If both changed the same lines, you'll resolve the conflicts first."
+                    ),
+                    &self.conflict_forecast(&source, false),
                 ),
                 choices: vec![
                     ("Merge".into(), false, merge(MergeMode::Default)),
@@ -2427,8 +2489,11 @@ impl RepoView {
         };
         self.dialog = Some(Dialog::Confirm {
             title: format!("Rebase {head} onto {onto}?"),
-            body: format!(
-                "Replays {head}'s own commits on top of {onto}, for a straight history. The replayed commits are new commits.{warning} If a commit conflicts, you'll resolve it, then continue."
+            body: with_forecast(
+                format!(
+                    "Replays {head}'s own commits on top of {onto}, for a straight history. The replayed commits are new commits.{warning} If a commit conflicts, you'll resolve it, then continue."
+                ),
+                &self.conflict_forecast(&onto, true),
             ),
             button: "Rebase".into(),
             danger: pushed,
@@ -2465,6 +2530,7 @@ impl RepoView {
         options: crate::settings::PullOptions,
     ) {
         use crate::settings::PullChanges;
+        let from_name = from.clone();
         let op = Op::Pull {
             from,
             mode: options.strategy.mode(),
@@ -2475,6 +2541,30 @@ impl RepoView {
             PullChanges::Stash | PullChanges::Leave => None,
         };
         let Some((what, mut steps)) = discard else {
+            // Merging or rebasing pulls ask first when, as of the last
+            // fetch, they would conflict.
+            let rebase = match options.strategy.mode() {
+                PullMode::FastForward => None,
+                PullMode::Merge => Some(false),
+                PullMode::Rebase => Some(true),
+            };
+            if let Some(rebase) = rebase
+                && let Some(source) = self.pull_source(from_name.as_deref())
+                && let Ok(p) = merge::predict(self.path(), "HEAD", &source)
+                && !p.conflicts.is_empty()
+            {
+                self.dialog = Some(Dialog::Confirm {
+                    title: format!("Pulling {source} will likely conflict"),
+                    body: format!(
+                        "{} You'll resolve the conflicts before the pull finishes, or abort it to go back. This is as of your last fetch; the pull fetches again first.",
+                        self.conflict_forecast(&source, rebase)
+                    ),
+                    button: "Pull anyway".into(),
+                    danger: false,
+                    op,
+                });
+                return;
+            }
             self.run(ctx, op);
             return;
         };
@@ -2788,8 +2878,11 @@ impl RepoView {
                 let local = local_name(&remote).to_string();
                 self.dialog = Some(Dialog::Choice {
                     title: format!("{local} and {remote} have both moved on"),
-                    body: format!(
-                        "{local} is checked out, but it has commits {remote} doesn't, so it can't simply be moved up to it. Merge adds a merge commit joining them; rebase replays your commits on top of theirs, for a straight history."
+                    body: with_forecast(
+                        format!(
+                            "{local} is checked out, but it has commits {remote} doesn't, so it can't simply be moved up to it. Merge adds a merge commit joining them; rebase replays your commits on top of theirs, for a straight history."
+                        ),
+                        &self.conflict_forecast(&remote, false),
                     ),
                     choices: vec![
                         (
@@ -2820,7 +2913,10 @@ impl RepoView {
                 };
                 self.dialog = Some(Dialog::Choice {
                     title: format!("Your branch and {upstream} have both moved on"),
-                    body: "Each has commits the other doesn't. Merge adds a merge commit joining them; rebase replays your commits on top of theirs, for a straight history.".into(),
+                    body: with_forecast(
+                        "Each has commits the other doesn't. Merge adds a merge commit joining them; rebase replays your commits on top of theirs, for a straight history.".into(),
+                        &self.conflict_forecast(&upstream, false),
+                    ),
                     choices: vec![
                         ("Merge".into(), false, pull(PullMode::Merge)),
                         ("Rebase".into(), false, pull(PullMode::Rebase)),
@@ -3487,5 +3583,14 @@ impl RepoView {
             (false, None) => rows[rows.len() - 1],
         };
         self.select_index(target);
+    }
+}
+
+/// A question's body with a conflict forecast after it, if there is one.
+fn with_forecast(body: String, forecast: &str) -> String {
+    if forecast.is_empty() {
+        body
+    } else {
+        format!("{body}\n\n{forecast}")
     }
 }

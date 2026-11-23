@@ -298,6 +298,7 @@ Right-click a commit, branch, remote, tag, request or issue › **Open on GitHub
 
 - **Merge:** right-click a branch › *Merge into…*, or **drag** it onto another branch (in the sidebar or on the graph).
 - **Rebase:** right-click a branch › *Rebase onto…*. It warns if your commits are already pushed.
+- **Before you start**, the question says whether it would conflict, and in which files ("This will conflict in 2 files: …"), or that it goes in cleanly. This is worked out without touching your files. A pull that merges or rebases asks first only when, as of your last fetch, it would conflict.
 
 ### Conflicts
 

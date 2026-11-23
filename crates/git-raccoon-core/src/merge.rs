@@ -215,6 +215,54 @@ fn sides(
     }
 }
 
+/// What bringing one commit into another would do, worked out in memory
+/// (no files touched): the files that would conflict, and how many files
+/// the incoming side changes in all.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Prediction {
+    pub conflicts: Vec<String>,
+    pub changed: usize,
+}
+
+/// Predicts merging `theirs` into `ours` (branches, tags or commits). A
+/// rebase applies commits one by one, so for one this says which files it
+/// may stop on.
+pub fn predict(path: &str, ours: &str, theirs: &str) -> Result<Prediction> {
+    let repo = Repository::discover(path)?;
+    let commit = |name: &str| -> Result<git2::Commit<'_>> {
+        Ok(repo.revparse_single(name)?.peel_to_commit()?)
+    };
+    let (ours, theirs) = (commit(ours)?, commit(theirs)?);
+    let base = repo.merge_base(ours.id(), theirs.id()).ok();
+    // Already in, or a fast-forward: nothing can conflict.
+    if base == Some(theirs.id()) || base == Some(ours.id()) {
+        return Ok(Prediction::default());
+    }
+    let changed = match base {
+        Some(base) => repo
+            .diff_tree_to_tree(
+                Some(&repo.find_commit(base)?.tree()?),
+                Some(&theirs.tree()?),
+                None,
+            )?
+            .deltas()
+            .len(),
+        None => 0,
+    };
+    let index = repo.merge_commits(&ours, &theirs, None)?;
+    let mut conflicts: Vec<String> = index
+        .conflicts()?
+        .flatten()
+        .filter_map(|c| {
+            let e = c.our.or(c.their).or(c.ancestor)?;
+            Some(String::from_utf8_lossy(&e.path).into_owned())
+        })
+        .collect();
+    conflicts.sort();
+    conflicts.dedup();
+    Ok(Prediction { conflicts, changed })
+}
+
 /// How a merge may combine histories.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MergeMode {
@@ -346,6 +394,35 @@ pub(crate) mod tests {
         t.write("f.txt", "one\ntwo (main)\nthree\n");
         git(&t, &["commit", "-q", "-am", "main work"]);
         (t, main)
+    }
+
+    #[test]
+    fn predicts_conflicts_without_touching_anything() {
+        let (t, main) = conflicting();
+        let before = std::fs::read_to_string(t.dir.join("f.txt")).unwrap();
+        let p = predict(t.path(), &main, "feature").unwrap();
+        assert_eq!(p.conflicts, ["f.txt"]);
+        assert_eq!(p.changed, 2, "f.txt and g.txt");
+        assert_eq!(
+            std::fs::read_to_string(t.dir.join("f.txt")).unwrap(),
+            before
+        );
+        assert!(in_progress(t.path()).unwrap().is_none());
+        // A clean one, and one already in.
+        git(&t, &["switch", "-q", "-c", "other", &format!("{main}~1")]);
+        t.write("x.txt", "x\n");
+        git(&t, &["add", "."]);
+        git(&t, &["commit", "-q", "-m", "x"]);
+        assert!(
+            predict(t.path(), &main, "other")
+                .unwrap()
+                .conflicts
+                .is_empty()
+        );
+        assert_eq!(
+            predict(t.path(), &main, &format!("{main}~1")).unwrap(),
+            Prediction::default()
+        );
     }
 
     #[test]

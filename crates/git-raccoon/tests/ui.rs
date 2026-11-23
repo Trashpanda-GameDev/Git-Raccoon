@@ -4769,6 +4769,7 @@ fn fetches_pulls_and_pushes() {
         app.repo().unwrap().dialog.is_some() && !app.is_busy()
     });
     h.get_by_label_contains("have both moved on");
+    h.get_by_label_contains("It merges cleanly, with no conflicts.");
     h.get_by_label("Rebase").click();
     wait_for(&mut h, "the rebase", |app| {
         upstream_counts(app) == Some((1, 0)) && !app.is_busy()
@@ -5320,6 +5321,7 @@ fn merges_resolves_conflicts_continues_and_aborts() {
     let before = head_summary(h.state());
     menu_item(&mut h, "toolbar-glitch", "Merge into main");
     h.get_by_label("Merge fix/ui/toolbar-glitch into main?");
+    h.get_by_label_contains("It merges cleanly, with no conflicts.");
     h.get_by_label("Always create a merge commit").click();
     wait_for(&mut h, "the merge", |app| {
         head_summary(app) == "Merge branch 'fix/ui/toolbar-glitch'"
@@ -5349,6 +5351,8 @@ fn merges_resolves_conflicts_continues_and_aborts() {
 
     // A merge with a conflict: the overview, in place of the history.
     menu_item(&mut h, "clash", "Merge into main");
+    // Said before anything is touched.
+    h.get_by_label_contains("This will conflict in 1 file: README.md.");
     h.get_by_role_and_label(Role::Button, "Merge").click();
     wait_for(&mut h, "the conflict", |app| conflicted(app) == 1);
     h.get_by_label("Merging clash into main");
