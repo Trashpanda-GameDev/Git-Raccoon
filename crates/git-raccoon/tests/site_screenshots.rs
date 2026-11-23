@@ -414,6 +414,58 @@ fn website_screenshots() {
 
     // Merge requests from a GitLab server, beside the graph.
     requests(&demo);
+
+    // Resolving a merge's conflicts, as panes (last: it changes the repo).
+    conflicts(&demo);
+}
+
+/// A merge that conflicts in two places of the store, resolved as panes.
+fn conflicts(demo: &Demo) {
+    // Back to main as committed, then two branches that disagree.
+    demo.checkout("main");
+    let limit = |n: &str, doc: &str| {
+        STORE_3
+            .replace(
+                "const COMPACT_AFTER: usize = 1024;",
+                &format!("const COMPACT_AFTER: usize = {n};"),
+            )
+            .replace(
+                "    /// How many keys there are.",
+                &format!("    /// {doc}"),
+            )
+    };
+    demo.checkout("feature/compact-later");
+    demo.write(
+        "src/store.rs",
+        &limit("4096", "How many keys there are (not entries)."),
+    );
+    demo.commit(MILO, "Compact less often", 1.5);
+    demo.checkout("main");
+    demo.write("src/store.rs", &limit("512", "The number of live keys."));
+    demo.commit(ADA, "Compact sooner to keep the file small", 1.0);
+    let merged = std::process::Command::new("git")
+        .args(["merge", "--no-edit", "feature/compact-later"])
+        .current_dir(&demo.dir)
+        .output()
+        .unwrap();
+    assert!(!merged.status.success(), "it should conflict");
+
+    let mut h = harness_with(Settings {
+        theme: ThemeChoice::Raccoon,
+        theme_mode: ThemeMode::Dark,
+        no_update_checks: true,
+        conflict_panes: true,
+        sidebar_hidden: vec!["requests".into(), "issues".into()],
+        ..Settings::default()
+    });
+    open(&mut h, &demo.dir);
+    click(&mut h, "Resolve src/store.rs");
+    // main's limit; then both docs, the branch's first.
+    click(&mut h, "Take main's conflict 1");
+    click(&mut h, "Next conflict");
+    click(&mut h, "Take line 1 of feature/compact-later in conflict 2");
+    click(&mut h, "Take line 1 of main in conflict 2");
+    shot(&mut h, "conflicts");
 }
 
 /// A merge request open beside the graph, from a stand-in GitLab.

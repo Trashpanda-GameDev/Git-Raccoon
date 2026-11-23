@@ -154,11 +154,24 @@
           <p>Plan an interactive rebase by dragging commits into order and choosing pick, reword, squash, fixup or drop for each. Merge by dragging one branch onto another.</p>
           <ul>
             <li>Undo for commits, merges, rebases, resets and more</li>
-            <li>Conflicts resolved side by side: ours, theirs or both</li>
+            <li>Cherry-pick, revert, reset and stash from any commit</li>
             <li>Force pushes are always <em>with lease</em></li>
           </ul>
         </div>
         <figure><a href="screenshots/rebase.png"><img src="screenshots/rebase.png" width="2560" height="1600" loading="lazy" alt="The interactive rebase planner, with commits set to reword and squash."></a></figure>
+      </div>
+
+      <div class="feature" style="--lane: var(--lane-2)">
+        <div class="feature-text">
+          <h3>Conflicts, calmly</h3>
+          <p>When a merge, rebase, cherry-pick or revert stops on conflicts, they all show in one place, with each side named by its branch rather than "ours" and "theirs". Open a file as cards, one per conflict with what both sides started from, or as panes: each side's whole file next to each other and the result below, taking the whole window.</p>
+          <ul>
+            <li>Take a side, both in either order, or tick lines in the order you want them</li>
+            <li><em>Why?</em> shows the commits on each side that changed those lines</li>
+            <li>A conflict you've resolved before can be resolved the same way again, for you to check</li>
+          </ul>
+        </div>
+        <figure><a href="screenshots/conflicts.png"><img src="screenshots/conflicts.png" width="2560" height="1600" loading="lazy" alt="A merge's conflicts in a file, as panes: main's version and the branch's side by side with lines ticked, and below them the file as it will be saved."></a></figure>
       </div>
 
       <div class="feature" style="--lane: var(--lane-6)">
@@ -198,8 +211,10 @@
       <div class="card" style="--lane: var(--lane-1)"><h4><span class="dot"></span>Protects your work</h4><p>Offers to stash before a checkout, asks twice before deleting unmerged commits, and tells you how to get them back.</p></div>
       <div class="card" style="--lane: var(--lane-2)"><h4><span class="dot"></span>Syncs safely</h4><p>Pull fast-forwards by default and asks before merging or rebasing; progress shows with a Cancel button.</p></div>
       <div class="card" style="--lane: var(--lane-3)"><h4><span class="dot"></span>Signs in like Git</h4><p>Git Credential Manager, credential helpers and your SSH agent; passwords and new hosts are asked in a dialog.</p></div>
-      <div class="card" style="--lane: var(--lane-4)"><h4><span class="dot"></span>Submodules and worktrees</h4><p>See their state, update them, open them in a tab, or add a worktree on a new branch.</p></div>
+      <div class="card" style="--lane: var(--lane-4)"><h4><span class="dot"></span>Submodules and worktrees</h4><p>See their state, update them, open them in a tab; add a submodule from a URL, or a worktree on a new branch.</p></div>
       <div class="card" style="--lane: var(--lane-5)"><h4><span class="dot"></span>Keeps itself up to date</h4><p>New versions download in the background; restart when it suits you, with your tabs and settings kept.</p></div>
+      <div class="card" style="--lane: var(--lane-1)"><h4><span class="dot"></span>Knows before it conflicts</h4><p>Merging, rebasing or pulling tells you beforehand which files would conflict, worked out without touching your files.</p></div>
+      <div class="card" style="--lane: var(--lane-2)"><h4><span class="dot"></span>Works with AI agents, if you want</h4><p>Off unless you turn it on. Claude Code, Cursor and others connect over MCP: they read freely, ask before changing anything, and can propose how to resolve a conflict for you to accept.</p></div>
       <div class="card" style="--lane: var(--lane-6)"><h4><span class="dot"></span>Private by default</h4><p>No account needed, no tracking. Crash reports stay on your computer unless you choose to post one.</p></div>
     </div>
   </div>
