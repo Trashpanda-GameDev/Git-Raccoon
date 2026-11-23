@@ -1281,7 +1281,7 @@ pub struct ConflictFile {
     pub scroll: bool,
     /// Lines ticked to make a conflict's result: (conflict, column, line),
     /// columns being 0 base, 1 ours, 2 theirs.
-    pub ticked: std::collections::BTreeSet<(usize, u8, usize)>,
+    pub ticked: Ticks,
     /// Each conflict's result as it stands (from the ticks, or typed).
     pub results: std::collections::BTreeMap<usize, String>,
     /// Whether to show why the conflict in focus happened, and what was
@@ -1294,6 +1294,37 @@ pub struct ConflictFile {
     pub pane_split: f32,
 }
 
+/// Lines ticked to make conflicts' results, as (conflict, column, line),
+/// in the order they were ticked: a result takes them in that order.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Ticks(Vec<(usize, u8, usize)>);
+
+impl Ticks {
+    /// Adds a line at the end (if it isn't ticked already).
+    pub fn insert(&mut self, key: (usize, u8, usize)) {
+        if !self.contains(&key) {
+            self.0.push(key);
+        }
+    }
+
+    pub fn remove(&mut self, key: &(usize, u8, usize)) {
+        self.0.retain(|k| k != key);
+    }
+
+    pub fn contains(&self, key: &(usize, u8, usize)) -> bool {
+        self.0.contains(key)
+    }
+
+    /// In the order ticked.
+    pub fn iter(&self) -> impl Iterator<Item = &(usize, u8, usize)> {
+        self.0.iter()
+    }
+
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+}
+
 impl ConflictFile {
     /// Reads `file` and finds its conflicts (with their bases).
     pub fn load(path: &str, file: String) -> Self {
@@ -1304,7 +1335,7 @@ impl ConflictFile {
             edit: None,
             current: 0,
             scroll: false,
-            ticked: std::collections::BTreeSet::new(),
+            ticked: Ticks::default(),
             results: std::collections::BTreeMap::new(),
             why_open: false,
             why: std::collections::BTreeMap::new(),

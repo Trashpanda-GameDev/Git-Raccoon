@@ -542,7 +542,7 @@ fn conflict_card(
         }
     });
 
-    // The result: the ticked lines (yours, then theirs), or typed.
+    // The result: the ticked lines (in the order ticked), or typed.
     if changed {
         ticked_result(open, index, c);
     }
@@ -580,21 +580,19 @@ fn conflict_card(
     action
 }
 
-/// Sets conflict `index`'s result to its ticked lines: ours, then theirs,
-/// then the base's.
+/// Sets conflict `index`'s result to its ticked lines, in the order they
+/// were ticked.
 pub(super) fn ticked_result(open: &mut ConflictFile, index: usize, c: &conflict::Conflict) {
     let mut text = String::new();
-    for column in [1u8, 2, 0] {
+    for &(_, column, line_no) in open.ticked.iter().filter(|t| t.0 == index) {
         let source = match column {
             0 => c.base.as_deref().unwrap_or_default(),
             1 => c.ours.as_str(),
             _ => c.theirs.as_str(),
         };
-        for (line_no, line) in source.lines().enumerate() {
-            if open.ticked.contains(&(index, column, line_no)) {
-                text.push_str(line);
-                text.push('\n');
-            }
+        if let Some(line) = source.lines().nth(line_no) {
+            text.push_str(line);
+            text.push('\n');
         }
     }
     if text.is_empty() && !open.ticked.iter().any(|t| t.0 == index) {

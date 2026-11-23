@@ -5285,7 +5285,8 @@ fn shows_a_rebases_conflicts_in_one_place() {
     });
     assert_eq!(
         read(&sample, "README.md").as_deref(),
-        Some("# Sample\n\nmain version\ntopic version\n")
+        // In the order ticked: topic's line, then main's.
+        Some("# Sample\n\ntopic version\nmain version\n")
     );
     h.get_by_label("Mark resolved").click();
     wait_for(&mut h, "resolved", |app| conflicted(app) == 1);
@@ -7442,7 +7443,8 @@ fn resolves_conflicts_in_panes() {
     });
     assert_eq!(
         read(&sample, "notes.txt").as_deref(),
-        Some("a\nB main\nc\nd\ne\n1\n2\n3\n4\n5\n6\nF main\nF clash\ng\n")
+        // Conflict 2 in the order ticked: clash's line, then main's.
+        Some("a\nB main\nc\nd\ne\n1\n2\n3\n4\n5\n6\nF clash\nF main\ng\n")
     );
     h.get_by_label("Show as cards").click();
     h.run_ok();

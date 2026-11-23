@@ -313,12 +313,12 @@ Sides are named by their branch (*main*, *feature/login*), not "ours" and "their
 In a file, each conflict shows three versions side by side: **Before** (what both sides started from) and each side's, with the commit that changed it. To resolve it:
 
 - **Take main** or **Take feature/login** for one side, or **Both ▾** in either order;
-- or tick the lines you want from any of the three, and touch up the **Result** below them, then **Use this result**;
+- or tick the lines you want from any of the three (they go into the result in the order you tick them), and touch up the **Result** below them, then **Use this result**;
 - or **Edit** the whole file yourself, or take one side's **Whole file**.
 
 **Ctrl+↑ / Ctrl+↓** move between conflicts. When none are left, **Mark resolved**.
 
-**Panes** (the button next to *Edit*; **Cards** goes back) show the file another way, taking the whole window (the side panels come back when you close it): each side's whole file next to each other, with the commit it's from, and below them the **Output**, the file as it will be saved. Tick a conflict with the box on its first line, or click single lines; the box in a side's header takes that side in every conflict. The output's bar says which conflict you're on, with ▲ ▼ to move. **Save** writes every conflict you chose; the ones you didn't stay conflicts. Drag the line above the output to give either part more room. The view you used last is remembered.
+**Panes** (the two-column button in the editor's header; the one beside it goes back to cards) show the file another way, taking the whole window (the side panels come back when you close it): each side's whole file next to each other, with the commit it's from, and below them the **Output**, the file as it will be saved. Tick a conflict with the box on its first line, or click single lines; the box in a side's header takes that side in every conflict. The output's bar says which conflict you're on, with ▲ ▼ to move. **Save** writes every conflict you chose; the ones you didn't stay conflicts. Drag the line above the output to give either part more room. The view you used last is remembered.
 
 **Remember how I resolve conflicts** (*Settings › Git › Conflicts*, off to start with) uses Git's own `rerere` for Git Raccoon's Git, leaving your Git config alone. When a conflict you've resolved comes back (often in a long rebase, or merging main again), it's resolved the same way and listed as **resolved as before**: **Review** it, or **Redo by hand** to bring the conflict back. It still needs **Mark resolved**, so nothing goes through unchecked.
 
