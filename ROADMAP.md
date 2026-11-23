@@ -163,6 +163,21 @@ SSH already works once it's set up (Git Raccoon runs the user's own `ssh`, and a
 - [ ] **Windows:** Git for Windows' own SSH and agent, or Windows' OpenSSH agent: find which one has the keys and make the app's Git use that (for its own commands, leaving `core.sshCommand` alone unless asked); explain when Windows' agent service is turned off.
 - Later (with Profiles): a key per profile (two accounts on one host, through `~/.ssh/config` host aliases); signing commits with an SSH key.
 
+### Find which commit broke something (bisect)
+
+Mockups: [docs/design/bisect](docs/design/bisect). Build work: the [Find which commit broke something milestone](https://github.com/Trashpanda-GameDev/Git-Raccoon/milestone/5).
+
+Git's bisect, in plain words: "broken" and "works", not "bad" and "good" or "bisect". It runs through the user's own `git bisect`, so a search started in a terminal and one started here are the same search.
+
+- [ ] **Bisect underneath:** start (with a broken and a working commit, optionally `--first-parent`), answer, skip, undo the last answer (replaying Git's log), stop; read a search in progress from the repository (its range, answers and current commit); how many commits and steps are left; the result.
+- [ ] **A. Starting:** right-click a commit › *Find which commit broke something…* (it's the broken one); *Last worked at* suggests the latest tag, or any commit; the range and steps ("13 commits, about 4 steps"); *Only follow main*; uncommitted changes put aside first and brought back at the end.
+- [ ] **B. By hand:** a bar with what's being tested and what's left, and **It works**, **It's broken**, **Skip this one** (for a commit that can't be tested), **Stop**; the graph marks the range still in question, the answers, and the commit checked out; *Undo last answer* and *Open a terminal here*.
+- [ ] **C. With a command:** *Test with a command…* runs it on each commit (`git bisect run`; exit 0 works, 125 skip, anything else broken), with each step's result, time and output, progress, and Stop; the command remembered per repository.
+- [ ] **D. The answer:** the first broken commit (message, author, files, the request it came with), how it was found, and *Show it in the history*, *Revert it…*, *Create a branch here…*, *Copy a summary*, *Ask an agent why*; back where the search started, with the changes put aside brought back. When skips leave it uncertain, the commits it could be.
+- [ ] **Picking up:** a search in progress (started in a terminal, or before the app was closed) opens in the same view; *Stop* always goes back to where it started.
+- [ ] **Other questions:** custom terms for "when did this change?" ("Old behaviour" / "New behaviour", or your own words).
+- [ ] **Agents:** tools to start a search, answer for the commit being tested, run a command, and read where it stands, with the same approval as other changes.
+
 ## Later (ideas, not commitments)
 
 - Commit message suggestions from the staged diff
