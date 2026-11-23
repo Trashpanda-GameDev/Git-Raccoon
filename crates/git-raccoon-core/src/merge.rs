@@ -46,6 +46,33 @@ pub struct State {
     pub what: InProgress,
     /// Such as "Merge branch 'feature'" (from Git's prepared message).
     pub detail: Option<String>,
+    /// The two sides of its conflicts, named: what the files had ("ours"
+    /// to Git) and what's coming in ("theirs"). In a rebase that's what's
+    /// being rebased onto, and the commit being applied.
+    pub ours: Side,
+    pub theirs: Side,
+    /// A rebase's (or a series' of picks) progress: the step, of how many.
+    pub step: Option<(usize, usize)>,
+}
+
+/// One side of a conflict: a branch's name (or a commit's short id), and
+/// the commit it is, with its message's first line.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Side {
+    pub name: String,
+    pub commit: Option<String>,
+    pub summary: Option<String>,
+}
+
+impl State {
+    /// Whether the commit being applied can be skipped (a rebase, or a
+    /// series of picks or reverts).
+    pub fn can_skip(&self) -> bool {
+        matches!(
+            self.what,
+            InProgress::Rebase | InProgress::CherryPick | InProgress::Revert
+        )
+    }
 }
 
 /// The operation in progress, if any.
@@ -65,7 +92,127 @@ pub fn in_progress(path: &str) -> Result<Option<State>> {
         .ok()
         .and_then(|m| m.lines().next().map(str::to_string))
         .filter(|l| !l.trim().is_empty());
-    Ok(Some(State { what, detail }))
+    let (ours, theirs, step) = sides(&repo, &what, detail.as_deref());
+    Ok(Some(State {
+        what,
+        detail,
+        ours,
+        theirs,
+        step,
+    }))
+}
+
+/// A file in the repository's Git folder, trimmed.
+fn git_file(repo: &Repository, name: &str) -> Option<String> {
+    std::fs::read_to_string(repo.path().join(name))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// A commit as a side: `name` if given, otherwise a branch at it (local
+/// first), otherwise its short id; with its message's first line.
+fn side_at(repo: &Repository, id: Option<&str>, name: Option<String>) -> Side {
+    let commit = id
+        .and_then(|id| git2::Oid::from_str(id.trim()).ok())
+        .and_then(|oid| repo.find_commit(oid).ok());
+    let at = |kind| {
+        let oid = commit.as_ref()?.id();
+        repo.branches(Some(kind))
+            .ok()?
+            .flatten()
+            .find_map(|(b, _)| {
+                (b.get().target() == Some(oid))
+                    .then(|| b.name().ok().flatten().map(str::to_string))
+                    .flatten()
+            })
+    };
+    let name = name
+        .or_else(|| at(git2::BranchType::Local))
+        .or_else(|| at(git2::BranchType::Remote))
+        .or_else(|| commit.as_ref().map(|c| c.id().to_string()[..7].to_string()))
+        .unwrap_or_else(|| "HEAD".into());
+    Side {
+        name,
+        commit: commit.as_ref().map(|c| c.id().to_string()),
+        summary: commit
+            .as_ref()
+            .and_then(|c| c.summary().map(str::to_string)),
+    }
+}
+
+/// The branch checked out, as a side.
+fn checked_out(repo: &Repository) -> Side {
+    let head = repo.head().ok();
+    let id = head
+        .as_ref()
+        .and_then(|h| h.target())
+        .map(|o| o.to_string());
+    let name = head
+        .as_ref()
+        .filter(|h| h.is_branch())
+        .and_then(|h| h.shorthand().map(str::to_string));
+    side_at(repo, id.as_deref(), name)
+}
+
+/// The branch a merge brings in, from Git's message: "Merge branch 'x'",
+/// "Merge remote-tracking branch 'origin/x'".
+fn merged_name(detail: Option<&str>) -> Option<String> {
+    let d = detail?;
+    let rest = d
+        .strip_prefix("Merge branch '")
+        .or_else(|| d.strip_prefix("Merge remote-tracking branch '"))?;
+    rest.split('\'').next().map(str::to_string)
+}
+
+/// Names the sides of what's in progress, and how far along a rebase is.
+fn sides(
+    repo: &Repository,
+    what: &InProgress,
+    detail: Option<&str>,
+) -> (Side, Side, Option<(usize, usize)>) {
+    match what {
+        InProgress::Merge => (
+            checked_out(repo),
+            side_at(
+                repo,
+                git_file(repo, "MERGE_HEAD")
+                    .as_deref()
+                    .and_then(|s| s.lines().next()),
+                merged_name(detail),
+            ),
+            None,
+        ),
+        InProgress::Rebase => {
+            // `rebase-merge` (the usual) or `rebase-apply` (older, `--apply`).
+            let (dir, at, of) = if repo.path().join("rebase-merge").is_dir() {
+                ("rebase-merge", "msgnum", "end")
+            } else {
+                ("rebase-apply", "next", "last")
+            };
+            let file = |name: &str| git_file(repo, &format!("{dir}/{name}"));
+            let number = |name: &str| file(name).and_then(|s| s.parse().ok());
+            let step = number(at).zip(number(of));
+            let branch = file("head-name").map(|h| {
+                h.strip_prefix("refs/heads/")
+                    .map_or(h.clone(), str::to_string)
+            });
+            let onto = side_at(repo, file("onto").as_deref(), None);
+            let applying = git_file(repo, "REBASE_HEAD").or_else(|| file("stopped-sha"));
+            (onto, side_at(repo, applying.as_deref(), branch), step)
+        }
+        InProgress::CherryPick => (
+            checked_out(repo),
+            side_at(repo, git_file(repo, "CHERRY_PICK_HEAD").as_deref(), None),
+            None,
+        ),
+        InProgress::Revert => {
+            let mut theirs = side_at(repo, git_file(repo, "REVERT_HEAD").as_deref(), None);
+            theirs.name = format!("reverting {}", theirs.name);
+            (checked_out(repo), theirs, None)
+        }
+        InProgress::Other => (checked_out(repo), Side::default(), None),
+    }
 }
 
 /// How a merge may combine histories.
@@ -131,6 +278,25 @@ pub fn continue_op(path: &str) -> Result<()> {
     }
 }
 
+/// Skips the commit being applied (in a rebase, or a series of picks or
+/// reverts) and goes on with the next. Stopping on new conflicts isn't an
+/// error: it's still in progress.
+pub fn skip(path: &str) -> Result<()> {
+    let state = in_progress(path)?.ok_or_else(|| Error::Stale("nothing in progress".into()))?;
+    if !state.can_skip() {
+        return Err(Error::Unsupported(format!(
+            "a {} has no commit to skip",
+            state.what.noun()
+        )));
+    }
+    let cmd = state.what.command().unwrap_or("rebase");
+    match cli::run(path, &[cmd, "--skip"], None) {
+        Ok(_) => Ok(()),
+        Err(_) if has_conflicts(path)? => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 /// Abandons the operation in progress, returning to how things were.
 pub fn abort(path: &str) -> Result<()> {
     let state = in_progress(path)?.ok_or_else(|| Error::Stale("nothing in progress".into()))?;
@@ -180,6 +346,38 @@ pub(crate) mod tests {
         t.write("f.txt", "one\ntwo (main)\nthree\n");
         git(&t, &["commit", "-q", "-am", "main work"]);
         (t, main)
+    }
+
+    #[test]
+    fn names_the_sides_of_a_merge_and_a_rebase() {
+        let (t, main) = conflicting();
+        merge(t.path(), "feature", MergeMode::Default).unwrap();
+        let s = in_progress(t.path()).unwrap().unwrap();
+        assert_eq!(
+            (s.ours.name.as_str(), s.theirs.name.as_str()),
+            (main.as_str(), "feature")
+        );
+        assert_eq!(s.theirs.summary.as_deref(), Some("feature work"));
+        assert!(!s.can_skip() && s.step.is_none());
+        git(&t, &["merge", "--abort"]);
+
+        // Rebasing feature (two commits) onto main: the first conflicts.
+        git(&t, &["switch", "-q", "feature"]);
+        t.write("h.txt", "more\n");
+        git(&t, &["add", "."]);
+        git(&t, &["commit", "-q", "-m", "more feature work"]);
+        assert!(cli::run(t.path(), &["rebase", &main], None).is_err());
+        let s = in_progress(t.path()).unwrap().unwrap();
+        assert_eq!(s.what, InProgress::Rebase);
+        assert_eq!(s.ours.name, main, "what it's rebased onto");
+        assert_eq!(s.theirs.name, "feature", "the branch being rebased");
+        assert_eq!(s.theirs.summary.as_deref(), Some("feature work"));
+        assert_eq!(s.step, Some((1, 2)));
+        assert!(s.can_skip());
+        // Skipping that commit: the next one applies cleanly, and it's done.
+        skip(t.path()).unwrap();
+        assert!(in_progress(t.path()).unwrap().is_none());
+        assert!(skip(t.path()).is_err(), "nothing to skip now");
     }
 
     #[test]

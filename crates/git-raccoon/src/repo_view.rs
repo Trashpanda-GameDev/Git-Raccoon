@@ -379,6 +379,10 @@ pub enum Op {
         text: String,
     },
     MarkResolved(String),
+    /// Bring a resolved file's conflict back.
+    Unresolve(String),
+    /// Skip the commit being applied (a rebase, or a series of picks).
+    Skip,
     /// Undo a mixed reset: back from `expected` to `to`, files untouched.
     UndoMixedReset {
         expected: String,
@@ -602,6 +606,8 @@ impl Op {
                 text,
             } => conflict::write(path, &file, &expected, &text),
             Op::MarkResolved(file) => conflict::mark_resolved(path, &file),
+            Op::Unresolve(file) => conflict::unresolve(path, &file),
+            Op::Skip => merge::skip(path),
             Op::ResetKeep { expected, to } => undo::reset_keep(path, &expected, &to),
             Op::UndoMixedReset { expected, to } => undo::reset_mixed(path, &expected, &to),
             Op::Rebase(onto) => rewrite::rebase(path, &onto),
@@ -667,6 +673,8 @@ impl Op {
             Op::RemoveWorktree { .. } => "remove the worktree",
             Op::Merge { .. } => "merge",
             Op::Continue => "continue",
+            Op::Skip => "skip the commit",
+            Op::Unresolve(_) => "bring the conflict back",
             Op::Abort => "abort",
             Op::TakeSide { .. } | Op::WriteConflict { .. } | Op::MarkResolved(_) => {
                 "resolve the conflict"
@@ -693,6 +701,7 @@ impl Op {
                 | Op::TakeSide { .. }
                 | Op::WriteConflict { .. }
                 | Op::MarkResolved(_)
+                | Op::Unresolve(_)
         )
     }
 
@@ -1420,6 +1429,12 @@ pub struct RepoView {
     pub undo: Option<Undoable>,
     /// The conflicted file being resolved, if one is open.
     pub conflict: Option<ConflictFile>,
+    /// While something's in progress: its conflicted files (how each
+    /// conflicts), the files resolved since it started, and whether the
+    /// history is shown in place of the conflicts' overview.
+    pub conflict_files: Vec<conflict::ConflictedFile>,
+    pub resolved_here: std::collections::BTreeSet<String>,
+    pub history_over_conflicts: bool,
     /// The open file's history (beside its diff), and the file it's of:
     /// kept while an older name of it is open from the list.
     pub file_history: Keyed<String, Result<Arc<Vec<file_history::Change>>, String>>,
@@ -1532,6 +1547,9 @@ impl RepoView {
             commit_for_agent: false,
             undo: None,
             conflict: None,
+            conflict_files: Vec::new(),
+            resolved_here: std::collections::BTreeSet::new(),
+            history_over_conflicts: false,
             planner: None,
             file_history: Keyed::default(),
             history_file: None,
@@ -2167,6 +2185,22 @@ impl RepoView {
     pub fn open_blame(&self) -> Option<&Result<Arc<file_history::Blame>, String>> {
         let (source, file, _) = self.diff_key()?;
         self.blame.get(&(source, file))
+    }
+
+    /// The next conflicted file to resolve after `file` (or the first):
+    /// files with conflicts in their text first, then the others.
+    pub fn next_conflict(&self, after: Option<&str>) -> Option<String> {
+        let mut files: Vec<&conflict::ConflictedFile> = self.conflict_files.iter().collect();
+        files.sort_by_key(|f| (f.conflicts == 0, f.path.clone()));
+        let at = after.and_then(|a| files.iter().position(|f| f.path == a));
+        let start = at.map_or(0, |i| i + 1);
+        files
+            .iter()
+            .cycle()
+            .skip(start)
+            .take(files.len())
+            .find(|f| Some(f.path.as_str()) != after)
+            .map(|f| f.path.clone())
     }
 
     /// Opens a conflicted file for resolving.
@@ -3122,16 +3156,41 @@ impl RepoView {
             .status
             .as_ref()
             .is_some_and(|s| !s.conflicted.is_empty());
+        let was_conflicted: Vec<String> = self
+            .status
+            .as_ref()
+            .map(|s| s.conflicted.iter().map(|f| f.path.clone()).collect())
+            .unwrap_or_default();
         self.status = status;
         let conflicted: Vec<String> = self
             .status
             .as_ref()
             .map(|s| s.conflicted.iter().map(|f| f.path.clone()).collect())
             .unwrap_or_default();
-        // New conflicts (from a merge, pull or stash): show the first.
-        if !had_conflicts && let Some(first) = conflicted.first() {
+        let in_progress = self
+            .status
+            .as_ref()
+            .is_some_and(|s| s.in_progress.is_some());
+        // While something's in progress: how each file conflicts, and which
+        // were resolved since (to review, or bring back).
+        if in_progress {
+            self.conflict_files = conflict::files(self.path()).unwrap_or_default();
+            for file in was_conflicted.iter().filter(|f| !conflicted.contains(f)) {
+                self.resolved_here.insert(file.clone());
+            }
+            for file in &conflicted {
+                self.resolved_here.remove(file);
+            }
+        } else {
+            self.conflict_files.clear();
+            self.resolved_here.clear();
+            self.history_over_conflicts = false;
+        }
+        // New conflicts (from a merge, pull or stash): the overview shows
+        // them all (in place of the history).
+        if !had_conflicts && !conflicted.is_empty() {
             self.select_working();
-            self.open_conflict(first.clone());
+            self.history_over_conflicts = false;
         }
         // The open conflicted file: re-read it, or close it once resolved.
         if let Some(open) = &self.conflict {

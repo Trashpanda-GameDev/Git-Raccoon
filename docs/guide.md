@@ -301,13 +301,15 @@ Right-click a commit, branch, remote, tag, request or issue › **Open on GitHub
 
 ### Conflicts
 
-If changes conflict, a banner says a merge or rebase is in progress, and the conflicted files open:
+If changes conflict, the conflicts take the place of the history:
 
-1. For each conflict, choose **Use ours**, **Use theirs** or **Use both**, or **Edit** the file yourself.
-2. When a file has no conflicts left, **Mark resolved**.
-3. When every file is resolved, **Continue** in the banner.
+- **The bar at the top** says what's going on ("Rebasing feature/login onto main · commit 3 of 5: *Remember the last user*"), with **Continue** (once nothing's left), **Abort**, **Skip this commit** (rebases), and **Show history** to look at the graph meanwhile.
+- **Every file** is listed with how it conflicts: **Resolve…** opens one (or **Next conflict**); a file deleted on one side and changed on the other is settled with **Keep main's** or **Delete it**.
+- **Resolved files** stay in the list: **Review** shows the result, **Undo** brings the conflict back.
 
-**Use ours / theirs for the file** resolves a whole file at once. **Abort** goes back to how things were.
+Sides are named by their branch (*main*, *feature/login*), not "ours" and "theirs", which swap meaning between a merge and a rebase.
+
+In a file: for each conflict, choose a side or both, or **Edit** the file yourself; when no conflicts are left, **Mark resolved**.
 
 ## Rewriting history
 

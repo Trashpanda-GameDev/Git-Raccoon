@@ -2016,8 +2016,15 @@ impl App {
             && let Some(status) = &repo.status
             && let Some(state) = &status.in_progress
         {
-            let conflicts = status.conflicted.len();
-            let (noun, detail) = (state.what.noun(), state.detail.clone());
+            let conflicts: usize = repo
+                .conflict_files
+                .iter()
+                .map(|f| f.conflicts.max(1))
+                .sum::<usize>()
+                .max(status.conflicted.len());
+            let noun = state.what.noun();
+            let (title, detail) = crate::ui::conflict::describe(state);
+            let can_skip = state.can_skip();
             let mut chosen = None;
             Panel::top("in-progress")
                 .frame(
@@ -2032,27 +2039,19 @@ impl App {
                             RichText::new(egui_phosphor::regular::GIT_MERGE)
                                 .color(theme::modified()),
                         );
-                        let mut text = format!("A {noun} is in progress");
+                        ui.label(RichText::new(&title).strong());
                         if let Some(d) = &detail {
-                            text.push_str(&format!(": {d}"));
+                            ui.label(RichText::new(format!("· {d}")).color(theme::muted()));
                         }
-                        ui.label(RichText::new(text).strong());
-                        let what_next = match conflicts {
-                            0 => "Ready to continue.".to_string(),
-                            1 => "1 file has conflicts to resolve.".to_string(),
-                            n => format!("{n} files have conflicts to resolve."),
-                        };
-                        ui.label(RichText::new(what_next).color(theme::muted()));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let busy = repo.op_running();
-                            if ui
-                                .add_enabled(!busy, egui::Button::new(format!("Abort {noun}")))
-                                .clicked()
-                            {
-                                chosen = Some(false);
-                            }
                             let ready = !busy && conflicts == 0;
-                            let label = RichText::new(format!("Continue {noun}"));
+                            let label = RichText::new(if conflicts == 0 {
+                                format!("Continue {noun}")
+                            } else {
+                                let s = if conflicts == 1 { "" } else { "s" };
+                                format!("Continue ({conflicts} conflict{s} left)")
+                            });
                             let go = if ready {
                                 egui::Button::new(label.color(theme::on_accent()).strong())
                                     .fill(theme::accent_fill())
@@ -2065,14 +2064,40 @@ impl App {
                                 .on_disabled_hover_text("Resolve the conflicts first")
                                 .clicked()
                             {
-                                chosen = Some(true);
+                                chosen = Some(Some(true));
+                            }
+                            if ui
+                                .add_enabled(!busy, egui::Button::new(format!("Abort {noun}")))
+                                .clicked()
+                            {
+                                chosen = Some(Some(false));
+                            }
+                            if can_skip
+                                && ui
+                                    .add_enabled(!busy, egui::Button::new("Skip this commit"))
+                                    .on_hover_text("Leave this commit out, and go on with the next")
+                                    .clicked()
+                            {
+                                chosen = Some(None);
+                            }
+                            // The history and the conflicts take turns in the middle.
+                            let (glyph, text) = if repo.history_over_conflicts {
+                                (egui_phosphor::regular::WARNING, "Show conflicts")
+                            } else {
+                                (egui_phosphor::regular::GRAPH, "Show history")
+                            };
+                            if repo.conflict.is_none()
+                                && ui.button(format!("{glyph}  {text}")).clicked()
+                            {
+                                repo.history_over_conflicts = !repo.history_over_conflicts;
                             }
                         });
                     });
                 });
             match chosen {
-                Some(true) => repo.run(&ctx, Op::Continue),
-                Some(false) => repo.confirm_abort(),
+                Some(Some(true)) => repo.run(&ctx, Op::Continue),
+                Some(Some(false)) => repo.confirm_abort(),
+                Some(None) => repo.run(&ctx, Op::Skip),
                 None => {}
             }
         }
@@ -2391,6 +2416,36 @@ impl App {
                         Some(conflict::Action::SaveEdit) => repo.save_conflict_edit(&ctx),
                         Some(conflict::Action::CancelEdit) => open.edit = None,
                         Some(conflict::Action::Close) => repo.conflict = None,
+                        None => {}
+                    }
+                    return;
+                }
+                // Something in progress: its conflicts, in place of the history.
+                if let Some(state) = repo
+                    .status
+                    .as_ref()
+                    .and_then(|s| s.in_progress.clone())
+                    .filter(|_| !repo.history_over_conflicts)
+                {
+                    let resolved: Vec<String> = repo.resolved_here.iter().cloned().collect();
+                    let files = repo.conflict_files.clone();
+                    match conflict::overview(ui, &state, &files, &resolved, busy) {
+                        Some(conflict::OverviewAction::Open(file)) => repo.open_conflict(file),
+                        Some(conflict::OverviewAction::TakeSide { file, ours }) => {
+                            repo.run(&ctx, Op::TakeSide { file, ours });
+                        }
+                        Some(conflict::OverviewAction::MarkResolved(file)) => {
+                            repo.run(&ctx, Op::MarkResolved(file));
+                        }
+                        Some(conflict::OverviewAction::Review(file)) => {
+                            repo.history_over_conflicts = true;
+                            repo.select_working();
+                            repo.open_working_file(Side::Staged, file);
+                        }
+                        Some(conflict::OverviewAction::Unresolve(file)) => {
+                            repo.run(&ctx, Op::Unresolve(file));
+                        }
+                        Some(conflict::OverviewAction::Continue) => repo.run(&ctx, Op::Continue),
                         None => {}
                     }
                     return;

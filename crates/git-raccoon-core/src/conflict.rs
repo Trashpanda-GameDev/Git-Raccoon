@@ -101,20 +101,38 @@ pub fn parse(text: &str) -> Option<Vec<Chunk>> {
 /// The file with conflict number `index` (counting conflicts only) replaced
 /// by the version picked.
 pub fn resolve(chunks: &[Chunk], index: usize, pick: Pick) -> String {
+    let Some(c) = conflicts(chunks).nth(index) else {
+        return resolve_with(chunks, usize::MAX, "");
+    };
+    let text = match pick {
+        Pick::Ours => c.ours.clone(),
+        Pick::Theirs => c.theirs.clone(),
+        Pick::Both => format!("{}{}", c.ours, c.theirs),
+    };
+    resolve_with(chunks, index, &text)
+}
+
+/// The conflicts among `chunks`, in order.
+pub fn conflicts(chunks: &[Chunk]) -> impl Iterator<Item = &Conflict> {
+    chunks.iter().filter_map(|c| match c {
+        Chunk::Conflict(c) => Some(c),
+        Chunk::Same(_) => None,
+    })
+}
+
+/// The file with conflict number `index` replaced by `text` (lines picked
+/// from either side, or written by hand); the other conflicts stay.
+pub fn resolve_with(chunks: &[Chunk], index: usize, text: &str) -> String {
     let mut out = String::new();
     let mut n = 0;
     for chunk in chunks {
         match chunk {
-            Chunk::Same(text) => out.push_str(text),
-            Chunk::Conflict(c) if n == index => {
+            Chunk::Same(same) => out.push_str(same),
+            Chunk::Conflict(_) if n == index => {
                 n += 1;
-                match pick {
-                    Pick::Ours => out.push_str(&c.ours),
-                    Pick::Theirs => out.push_str(&c.theirs),
-                    Pick::Both => {
-                        out.push_str(&c.ours);
-                        out.push_str(&c.theirs);
-                    }
+                out.push_str(text);
+                if !text.is_empty() && !text.ends_with('\n') {
+                    out.push('\n');
                 }
             }
             Chunk::Conflict(c) => {
@@ -160,6 +178,123 @@ pub fn write(path: &str, file: &str, expected: &str, text: &str) -> Result<()> {
     }
     std::fs::write(full_path(path, file)?, text)
         .map_err(|e| Error::Unsupported(format!("can't write {file}: {e}")))
+}
+
+/// How a file came to conflict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// Both sides changed it (it has conflict markers, unless binary).
+    BothChanged,
+    /// Both sides added a file at this path.
+    BothAdded,
+    /// What the files had ("ours") deleted it; the incoming side changed it.
+    DeletedOnOurs,
+    /// The incoming side ("theirs") deleted it; ours changed it.
+    DeletedOnTheirs,
+    /// Anything else (a rename on one side, say).
+    Other,
+}
+
+/// A conflicted file: how it conflicts, and how many conflicts its text
+/// has left (0 for a deleted side, or a binary file).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConflictedFile {
+    pub path: String,
+    pub kind: Kind,
+    pub conflicts: usize,
+    /// Its text can't be read as text (binary, or not there).
+    pub binary: bool,
+}
+
+/// The files with conflicts, in path order.
+pub fn files(path: &str) -> Result<Vec<ConflictedFile>> {
+    let repo = Repository::discover(path)?;
+    let index = repo.index()?;
+    let mut out = Vec::new();
+    for c in index.conflicts()? {
+        let c = c?;
+        let entry = c.our.as_ref().or(c.their.as_ref()).or(c.ancestor.as_ref());
+        let Some(entry) = entry else { continue };
+        let file = String::from_utf8_lossy(&entry.path).into_owned();
+        let kind = match (c.ancestor.is_some(), c.our.is_some(), c.their.is_some()) {
+            (true, true, true) => Kind::BothChanged,
+            (false, true, true) => Kind::BothAdded,
+            (true, false, true) => Kind::DeletedOnOurs,
+            (true, true, false) => Kind::DeletedOnTheirs,
+            _ => Kind::Other,
+        };
+        let text = read(path, &file).ok();
+        let conflicts = text
+            .as_deref()
+            .and_then(parse)
+            .map_or(0, |chunks| self::conflicts(&chunks).count());
+        out.push(ConflictedFile {
+            path: file,
+            kind,
+            conflicts,
+            binary: text.is_none(),
+        });
+    }
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(out)
+}
+
+/// Fills in each conflict's common ancestor ("base"), which Git's markers
+/// only carry with `merge.conflictStyle = diff3`: from Git's own copies of
+/// the three versions, merged again with the base shown, without touching
+/// the file. Conflicts that can't be matched up (edited since) keep none.
+pub fn with_bases(path: &str, file: &str, chunks: &mut [Chunk]) {
+    if conflicts(chunks).all(|c| c.base.is_some()) {
+        return;
+    }
+    let Some(again) = merged_with_bases(path, file) else {
+        return;
+    };
+    let mut known: Vec<Conflict> = conflicts(&again).cloned().collect();
+    for chunk in chunks.iter_mut() {
+        let Chunk::Conflict(c) = chunk else { continue };
+        if c.base.is_some() {
+            continue;
+        }
+        if let Some(i) = known
+            .iter()
+            .position(|k| k.ours == c.ours && k.theirs == c.theirs)
+        {
+            c.base = known.remove(i).base;
+        }
+    }
+}
+
+/// The file merged again from Git's three copies, with bases shown.
+fn merged_with_bases(path: &str, file: &str) -> Option<Vec<Chunk>> {
+    let repo = Repository::discover(path).ok()?;
+    let index = repo.index().ok()?;
+    let c = index.conflicts().ok()?.flatten().find(|c| {
+        let e = c.our.as_ref().or(c.their.as_ref());
+        e.is_some_and(|e| e.path == file.as_bytes())
+    })?;
+    let (base, ours, theirs) = (c.ancestor?, c.our?, c.their?);
+    let mut options = git2::MergeFileOptions::new();
+    options.style_diff3(true);
+    let merged = repo
+        .merge_file_from_index(&base, &ours, &theirs, Some(&mut options))
+        .ok()?;
+    parse(std::str::from_utf8(merged.content()).ok()?)
+}
+
+/// Brings a resolved file's conflict back (its markers, and unresolved in
+/// the index), from what Git kept when it was resolved.
+pub fn unresolve(path: &str, file: &str) -> Result<()> {
+    // Back to conflicted in the index (any kind of conflict), then, where
+    // both sides have the file, its text with the markers again.
+    cli::run(path, &["update-index", "--unresolve", "--", file], None)?;
+    match sides(path, file) {
+        Ok((true, true)) => cli::run(path, &["checkout", "--merge", "--", file], None).map(drop),
+        Ok(_) => Ok(()),
+        Err(_) => Err(Error::Stale(format!(
+            "{file}'s conflict can't be brought back (Git no longer has it)"
+        ))),
+    }
 }
 
 /// Which sides of a conflicted file exist (one may have deleted it).
@@ -248,6 +383,76 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn writes_a_conflict_as_given() {
+        let chunks = parse(SAMPLE).unwrap();
+        // Lines picked from both sides, in an order of one's choosing.
+        let picked = resolve_with(&chunks, 0, "theirs\nours 2");
+        assert!(
+            picked.starts_with("a\ntheirs\nours 2\nb\n<<<<<<<"),
+            "{picked}"
+        );
+        assert_eq!(conflicts(&parse(&picked).unwrap()).count(), 1);
+        // Nothing at all is a choice too.
+        assert!(resolve_with(&chunks, 0, "").starts_with("a\nb\n"));
+    }
+
+    #[test]
+    fn lists_conflicted_files_with_how_they_conflict() {
+        // f.txt changed on both sides; d.txt changed on main, deleted on feature.
+        let t = crate::testutil::TempRepo::new();
+        crate::merge::tests::identity(&t);
+        t.write("f.txt", "one\ntwo\n");
+        t.write("d.txt", "start\n");
+        git(&t, &["add", "."]);
+        git(&t, &["commit", "-q", "-m", "base"]);
+        let main = t.repo.head().unwrap().shorthand().unwrap().to_string();
+        git(&t, &["switch", "-q", "-c", "feature"]);
+        t.write("f.txt", "one\nTWO\n");
+        git(&t, &["rm", "-q", "d.txt"]);
+        git(&t, &["commit", "-q", "-am", "feature"]);
+        git(&t, &["switch", "-q", &main]);
+        t.write("f.txt", "one\n2\n");
+        t.write("d.txt", "changed on main\n");
+        git(&t, &["commit", "-q", "-am", "main"]);
+        merge(t.path(), "feature", MergeMode::Default).unwrap();
+        let found = files(t.path()).unwrap();
+        let kinds: Vec<(&str, Kind, usize)> = found
+            .iter()
+            .map(|f| (f.path.as_str(), f.kind, f.conflicts))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                ("d.txt", Kind::DeletedOnTheirs, 0),
+                ("f.txt", Kind::BothChanged, 1)
+            ]
+        );
+    }
+
+    #[test]
+    fn finds_bases_without_diff3_and_brings_conflicts_back() {
+        let (t, _) = conflicting();
+        // Git's default style: no bases in the markers.
+        git(&t, &["config", "merge.conflictStyle", "merge"]);
+        merge(t.path(), "feature", MergeMode::Default).unwrap();
+        let text = read(t.path(), "f.txt").unwrap();
+        assert!(!text.contains("|||||||"));
+        let mut chunks = parse(&text).unwrap();
+        with_bases(t.path(), "f.txt", &mut chunks);
+        let c = conflicts(&chunks).next().unwrap();
+        assert_eq!(c.base.as_deref(), Some("two\n"));
+        // The file itself is untouched.
+        assert_eq!(read(t.path(), "f.txt").unwrap(), text);
+
+        // Resolved, then brought back.
+        take_side(t.path(), "f.txt", true).unwrap();
+        assert!(!has_conflicts(t.path()).unwrap());
+        unresolve(t.path(), "f.txt").unwrap();
+        assert!(has_conflicts(t.path()).unwrap());
+        assert!(read(t.path(), "f.txt").unwrap().contains("<<<<<<<"));
     }
 
     #[test]

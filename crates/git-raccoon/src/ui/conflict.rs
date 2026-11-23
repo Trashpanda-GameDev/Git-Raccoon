@@ -3,7 +3,8 @@
 
 use eframe::egui::{self, Color32, RichText, Stroke};
 use egui_phosphor::regular as icon;
-use git_raccoon_core::conflict::{self, Chunk, Pick};
+use git_raccoon_core::conflict::{self, Chunk, ConflictedFile, Kind, Pick};
+use git_raccoon_core::merge::{self, InProgress};
 
 use crate::repo_view::ConflictFile;
 use crate::theme;
@@ -244,4 +245,337 @@ fn primary_if(label: &str, enabled: bool) -> egui::Button<'_> {
 fn primary(label: &str) -> egui::Button<'_> {
     egui::Button::new(RichText::new(label).color(theme::on_accent()).strong())
         .fill(theme::accent_fill())
+}
+
+/// What the overview asks for.
+pub enum OverviewAction {
+    /// Open a file to resolve it.
+    Open(String),
+    /// Resolve a file by taking one side's whole version (or its deletion).
+    TakeSide {
+        file: String,
+        ours: bool,
+    },
+    MarkResolved(String),
+    /// Show a resolved file's result (its staged changes).
+    Review(String),
+    /// Bring a resolved file's conflict back.
+    Unresolve(String),
+    Continue,
+}
+
+/// What's in progress, in words: "Rebasing feature/login onto main", and
+/// "commit 3 of 5: “Remember the last user”".
+pub fn describe(state: &merge::State) -> (String, Option<String>) {
+    let (ours, theirs) = (&state.ours, &state.theirs);
+    let quoted = |s: &merge::Side| {
+        s.summary
+            .as_ref()
+            .map_or_else(|| s.name.clone(), |m| format!("“{m}”"))
+    };
+    match state.what {
+        InProgress::Rebase => (
+            format!("Rebasing {} onto {}", theirs.name, ours.name),
+            Some(match state.step {
+                Some((n, of)) => format!("commit {n} of {of}: {}", quoted(theirs)),
+                None => format!("applying {}", quoted(theirs)),
+            }),
+        ),
+        InProgress::Merge => (format!("Merging {} into {}", theirs.name, ours.name), None),
+        InProgress::CherryPick => (
+            format!("Copying {} onto {}", quoted(theirs), ours.name),
+            None,
+        ),
+        InProgress::Revert => {
+            let undone = merge::Side {
+                name: theirs.name.trim_start_matches("reverting ").to_string(),
+                ..theirs.clone()
+            };
+            (
+                format!("Reverting {} on {}", quoted(&undone), ours.name),
+                None,
+            )
+        }
+        InProgress::Other => (
+            "A Git operation is in progress".to_string(),
+            state.detail.clone(),
+        ),
+    }
+}
+
+/// What each side is, for the overview's key: (ours, theirs).
+fn side_words(state: &merge::State) -> (&'static str, &'static str) {
+    match state.what {
+        InProgress::Rebase => ("what you're rebasing onto", "your commit being applied"),
+        InProgress::Merge => ("your branch", "the branch being merged in"),
+        InProgress::CherryPick => ("your branch", "the commit being copied"),
+        InProgress::Revert => ("your branch", "undoing that commit"),
+        InProgress::Other => ("what the files had", "what's coming in"),
+    }
+}
+
+/// A side's name as a coloured tag.
+pub fn tag(ui: &mut egui::Ui, name: &str, ours: bool) {
+    let colour = if ours { OURS } else { THEIRS };
+    egui::Frame::new()
+        .fill(colour.gamma_multiply(0.15))
+        .corner_radius(4)
+        .inner_margin(egui::Margin::symmetric(6, 1))
+        .show(ui, |ui| {
+            ui.label(RichText::new(name).size(12.0).color(colour));
+        });
+}
+
+/// Every file of what's in progress, and how far along resolving it is,
+/// in place of the history.
+pub fn overview(
+    ui: &mut egui::Ui,
+    state: &merge::State,
+    files: &[ConflictedFile],
+    resolved: &[String],
+    busy: bool,
+) -> Option<OverviewAction> {
+    let mut action = None;
+    let (ours, theirs) = (state.ours.name.as_str(), state.theirs.name.as_str());
+    let total = files.len() + resolved.len();
+    let left: usize = files.iter().map(|f| f.conflicts.max(1)).sum();
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            egui::Frame::new()
+                .inner_margin(egui::Margin::symmetric(20, 16))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Conflicts").strong().size(16.0));
+                        #[expect(clippy::cast_precision_loss, reason = "file counts are small")]
+                        let done = resolved.len() as f32 / total.max(1) as f32;
+                        // A track, filled as far as it's got (a bar at 0 is still a bar).
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(160.0, 6.0), egui::Sense::hover());
+                        ui.painter().rect_filled(rect, 3, theme::bg_hover());
+                        let mut filled = rect;
+                        filled.set_width(rect.width() * done);
+                        ui.painter().rect_filled(filled, 3, theme::accent());
+                        let s = if total == 1 { "" } else { "s" };
+                        ui.label(
+                            RichText::new(format!(
+                                "{} of {total} file{s} resolved",
+                                resolved.len()
+                            ))
+                            .color(theme::muted()),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if let Some(first) = next_file(files)
+                                && ui.add_enabled(!busy, primary("Next conflict")).clicked()
+                            {
+                                action = Some(OverviewAction::Open(first));
+                            }
+                        });
+                    });
+                    ui.add_space(12.0);
+                    egui::Frame::new()
+                        .stroke(Stroke::new(1.0, theme::border()))
+                        .corner_radius(8)
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            for f in files {
+                                if let Some(a) = file_row(ui, f, (ours, theirs), busy) {
+                                    action = Some(a);
+                                }
+                            }
+                            for file in resolved {
+                                if let Some(a) = resolved_row(ui, file, busy) {
+                                    action = Some(a);
+                                }
+                            }
+                        });
+                    ui.add_space(12.0);
+                    if files.is_empty() {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(format!("{}  Everything is resolved.", icon::CHECK))
+                                    .color(theme::add()),
+                            );
+                            let noun = state.what.noun();
+                            if ui
+                                .add_enabled(!busy, primary(&format!("Continue the {noun}")))
+                                .clicked()
+                            {
+                                action = Some(OverviewAction::Continue);
+                            }
+                        });
+                    } else {
+                        let s = if left == 1 { "" } else { "s" };
+                        ui.label(
+                            RichText::new(format!("{left} conflict{s} left."))
+                                .color(theme::muted()),
+                        );
+                    }
+                    ui.add_space(8.0);
+                    let (our_words, their_words) = side_words(state);
+                    ui.horizontal_wrapped(|ui| {
+                        tag(ui, ours, true);
+                        ui.label(RichText::new(format!("= {our_words}")).color(theme::muted()));
+                        ui.add_space(12.0);
+                        tag(ui, theirs, false);
+                        ui.label(RichText::new(format!("= {their_words}")).color(theme::muted()));
+                    });
+                });
+        });
+    action
+}
+
+/// The first file to resolve: one with conflicts in its text, else any.
+fn next_file(files: &[ConflictedFile]) -> Option<String> {
+    files
+        .iter()
+        .find(|f| f.conflicts > 0)
+        .or(files.first())
+        .map(|f| f.path.clone())
+}
+
+fn row(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::new()
+        .inner_margin(egui::Margin::symmetric(14, 8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(add);
+        });
+    ui.painter().hline(
+        ui.min_rect().x_range(),
+        ui.cursor().top(),
+        Stroke::new(1.0, theme::border()),
+    );
+}
+
+fn chip(ui: &mut egui::Ui, text: &str, colour: Color32) {
+    egui::Frame::new()
+        .fill(colour.gamma_multiply(0.15))
+        .corner_radius(4)
+        .inner_margin(egui::Margin::symmetric(6, 1))
+        .show(ui, |ui| {
+            ui.label(RichText::new(text).size(12.0).color(colour));
+        });
+}
+
+fn file_row(
+    ui: &mut egui::Ui,
+    f: &ConflictedFile,
+    (ours, theirs): (&str, &str),
+    busy: bool,
+) -> Option<OverviewAction> {
+    let mut action = None;
+    let path = f.path.clone();
+    let take = |ours: bool| OverviewAction::TakeSide {
+        file: path.clone(),
+        ours,
+    };
+    row(ui, |ui| {
+        let (glyph, colour) = match f.kind {
+            Kind::DeletedOnOurs | Kind::DeletedOnTheirs => (icon::DIAMOND, theme::modified()),
+            _ => (icon::WARNING, theme::danger()),
+        };
+        ui.label(RichText::new(glyph).color(colour));
+        ui.label(RichText::new(&f.path).monospace());
+        let s = if f.conflicts == 1 { "" } else { "s" };
+        let (badge, note) = match f.kind {
+            Kind::DeletedOnOurs => (format!("deleted on {ours}"), format!("{theirs} changed it")),
+            Kind::DeletedOnTheirs => (format!("deleted on {theirs}"), format!("{ours} changed it")),
+            _ if f.binary => ("binary".into(), "pick one side's version".into()),
+            _ if f.conflicts == 0 => (
+                "no conflicts left".into(),
+                "its text is resolved: mark it resolved".into(),
+            ),
+            Kind::BothAdded => (
+                format!("{} conflict{s}", f.conflicts),
+                "added on both sides".into(),
+            ),
+            Kind::BothChanged => (
+                format!("{} conflict{s}", f.conflicts),
+                "both sides changed it".into(),
+            ),
+            Kind::Other => (
+                format!("{} conflict{s}", f.conflicts),
+                "they conflict in another way (a rename, say)".into(),
+            ),
+        };
+        chip(ui, &badge, colour);
+        ui.label(RichText::new(note).size(12.0).color(theme::muted()));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_enabled_ui(!busy, |ui| match f.kind {
+                Kind::DeletedOnOurs => {
+                    if ui.button("Delete it").clicked() {
+                        action = Some(take(true));
+                    }
+                    if ui.button(format!("Keep {theirs}'s")).clicked() {
+                        action = Some(take(false));
+                    }
+                }
+                Kind::DeletedOnTheirs => {
+                    if ui.button("Delete it").clicked() {
+                        action = Some(take(false));
+                    }
+                    if ui.button(format!("Keep {ours}'s")).clicked() {
+                        action = Some(take(true));
+                    }
+                }
+                _ if f.binary => {
+                    if ui.button(format!("Keep {theirs}'s")).clicked() {
+                        action = Some(take(false));
+                    }
+                    if ui.button(format!("Keep {ours}'s")).clicked() {
+                        action = Some(take(true));
+                    }
+                }
+                _ if f.conflicts == 0 => {
+                    if ui.add(primary("Mark resolved")).clicked() {
+                        action = Some(OverviewAction::MarkResolved(path.clone()));
+                    }
+                    if ui.button("Open").clicked() {
+                        action = Some(OverviewAction::Open(path.clone()));
+                    }
+                }
+                _ => {
+                    let open = ui.button("Resolve…");
+                    let name = format!("Resolve {}", f.path);
+                    ui.ctx()
+                        .accesskit_node_builder(open.id, |n| n.set_label(name));
+                    if open.clicked() {
+                        action = Some(OverviewAction::Open(path.clone()));
+                    }
+                }
+            });
+        });
+    });
+    action
+}
+
+fn resolved_row(ui: &mut egui::Ui, file: &str, busy: bool) -> Option<OverviewAction> {
+    let mut action = None;
+    row(ui, |ui| {
+        ui.label(RichText::new(icon::CHECK).color(theme::add()));
+        ui.label(RichText::new(file).monospace());
+        chip(ui, "resolved", theme::add());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_enabled_ui(!busy, |ui| {
+                let undo = ui
+                    .button("Undo")
+                    .on_hover_text("Bring its conflict back, as it was");
+                let name = format!("Bring back the conflict in {file}");
+                ui.ctx()
+                    .accesskit_node_builder(undo.id, |n| n.set_label(name));
+                if undo.clicked() {
+                    action = Some(OverviewAction::Unresolve(file.to_string()));
+                }
+                let review = ui.button("Review").on_hover_text("Its resolved changes");
+                let name = format!("Review {file}");
+                ui.ctx()
+                    .accesskit_node_builder(review.id, |n| n.set_label(name));
+                if review.clicked() {
+                    action = Some(OverviewAction::Review(file.to_string()));
+                }
+            });
+        });
+    });
+    action
 }

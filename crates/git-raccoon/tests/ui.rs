@@ -5222,6 +5222,59 @@ fn drag(h: &mut Harness<'_, App>, from: egui::Pos2, to: egui::Pos2) {
 }
 
 #[test]
+fn shows_a_rebases_conflicts_in_one_place() {
+    let sample = Sample::build();
+    // topic's first commit changes README.md and deletes the loader, both
+    // of which main changes too; its second commit is clean.
+    git(&sample, &["switch", "-q", "-c", "topic"]);
+    sample.write("README.md", "# Sample\n\ntopic version\n");
+    git(&sample, &["rm", "-q", "src/repo_loader.rs"]);
+    git(&sample, &["commit", "-q", "-am", "Rework the loader"]);
+    sample.write("NOTES.md", "notes\n");
+    git(&sample, &["add", "NOTES.md"]);
+    git(&sample, &["commit", "-q", "-m", "Add notes"]);
+    git(&sample, &["switch", "-q", "main"]);
+    sample.write("README.md", "# Sample\n\nmain version\n");
+    sample.write("src/repo_loader.rs", "// changed on main\n");
+    git(&sample, &["commit", "-q", "-am", "Main's changes"]);
+    git(&sample, &["switch", "-q", "topic"]);
+    // (It stops on the first commit's conflicts.)
+    let _ = std::process::Command::new("git")
+        .args(["rebase", "main"])
+        .current_dir(sample.path())
+        .output();
+
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    wait_for(&mut h, "the conflicts", |app| conflicted(app) == 2);
+    h.get_by_label("Rebasing topic onto main");
+    h.get_by_label("· commit 1 of 2: “Rework the loader”");
+    h.get_by_label("deleted on topic");
+    h.get_by_label_contains("= your commit being applied");
+    screenshot(&mut h, "30-rebase-conflicts");
+
+    // Keep main's version of the deleted file, then bring the conflict back.
+    h.get_by_label("Keep main's").click();
+    wait_for(&mut h, "kept", |app| conflicted(app) == 1);
+    assert_eq!(
+        read(&sample, "src/repo_loader.rs").as_deref(),
+        Some("// changed on main\n")
+    );
+    h.get_by_label("Bring back the conflict in src/repo_loader.rs")
+        .click();
+    wait_for(&mut h, "back", |app| conflicted(app) == 2);
+
+    // Skip the commit: the next one applies, and it's done.
+    h.get_by_label("Skip this commit").click();
+    wait_for(&mut h, "the rebase", |app| !in_progress(app));
+    assert_eq!(head_summary(h.state()), "Add notes");
+    assert_eq!(
+        read(&sample, "README.md").as_deref(),
+        Some("# Sample\n\nmain version\n")
+    );
+}
+
+#[test]
 fn merges_resolves_conflicts_continues_and_aborts() {
     use egui::accesskit::Role;
     let sample = Sample::build();
@@ -5267,13 +5320,18 @@ fn merges_resolves_conflicts_continues_and_aborts() {
         head_summary(app) == "Merge branch 'fix/ui/toolbar-glitch'"
     });
 
-    // A merge with a conflict: it opens straight away, with a banner.
+    // A merge with a conflict: the overview, in place of the history.
     menu_item(&mut h, "clash", "Merge into main");
     h.get_by_role_and_label(Role::Button, "Merge").click();
-    wait_for(&mut h, "the conflict", |app| {
-        app.repo().unwrap().conflict.is_some() && conflicted(app) == 1
+    wait_for(&mut h, "the conflict", |app| conflicted(app) == 1);
+    h.get_by_label("Merging clash into main");
+    h.get_by_label("1 conflict");
+    h.get_by_label("Continue (1 conflict left)");
+    screenshot(&mut h, "27-conflict-overview");
+    h.get_by_label("Resolve README.md").click();
+    wait_for(&mut h, "the file", |app| {
+        app.repo().unwrap().conflict.is_some()
     });
-    h.get_by_label_contains("A merge is in progress");
     screenshot(&mut h, "28-conflict");
     h.get_by_label("Use both for conflict 1").click();
     wait_for(&mut h, "the pick", |app| {
@@ -5289,6 +5347,9 @@ fn merges_resolves_conflicts_continues_and_aborts() {
     );
     h.get_by_label("Mark resolved").click();
     wait_for(&mut h, "resolved", |app| conflicted(app) == 0);
+    // Back on the overview: resolved, to review or bring back.
+    h.get_by_label_contains("Everything is resolved");
+    h.get_by_label("Review README.md");
     screenshot(&mut h, "29-ready-to-continue");
     h.get_by_label("Continue merge").click();
     wait_for(&mut h, "the merge commit", |app| !in_progress(app));
@@ -5301,7 +5362,9 @@ fn merges_resolves_conflicts_continues_and_aborts() {
     });
     menu_item(&mut h, "clash", "Merge into main");
     h.get_by_role_and_label(Role::Button, "Merge").click();
-    wait_for(&mut h, "the conflict", |app| {
+    wait_for(&mut h, "the conflict", |app| conflicted(app) == 1);
+    h.get_by_label("Resolve README.md").click();
+    wait_for(&mut h, "the file", |app| {
         app.repo().unwrap().conflict.is_some()
     });
     h.get_by_label_contains("Edit").click();
