@@ -146,6 +146,23 @@ Everything is named by branch or commit (*main*, *feature/login*, "Remember the 
 - [ ] **E. An agent's proposal:** agent tools to read the conflicts and propose a file's resolution, with its reasoning; shown in the editor as a proposal to *Use*, *Edit* or *Discard*, written only when the person chooses. Also *Ask an agent* from the conflict screen when one is connected.
 - [ ] **F. Solve it once:** Settings › Git › *Remember how I resolve conflicts* (Git's `rerere`); a conflict seen before is resolved the same way and marked as such, for review (*Review*, *Redo by hand*).
 
+### SSH setup
+
+Mockups: [docs/design/ssh](docs/design/ssh). Build work: the [SSH setup milestone](https://github.com/Trashpanda-GameDev/Git-Raccoon/milestone/4).
+
+SSH already works once it's set up (Git Raccoon runs the user's own `ssh`, and asks for passphrases and new hosts in a dialog). This is about getting there, and staying there, without a terminal. Throughout: the user's own `~/.ssh/config`, agent and `core.sshCommand` win; nothing outside `~/.ssh` and the repository's remotes is changed, and nothing is changed without saying so first.
+
+- [ ] **SSH status (the base of the rest):** the keys in `~/.ssh` (type, fingerprint, comment, passphrase or not); the agent (running or not, which one, the keys in it); what SSH would use for a host (`ssh -G`: the key files, user, port, agent); and a connection test (`ssh -T`) that says who you're signed in as, or exactly why not.
+- [ ] **A. Settings › SSH:** your keys, each with whether it's in the agent and on which of your signed-in accounts (*Add to GitLab*, *Copy public key*, *Add to the agent*, *Show in folder*); *Create a key…* and *Use an existing key…*; the agent's state and *Add keys to the agent when first used*; trusted hosts and *Test connections*.
+- [ ] **Creating a key** in the app (ed25519, with a passphrase or not, a comment), written to `~/.ssh` with the right permissions, never overwriting a key; optionally a `~/.ssh/config` entry for a host.
+- [ ] **Keys on your accounts:** which keys GitHub and GitLab (and self-managed GitLab) know, and adding one through the signed-in account; for GitHub, a sign-in with the `write:public_key` permission (asked for once, when first needed).
+- [ ] **B. Guided setup** (*Set up SSH for GitHub/GitLab*, from Settings, the clone dialog, a remote's menu, or an SSH error): a key (an existing one, or a new one), in the agent, on the account, a connection test, and the repository's remote switched to SSH; steps already done are ticked and skipped.
+- [ ] **C. Errors that know what's wrong:** a failed fetch, pull, push or clone over SSH is diagnosed (no key, not in the agent, not on the account, host not trusted, host key changed, port 22 blocked, name not found) and the message offers the fix (*Add the key to GitHub and retry*, *Use HTTPS instead*, *Use port 443*), instead of pointing to a terminal.
+- [ ] **D. Trusting hosts:** a new host's key checked against the keys GitHub (its API) and GitLab.com publish ("This is GitHub's published key ✓"); others show the fingerprint to compare. A changed key for a known host is a red warning that explains the risk, and replacing it is offered only when the new key is the published one.
+- [ ] **E. SSH or HTTPS:** the clone dialog chooses (SSH when your key already works with that forge), and a remote's menu offers *Use SSH instead* / *Use HTTPS instead* and *Test connection*; GitHub's port 443 when port 22 is blocked.
+- [ ] **Windows:** Git for Windows' own SSH and agent, or Windows' OpenSSH agent: find which one has the keys and make the app's Git use that (for its own commands, leaving `core.sshCommand` alone unless asked); explain when Windows' agent service is turned off.
+- Later (with Profiles): a key per profile (two accounts on one host, through `~/.ssh/config` host aliases); signing commits with an SSH key.
+
 ## Later (ideas, not commitments)
 
 - Commit message suggestions from the staged diff
