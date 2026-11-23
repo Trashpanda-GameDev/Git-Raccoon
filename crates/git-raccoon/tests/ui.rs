@@ -5362,6 +5362,8 @@ fn merges_resolves_conflicts_continues_and_aborts() {
         app.repo().unwrap().conflict.is_some()
     });
     screenshot(&mut h, "28-conflict");
+    // Without an agent connected, nothing about agents.
+    assert!(h.query_by_label_contains("Ask an agent").is_none());
     // Why: the commit on each side that changed the line.
     h.get_by_label("Why it happened").click();
     h.run_ok();
