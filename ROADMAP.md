@@ -86,6 +86,18 @@ The operations people open a GUI for.
 - [x] Branding: installer artwork and a share card ([scripts/make-artwork.py](scripts/make-artwork.py))
 - [x] GitHub, GitLab.com and self-managed GitLab: pull/merge requests (reviews, checks, check out, open new ones) and issues next to the graph; sign in with the browser or a token, kept in the keychain
 
+## Conflict handling (0.5.25, 0.5.26)
+
+Designed in [docs/design/conflicts](docs/design/conflicts); built in the [Conflict handling milestone](https://github.com/Trashpanda-GameDev/Git-Raccoon/milestone/3). Everything is named by branch or commit (*main*, *feature/login*), never "ours" and "theirs".
+
+- [x] **One place for the whole conflict**, in place of the history: what's in progress and how far along (step 3 of 5 of a rebase), each file with what it needs (*Resolve…*; *Keep main's* / *Delete it* when deleted on one side; resolved files with *Review* and *Undo*), *Next conflict*, and **Skip this commit**, **Abort** and **Continue** (saying how many are left)
+- [x] **A three-way editor:** what both sides started from and each side's version, with the commit that changed it; per conflict *Take main*, *Take feature/login*, *Both ▾* (either order); ticking single lines, which go into the result in the order ticked; an editable result; Ctrl+↑/↓ between conflicts
+- [x] **Panes:** each side's whole file side by side with the output below, taking the whole window; tick a conflict or single lines, *Save* writes every chosen conflict at once
+- [x] **Warn before conflicting:** Merge and Rebase say which files would conflict, worked out without touching any files; a merging or rebasing Pull asks first when it would conflict (as of the last fetch). Pull/merge requests already say when they conflict, from the forge.
+- [x] **Why each side changed it:** the commits on each side that changed the conflict's lines, with their messages, authors and the request named in their message; *Show these commits* marks them in the graph; a hint when it's clear what happened (a rename, lines only added)
+- [x] **An agent's proposal:** agent tools to read the conflicts and propose a file's resolution with its reasoning, shown as a proposal to *Use this* (undoable), *Edit it* or *Discard*; *Ask an agent* only while one is connected
+- [x] **Solve it once:** Settings › Git › *Remember how I resolve conflicts* (Git's `rerere`, for the app's Git only); a conflict seen before comes back resolved, marked *resolved as before*, with *Review* and *Redo by hand*, and still needs *Mark resolved*
+
 ## Designed (ready to build)
 
 ### Profiles: who you commit as, and with which accounts
@@ -133,19 +145,6 @@ Built in 0.5.18, with one set of words for GitHub and GitLab (what a forge doesn
 - [x] Drafts kept on the forge (GitHub's pending review, GitLab's draft notes); editing and deleting your comments; a status line in the sidebar; outdated threads in Changes; GitLab fast-forward and bringing a request up to date; a new request as a view of its own.
 - Later: check logs and re-runs; editing the title, description, reviewers, assignees and labels; draft/ready, close/reopen; sidebar filters (*Mine*, *Review requested*), and a count of requests waiting on you.
 
-### Conflict handling
-
-Mockups: [docs/design/conflicts](docs/design/conflicts) (today's view is `0-today.png`). Build work: the [Conflict handling milestone](https://github.com/Trashpanda-GameDev/Git-Raccoon/milestone/3).
-
-Everything is named by branch or commit (*main*, *feature/login*, "Remember the last user"), never "ours" and "theirs", which swap meaning between a merge and a rebase.
-
-- [ ] **A. One place for the whole conflict**, in place of the banner: what's in progress ("Rebasing feature/login onto main · applying commit 3 of 5: *Remember the last user*"), progress (2 of 4 conflicts resolved, in 3 files), each file with its state (conflicts left; deleted or renamed on one side, with *Keep yours* / *Delete it*; resolved, with *Review* and *Undo*; merged by Git), *Next conflict*, and **Skip this commit**, **Abort** and **Continue** (saying how many are left).
-- [ ] **B. A three-way editor:** the common ancestor and both sides (each with the commit, author and age that changed it) above an editable result. Per conflict: *Take main*, *Take feature/login*, *Both ▾* (in either order); per line, a checkbox to take it; editing anywhere; previous/next conflict (Ctrl+↑/↓); *Done with this file*.
-- [ ] **C. Warn before conflicting:** before Merge, Rebase and Pull, check without touching any files (`git merge-tree`) and say which files would conflict, with *Rebase instead* (or *Merge instead*) and Cancel. Pull/merge requests show "Conflicts with main in 2 files".
-- [ ] **D. Why each side changed it:** beside a conflict, the commits on each side that changed its lines, with their messages and authors (and the request they came in with, if known); *Show these commits* selects them in the graph.
-- [ ] **E. An agent's proposal:** agent tools to read the conflicts and propose a file's resolution, with its reasoning; shown in the editor as a proposal to *Use*, *Edit* or *Discard*, written only when the person chooses. Also *Ask an agent* from the conflict screen when one is connected.
-- [ ] **F. Solve it once:** Settings › Git › *Remember how I resolve conflicts* (Git's `rerere`); a conflict seen before is resolved the same way and marked as such, for review (*Review*, *Redo by hand*).
-
 ### SSH setup
 
 Mockups: [docs/design/ssh](docs/design/ssh). Build work: the [SSH setup milestone](https://github.com/Trashpanda-GameDev/Git-Raccoon/milestone/4).
@@ -181,5 +180,4 @@ Git's bisect, in plain words: "broken" and "works", not "bad" and "good" or "bis
 ## Later (ideas, not commitments)
 
 - Commit message suggestions from the staged diff
-- Built-in merge tool for three-way merges
 - Workspaces that group related repos
