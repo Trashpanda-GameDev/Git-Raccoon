@@ -38,6 +38,9 @@ pub struct App {
     askpass: Option<git_raccoon_core::askpass::Server>,
     /// The question being shown.
     prompt: Option<crate::ui::askpass::Prompt>,
+    /// A question shown by [`App::ask`] (tests): not cancelled for want
+    /// of a running Git.
+    prompt_kept: bool,
     /// The clone dialog, and a clone in progress.
     clone_form: Option<clone::Form>,
     /// Loading an account's repositories (for that account), and making
@@ -220,6 +223,7 @@ impl App {
             }],
             active: 0,
             next_tab: 1,
+            prompt_kept: false,
             askpass: None,
             prompt: None,
             clone_form: None,
@@ -520,6 +524,18 @@ impl App {
         ctx.set_zoom_factor(zoom);
     }
 
+    /// Shows a question as if Git asked it; its answer arrives on the
+    /// returned channel. For tests.
+    pub fn ask(&mut self, prompt: &str) -> std::sync::mpsc::Receiver<Option<String>> {
+        let (request, answers) = git_raccoon_core::askpass::Request::standalone(prompt);
+        self.prompt = Some(crate::ui::askpass::Prompt {
+            request,
+            input: String::new(),
+        });
+        self.prompt_kept = true;
+        answers
+    }
+
     /// Shows Git's questions one at a time.
     fn questions(&mut self, ctx: &egui::Context) {
         if self.prompt.is_none()
@@ -547,7 +563,10 @@ impl App {
         let git_running = self
             .all_repos()
             .any(|r| r.is_staging() || r.is_committing())
-            || self.cloning.is_some();
+            || self.cloning.is_some()
+            // ssh-add and SSH's tests on the SSH page ask too.
+            || crate::ui::ssh_settings::asking(ctx)
+            || self.prompt_kept;
         if !git_running && let Some(prompt) = self.prompt.take() {
             prompt.request.answer(None);
         }
@@ -557,6 +576,7 @@ impl App {
         if let Some(answer) = crate::ui::askpass::show(ctx, prompt)
             && let Some(prompt) = self.prompt.take()
         {
+            self.prompt_kept = false;
             prompt.request.answer(answer);
         }
     }

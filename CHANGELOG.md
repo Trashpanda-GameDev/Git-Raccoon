@@ -10,6 +10,7 @@ release page). Newest first; a version's heading is just its number.
   - The agent: which one, whether it's running, and *Add keys to the agent when they're first used*.
   - The hosts SSH trusts, and *Test connections* to your accounts' hosts ("Signed in to github.com as rocky.", or exactly why not).
   - Signing in to GitHub now also asks to manage SSH keys; an older sign-in is offered a fresh one when it's needed.
+- **Trusting a new host, safely**: the first time SSH connects to a host, the question says whether its key is GitHub's or GitLab.com's published one ("This is GitHub's published key"), warns in red when it isn't, and otherwise shows the fingerprint to compare. Settings › SSH marks the trusted hosts whose keys match. When a known host's key has changed (SSH refuses), *Test connections* explains what that can mean and offers to replace the old key only when the new one is the published one.
 - **SSH on Windows uses the agent that has your keys**: when your keys are loaded in Windows' OpenSSH agent, Git Raccoon's Git uses Windows' own ssh, so they're used (Git for Windows' bundled ssh can't see them, and asks for the passphrase every time). Only Git Raccoon's commands change; your own `core.sshCommand` still wins.
 
 ## 0.5.27

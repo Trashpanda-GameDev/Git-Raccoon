@@ -43,6 +43,10 @@ fn load(accounts: Vec<Account>) -> Status {
     } else {
         ssh::agent(&ssh)
     };
+    // GitHub's published host keys, fresh from its API, when signed in to it.
+    if accounts.iter().any(|a| a.base == "https://github.com") {
+        let _ = crate::forge::published::refresh_github("https://api.github.com");
+    }
     let windows = ssh::windows_ssh().map(|w| {
         let advice = ssh::windows_advice(&Ssh::for_git(None), &w);
         (w, advice)
@@ -81,6 +85,9 @@ struct Create {
     host: Option<String>,
 }
 
+/// A host's keys as it gives them now: each a known_hosts line, read.
+type Scan = Result<Vec<(String, KnownHost)>, String>;
+
 /// The page's own state, kept between frames.
 #[derive(Default)]
 struct Page {
@@ -96,6 +103,17 @@ struct Page {
     tested: Vec<(String, Connection)>,
     /// A key chosen from elsewhere, and the host to use it for.
     picked: Option<(PathBuf, Option<String>)>,
+    /// A host whose key changed: its new keys, scanned, once read.
+    scanning: Option<(String, Task<Scan>)>,
+    scanned: Option<(String, Scan)>,
+}
+
+/// Whether the page is running something that may ask a question (a
+/// passphrase, a new host): the app keeps those questions up meanwhile.
+pub fn asking(ctx: &egui::Context) -> bool {
+    shared(ctx)
+        .lock()
+        .is_ok_and(|p| p.job.is_some() || p.tests.is_some())
 }
 
 fn shared(ctx: &egui::Context) -> Arc<Mutex<Page>> {
@@ -141,6 +159,12 @@ fn tick(ui: &egui::Ui, accounts: &[Account], page: &mut Page) {
     if let Some(done) = page.tests.as_ref().and_then(Task::poll) {
         page.tested = done;
         page.tests = None;
+    }
+    if let Some((host, task)) = &page.scanning
+        && let Some(done) = task.poll()
+    {
+        page.scanned = Some((host.clone(), done));
+        page.scanning = None;
     }
 }
 
@@ -740,11 +764,16 @@ pub fn hosts_row(ui: &mut egui::Ui, accounts: &[Account]) {
         return;
     }
     let Some(s) = &page.status else { return };
-    let named_hosts: Vec<String> = s
+    let named_hosts: Vec<(String, ssh::HostCheck)> = s
         .hosts
         .iter()
-        .filter_map(|h| h.names.first().cloned())
+        .filter_map(|h| {
+            let name = h.names.first()?.clone();
+            let check = ssh::check_host_key(&name, h.fingerprint.as_deref().unwrap_or_default());
+            Some((name, check))
+        })
         .collect();
+    let dir = s.dir.clone();
     let hashed = s.hosts.iter().filter(|h| h.names.is_empty()).count();
     if named_hosts.is_empty() && hashed == 0 {
         ui.label(small(
@@ -752,8 +781,25 @@ pub fn hosts_row(ui: &mut egui::Ui, accounts: &[Account]) {
         ));
     } else {
         ui.horizontal_wrapped(|ui| {
-            for h in &named_hosts {
+            for (h, check) in &named_hosts {
                 ui.label(RichText::new(h).monospace().size(12.0));
+                match check {
+                    ssh::HostCheck::Published(f) => {
+                        ui.label(
+                            RichText::new(format!("{} matches {f}'s published key", icon::CHECK))
+                                .size(12.0)
+                                .color(theme::add()),
+                        );
+                    }
+                    ssh::HostCheck::NotPublished(f) => {
+                        ui.label(
+                            RichText::new(format!("{} not a key {f} publishes", icon::WARNING))
+                                .size(12.0)
+                                .color(theme::danger()),
+                        );
+                    }
+                    ssh::HostCheck::Unknown => {}
+                }
             }
             if hashed > 0 {
                 let s = if hashed == 1 { "" } else { "s" };
@@ -793,7 +839,8 @@ pub fn hosts_row(ui: &mut egui::Ui, accounts: &[Account]) {
             ui.spinner();
         }
     });
-    for (host, c) in &page.tested {
+    let tested = page.tested.clone();
+    for (host, c) in &tested {
         let ok = matches!(c, Connection::SignedIn(_));
         ui.label(
             RichText::new(format!(
@@ -804,6 +851,105 @@ pub fn hosts_row(ui: &mut egui::Ui, accounts: &[Account]) {
             .size(12.0)
             .color(if ok { theme::add() } else { theme::danger() }),
         );
+        if *c == Connection::HostKeyChanged {
+            changed_key(ui, &mut page, host, dir.as_deref());
+        }
+    }
+}
+
+/// A host whose key changed: what that may mean, its new key checked
+/// against the published ones, and replacing the old one only when it is.
+fn changed_key(ui: &mut egui::Ui, page: &mut Page, host: &str, dir: Option<&Path>) {
+    ui.label(
+        RichText::new(format!(
+            "This can mean someone is between you and {host}, pretending to be it. It can also mean {host} changed its key (GitHub did in 2023): check before trusting the new one."
+        ))
+        .size(12.0)
+        .color(theme::danger()),
+    );
+    let scanned = page
+        .scanned
+        .as_ref()
+        .filter(|(h, _)| h == host)
+        .map(|(_, r)| r.clone());
+    match scanned {
+        None => {
+            let b = ui.add_enabled(
+                page.scanning.is_none(),
+                egui::Button::new("Check its new key"),
+            );
+            named(ui, &b, &format!("Check {host}'s new key"));
+            if b.clicked() {
+                let h = host.to_string();
+                page.scanning = Some((
+                    h.clone(),
+                    Task::spawn(ui.ctx(), move || {
+                        ssh::scan_host(&Ssh::for_app(), &h, None).map_err(|e| e.to_string())
+                    }),
+                ));
+            }
+            if page.scanning.is_some() {
+                ui.spinner();
+            }
+        }
+        Some(Err(e)) => {
+            ui.label(small(format!("Couldn't get its new key: {e}")));
+        }
+        Some(Ok(lines)) => {
+            let published = lines.iter().find(|(_, k)| {
+                matches!(
+                    ssh::check_host_key(host, k.fingerprint.as_deref().unwrap_or_default()),
+                    ssh::HostCheck::Published(_)
+                )
+            });
+            match (published, ssh::published(host), dir) {
+                (Some((line, k)), Some((forge, _)), Some(dir)) => {
+                    ui.label(
+                        RichText::new(format!(
+                            "{}  Its new key is {forge}'s published one ({}).",
+                            icon::CHECK,
+                            k.fingerprint.clone().unwrap_or_default()
+                        ))
+                        .size(12.0)
+                        .color(theme::add()),
+                    );
+                    let b = ui.button(format!("Replace the old key for {host}"));
+                    named(ui, &b, &format!("Replace the old key for {host}"));
+                    if b.clicked() {
+                        let (line, host, dir) = (line.clone(), host.to_string(), dir.to_path_buf());
+                        page.scanned = None;
+                        page.tested.retain(|(h, _)| *h != host);
+                        start(ui, page, "Replacing the old key", move || {
+                            ssh::replace_host_key(&Ssh::for_app(), &dir, &host, &line)
+                                .map(|()| format!("{host}'s new key is trusted now (the old known_hosts is kept as known_hosts.old)."))
+                                .map_err(|e| e.to_string())
+                        });
+                    }
+                }
+                (None, Some((forge, _)), _) => {
+                    ui.label(
+                        RichText::new(format!(
+                            "{}  Its new key isn't one {forge} publishes. Don't trust it: try again from another network.",
+                            icon::WARNING
+                        ))
+                        .size(12.0)
+                        .color(theme::danger()),
+                    );
+                }
+                _ => {
+                    for (_, k) in &lines {
+                        ui.label(small(format!(
+                            "Its new key: {} · {}",
+                            k.kind,
+                            k.fingerprint.clone().unwrap_or_default()
+                        )));
+                    }
+                    ui.label(small(format!(
+                        "Git Raccoon doesn't know {host}'s published keys: compare these with what whoever runs it says, then replace the old entry yourself (ssh-keygen -R {host})."
+                    )));
+                }
+            }
+        }
     }
 }
 

@@ -43,6 +43,19 @@ impl Request {
         kind_of(&self.prompt)
     }
 
+    /// A question not from Git (for showing one in tests), and where its
+    /// answer arrives.
+    pub fn standalone(prompt: &str) -> (Request, Receiver<Option<String>>) {
+        let (reply, answers) = std::sync::mpsc::channel();
+        (
+            Request {
+                prompt: prompt.to_string(),
+                reply,
+            },
+            answers,
+        )
+    }
+
     /// Answers it; `None` cancels, and Git gives up.
     pub fn answer(self, answer: Option<String>) {
         let _ = self.reply.send(answer);

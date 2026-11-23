@@ -1173,6 +1173,174 @@ pub fn set_adds_keys_to_agent(dir: &Path, on: bool) -> Result<()> {
         .map_err(|e| Error::Unsupported(format!("couldn't write ~/.ssh/config: {e}")))
 }
 
+/// SSH's question about a host it hasn't seen ("The authenticity of host
+/// 'github.com (140.82.121.4)' can't be established…").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostQuestion {
+    /// As SSH names it: "github.com", "[git.example.com]:2222".
+    pub host: String,
+    /// "ED25519", "RSA", "ECDSA".
+    pub kind: String,
+    pub fingerprint: String,
+}
+
+/// Reads SSH's first-connection question, if `prompt` is one.
+pub fn host_question(prompt: &str) -> Option<HostQuestion> {
+    let start = prompt.find("authenticity of host '")? + "authenticity of host '".len();
+    let rest = &prompt[start..];
+    let quoted = &rest[..rest.find('\'')?];
+    // "github.com (140.82.121.4)": the name, without the address.
+    let host = quoted
+        .split(" (")
+        .next()
+        .unwrap_or(quoted)
+        .trim()
+        .to_string();
+    let line = prompt.lines().find(|l| l.contains("key fingerprint is "))?;
+    let (kind, fp) = line.split_once(" key fingerprint is ")?;
+    Some(HostQuestion {
+        host,
+        kind: kind.trim().to_string(),
+        fingerprint: fp.trim().trim_end_matches('.').to_string(),
+    })
+}
+
+/// The host name without SSH's brackets and port ("[h]:2222" → "h").
+fn bare_host(host: &str) -> &str {
+    host.strip_prefix('[')
+        .and_then(|h| h.split(']').next())
+        .unwrap_or(host)
+}
+
+/// GitHub's SSH host key fingerprints (RSA, ECDSA, Ed25519), as it
+/// publishes them (its docs, and `ssh_key_fingerprints` in `GET /meta`),
+/// until a fresher list is read.
+const GITHUB_KEYS: [&str; 3] = [
+    "SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s",
+    "SHA256:p2QAMXNIC1TJYWeIOttrVc98/R1BUFWu3/LiyKgUfQM",
+    "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU",
+];
+
+/// GitLab.com's (RSA, ECDSA, Ed25519), as its documentation lists them.
+const GITLAB_KEYS: [&str; 3] = [
+    "SHA256:ROQFvPThGrW4RuWLoL9tq9I9zJ42fK4XywyRtbOz/EQ",
+    "SHA256:HbW3g8zUjNSksFbqTiUWPWg2Bq1x8xdGUrliXFzSnUw",
+    "SHA256:eUXGGm1YGsMAS7vkcx6JOJdOGHPem5gQp4taiCfCLB8",
+];
+
+/// GitHub's fingerprints as last read from its API, if they were.
+static GITHUB_FRESH: std::sync::Mutex<Option<Vec<String>>> = std::sync::Mutex::new(None);
+
+/// Uses these as GitHub's fingerprints (read from `GET /meta`).
+pub fn set_github_fingerprints(fingerprints: Vec<String>) {
+    if let Ok(mut f) = GITHUB_FRESH.lock() {
+        *f = (!fingerprints.is_empty()).then_some(fingerprints);
+    }
+}
+
+/// Who publishes `host`'s keys, and which they are: GitHub and GitLab.com
+/// (and their port-443 hosts). None for other hosts.
+pub fn published(host: &str) -> Option<(&'static str, Vec<String>)> {
+    match bare_host(host).to_lowercase().as_str() {
+        "github.com" | "ssh.github.com" => {
+            let fresh = GITHUB_FRESH.lock().ok().and_then(|f| f.clone());
+            Some((
+                "GitHub",
+                fresh.unwrap_or_else(|| GITHUB_KEYS.iter().map(|s| s.to_string()).collect()),
+            ))
+        }
+        "gitlab.com" | "altssh.gitlab.com" => Some((
+            "GitLab.com",
+            GITLAB_KEYS.iter().map(|s| s.to_string()).collect(),
+        )),
+        _ => None,
+    }
+}
+
+/// How a host's key compares with what its owner publishes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostCheck {
+    /// It's one of the keys this forge publishes.
+    Published(&'static str),
+    /// This forge publishes its keys, and this isn't one of them.
+    NotPublished(&'static str),
+    /// Nobody publishes this host's keys where the app can check.
+    Unknown,
+}
+
+pub fn check_host_key(host: &str, fingerprint: &str) -> HostCheck {
+    match published(host) {
+        Some((forge, keys)) if keys.iter().any(|k| k == fingerprint) => HostCheck::Published(forge),
+        Some((forge, _)) => HostCheck::NotPublished(forge),
+        None => HostCheck::Unknown,
+    }
+}
+
+/// A host's current keys, asked of the host itself (`ssh-keyscan`): each
+/// as a known_hosts line, with its kind and fingerprint.
+pub fn scan_host(ssh: &Ssh, host: &str, port: Option<u16>) -> Result<Vec<(String, KnownHost)>> {
+    let scan = beside(&ssh.command[0], "ssh-keyscan");
+    let mut cmd = Command::new(&scan);
+    quiet_window(&mut cmd);
+    cmd.args(["-T", "10"]);
+    if let Some(p) = port {
+        cmd.args(["-p", &p.to_string()]);
+    }
+    let out = cmd
+        .arg(bare_host(host))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| Error::Unsupported(format!("{scan} couldn't be run: {e}")))?;
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let lines: Vec<(String, KnownHost)> = text
+        .lines()
+        .filter_map(|l| {
+            let host = parse_known_hosts(l).into_iter().next()?;
+            Some((l.trim().to_string(), host))
+        })
+        .collect();
+    if lines.is_empty() {
+        return Err(Error::Command(format!(
+            "{} didn't give its keys",
+            bare_host(host)
+        )));
+    }
+    Ok(lines)
+}
+
+/// Replaces what `dir/known_hosts` has for `host` with `line` (from
+/// [`scan_host`]): the old entries removed (`ssh-keygen -R`, which keeps a
+/// copy as known_hosts.old), the new one added.
+pub fn replace_host_key(ssh: &Ssh, dir: &Path, host: &str, line: &str) -> Result<()> {
+    let file = dir.join("known_hosts");
+    let keygen = beside(&ssh.command[0], "ssh-keygen");
+    let mut cmd = Command::new(&keygen);
+    quiet_window(&mut cmd);
+    let out = cmd
+        .arg("-R")
+        .arg(host)
+        .arg("-f")
+        .arg(&file)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| Error::Unsupported(format!("{keygen} couldn't be run: {e}")))?;
+    if !out.status.success() {
+        return Err(Error::Command(
+            String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        ));
+    }
+    let mut text = std::fs::read_to_string(&file).unwrap_or_default();
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str(line.trim());
+    text.push('\n');
+    std::fs::write(&file, text)
+        .map_err(|e| Error::Unsupported(format!("couldn't write known_hosts: {e}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1725,6 +1893,79 @@ mod tests {
         assert!(adds_keys_to_agent(&dir));
         set_adds_keys_to_agent(&dir, false).unwrap();
         assert!(adds_keys_to_agent(&dir));
+    }
+
+    #[test]
+    fn checks_host_keys_against_published_ones() {
+        let q = host_question(
+            "The authenticity of host 'github.com (140.82.121.4)' can't be established.\nED25519 key fingerprint is SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU.\nThis key is not known by any other names.\nAre you sure you want to continue connecting (yes/no/[fingerprint])? ",
+        )
+        .unwrap();
+        assert_eq!(q.host, "github.com");
+        assert_eq!(q.kind, "ED25519");
+        assert_eq!(
+            q.fingerprint,
+            "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU"
+        );
+        assert_eq!(
+            check_host_key(&q.host, &q.fingerprint),
+            HostCheck::Published("GitHub")
+        );
+        assert_eq!(
+            check_host_key(
+                "[ssh.github.com]:443",
+                "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU"
+            ),
+            HostCheck::Published("GitHub")
+        );
+        assert_eq!(
+            check_host_key("github.com", "SHA256:evil"),
+            HostCheck::NotPublished("GitHub")
+        );
+        assert_eq!(
+            check_host_key(
+                "gitlab.com",
+                "SHA256:eUXGGm1YGsMAS7vkcx6JOJdOGHPem5gQp4taiCfCLB8"
+            ),
+            HostCheck::Published("GitLab.com")
+        );
+        assert_eq!(
+            check_host_key("git.example.com", "SHA256:x"),
+            HostCheck::Unknown
+        );
+        let port = host_question(
+            "The authenticity of host '[git.example.com]:2222 ([10.0.0.5]:2222)' can't be established.\nECDSA key fingerprint is SHA256:abc.\nAre you sure (yes/no)?",
+        )
+        .unwrap();
+        assert_eq!(port.host, "[git.example.com]:2222");
+        assert!(host_question("Enter passphrase for key '/home/r/.ssh/id_ed25519': ").is_none());
+    }
+
+    #[test]
+    fn replaces_a_host_key() {
+        let t = crate::testutil::TempRepo::new();
+        let dir = t.dir.join(".ssh");
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDK5y8Hw/u3qkFJ2Ki1m8HcE6V3hVYIp5HO8VpZrb3vT\n";
+        let other = "gitlab.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAfuCHKVTjquxvt6CM6tdG4SLp1Btn/nOeHHE5UOzRdf\n";
+        std::fs::write(dir.join("known_hosts"), format!("{old}{other}")).unwrap();
+        let new = "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
+        let ssh = Ssh::from_program("ssh", "ssh");
+        if Command::new("ssh-keygen").arg("-?").output().is_err() {
+            return;
+        }
+        replace_host_key(&ssh, &dir, "github.com", new).unwrap();
+        let hosts = known_hosts(&dir);
+        let github: Vec<_> = hosts.iter().filter(|h| h.names == ["github.com"]).collect();
+        assert_eq!(github.len(), 1);
+        assert_eq!(
+            github[0].fingerprint.as_deref(),
+            Some("SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU")
+        );
+        assert!(
+            hosts.iter().any(|h| h.names == ["gitlab.com"]),
+            "others kept"
+        );
     }
 
     #[test]

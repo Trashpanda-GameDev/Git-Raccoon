@@ -10,6 +10,7 @@ mod gitlab;
 mod http;
 pub mod images;
 pub mod oauth;
+pub mod published;
 pub mod review;
 pub mod ssh_keys;
 pub mod templates;

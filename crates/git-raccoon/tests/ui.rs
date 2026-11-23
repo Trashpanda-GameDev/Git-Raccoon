@@ -7636,3 +7636,47 @@ fn manages_ssh_keys_in_settings() {
     git_raccoon_core::ssh::set_ssh_dir(None);
     let _ = std::fs::remove_dir_all(&home);
 }
+
+#[test]
+fn checks_a_new_hosts_key_against_the_published_ones() {
+    let mut h = harness(Settings::default());
+    h.run_ok();
+    let question = |host: &str, fp: &str| {
+        format!(
+            "The authenticity of host '{host} (140.82.121.4)' can't be established.\nED25519 key fingerprint is {fp}.\nThis key is not known by any other names.\nAre you sure you want to continue connecting (yes/no/[fingerprint])? "
+        )
+    };
+    // GitHub's own key: said so, and trusted.
+    let answer = h.state_mut().ask(&question(
+        "github.com",
+        "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU",
+    ));
+    h.run_ok();
+    h.get_by_label_contains("This is GitHub's published key");
+    screenshot(&mut h, "98-host-published");
+    h.get_by_label("Trust github.com").click();
+    h.run_ok();
+    assert_eq!(answer.try_recv().unwrap().as_deref(), Some("yes"));
+
+    // A key GitHub doesn't publish: a warning, and no trusting by default.
+    let answer = h
+        .state_mut()
+        .ask(&question("github.com", "SHA256:not-githubs"));
+    h.run_ok();
+    h.get_by_label_contains("This is not a key GitHub publishes");
+    screenshot(&mut h, "99-host-not-published");
+    assert!(h.query_by_label("Trust github.com").is_none());
+    h.get_by_label("Cancel").click();
+    h.run_ok();
+    assert_eq!(answer.try_recv().unwrap().as_deref(), Some("no"));
+
+    // A host nobody publishes keys for: the fingerprint to compare.
+    let answer = h
+        .state_mut()
+        .ask(&question("git.example.com", "SHA256:abc"));
+    h.run_ok();
+    h.get_by_label_contains("Compare this fingerprint");
+    h.get_by_label("Trust git.example.com").click();
+    h.run_ok();
+    assert_eq!(answer.try_recv().unwrap().as_deref(), Some("yes"));
+}
