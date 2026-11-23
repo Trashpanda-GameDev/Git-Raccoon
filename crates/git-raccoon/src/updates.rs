@@ -31,6 +31,8 @@ pub struct Updater {
     last_check: Option<Instant>,
     /// How the last check went, for "Check for updates" to show.
     outcome: Option<Outcome>,
+    /// A version to say is downloaded (tests, which can't download one).
+    pretend_ready: Option<String>,
 }
 
 /// How the last check went.
@@ -51,6 +53,7 @@ impl Updater {
             ready: None,
             last_check: None,
             outcome: None,
+            pretend_ready: None,
         }
     }
 
@@ -72,7 +75,7 @@ impl Updater {
     /// What to say about updates: what a check found, or that one is
     /// running, or why this copy can't.
     pub fn status(&self) -> String {
-        if !self.is_installed() {
+        if self.pretend_ready.is_none() && !self.is_installed() {
             return "This copy wasn't installed, so it can't update itself.".into();
         }
         if self.is_checking() {
@@ -80,7 +83,7 @@ impl Updater {
         }
         match &self.outcome {
             _ if self.ready_version().is_some() => format!(
-                "Version {} is downloaded: restart to use it (the button in the toolbar).",
+                "Version {} is downloaded: restart to use it. Your tabs and settings are kept.",
                 self.ready_version().unwrap_or_default()
             ),
             Some(Outcome::UpToDate) => {
@@ -164,6 +167,13 @@ impl Updater {
         self.ready
             .as_ref()
             .map(|i| i.TargetFullRelease.Version.as_str())
+            .or(self.pretend_ready.as_deref())
+    }
+
+    /// Says `version` is downloaded, though it isn't (for tests).
+    #[doc(hidden)]
+    pub fn pretend_ready(&mut self, version: &str) {
+        self.pretend_ready = Some(version.to_string());
     }
 
     /// Restarts into the downloaded version. (Exits the app: save first.)

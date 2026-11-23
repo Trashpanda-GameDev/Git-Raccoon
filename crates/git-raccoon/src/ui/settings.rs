@@ -33,6 +33,8 @@ pub enum Action {
     BrowseCloneDir,
     /// Look for a new version now.
     CheckForUpdates,
+    /// Restart into the downloaded version.
+    RestartToUpdate,
 }
 
 /// A part of the settings.
@@ -1574,9 +1576,27 @@ fn control(
             ui.add_space(6.0);
             let updates = ui
                 .ctx()
-                .data(|d| d.get_temp::<(String, bool, bool)>(updates_id()));
-            let (status, checking, installed) = updates.unwrap_or_default();
+                .data(|d| d.get_temp::<(String, bool, bool, Option<String>)>(updates_id()));
+            let (status, checking, installed, ready) = updates.unwrap_or_default();
             ui.horizontal(|ui| {
+                // Downloaded: restart into it from here too (as from the toolbar).
+                if let Some(version) = &ready {
+                    let button = egui::Button::new(
+                        RichText::new(format!(
+                            "{}  Restart to update to {version}",
+                            icon::ARROW_CIRCLE_UP
+                        ))
+                        .color(theme::on_accent()),
+                    )
+                    .fill(theme::accent_fill());
+                    if ui
+                        .add(button)
+                        .on_hover_text("Your tabs and settings are kept.")
+                        .clicked()
+                    {
+                        *action = Some(Action::RestartToUpdate);
+                    }
+                }
                 if ui
                     .add_enabled(
                         installed && !checking,

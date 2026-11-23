@@ -779,6 +779,12 @@ impl App {
         self.new_request.as_ref()
     }
 
+    /// Says an update is downloaded (for tests).
+    #[doc(hidden)]
+    pub fn pretend_update_ready(&mut self, version: &str) {
+        self.updater.pretend_ready(version);
+    }
+
     /// The settings, to change (for tests).
     #[doc(hidden)]
     pub fn settings_mut(&mut self) -> &mut Settings {
@@ -2605,11 +2611,16 @@ impl App {
                 self.updater.status(),
                 self.updater.is_checking(),
                 self.updater.is_installed(),
+                self.updater.ready_version().map(str::to_string),
             );
             ctx.data_mut(|d| d.insert_temp(crate::ui::settings::updates_id(), updates));
             match crate::ui::settings::show(&ctx, &mut self.settings) {
                 Some(crate::ui::settings::Action::CheckForUpdates) => {
                     self.updater.check_now(&ctx);
+                }
+                Some(crate::ui::settings::Action::RestartToUpdate) => {
+                    self.settings_open = false;
+                    self.restart_to_update = true;
                 }
                 Some(crate::ui::settings::Action::Close) => self.settings_open = false,
                 Some(crate::ui::settings::Action::ClearRecent) => self.settings.recent.clear(),

@@ -3,6 +3,10 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.25
+
+- **Restart to update from Settings**: when an update is downloaded, *Settings › Updates and privacy* has the *Restart to update* button too, so you don't have to close Settings to find it in the toolbar.
+
 ## 0.5.24
 
 - **Feedback works with no repository open**: the button on the start screen did nothing. So do *What's new*, *Check for updates* and zooming.

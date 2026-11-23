@@ -5941,6 +5941,33 @@ fn zooms_with_ctrl_and_the_keys_or_the_wheel() {
 }
 
 #[test]
+fn restarts_into_a_downloaded_update_from_settings() {
+    let mut h = harness(Settings::default());
+    h.state_mut().pretend_update_ready("9.9.9");
+    h.run_ok();
+    h.get_by_label("Settings").click();
+    h.run_ok();
+    h.get_by_label("Updates and privacy").click();
+    h.run_ok();
+    h.get_by_label_contains("Version 9.9.9 is downloaded");
+    screenshot(&mut h, "93-update-ready");
+    // (The toolbar has one too, behind the window: this is the window's.)
+    h.get_all_by_label_contains("Restart to update to 9.9.9")
+        .last()
+        .unwrap()
+        .click();
+    h.run_ok();
+    // (Not installed here, so the restart itself can't happen: it tried.)
+    assert!(
+        h.state()
+            .error()
+            .is_some_and(|e| e.contains("Could not update")),
+        "{:?}",
+        h.state().error()
+    );
+}
+
+#[test]
 fn takes_feedback_with_no_repository_open() {
     // On the welcome screen too (#84).
     let mut h = harness(Settings::default());
