@@ -26,11 +26,26 @@ fn git_quiet(path: &str) -> Command {
     cmd
 }
 
+/// Whether the app's Git remembers how conflicts were resolved (rerere),
+/// whatever the user's own config says.
+static REMEMBER: AtomicBool = AtomicBool::new(false);
+
+/// Turns remembering conflict resolutions on or off for the app's Git.
+pub fn set_remember(on: bool) {
+    REMEMBER.store(on, Ordering::Relaxed);
+}
+
+pub(crate) fn remembering() -> bool {
+    REMEMBER.load(Ordering::Relaxed)
+}
+
 fn git_asking(path: &str, ask: bool) -> Command {
     let mut cmd = Command::new("git");
-    cmd.arg("-C")
-        .arg(path)
-        .env("GIT_EDITOR", "true")
+    cmd.arg("-C").arg(path);
+    if remembering() {
+        cmd.args(["-c", "rerere.enabled=true"]);
+    }
+    cmd.env("GIT_EDITOR", "true")
         .env("GIT_TERMINAL_PROMPT", "0")
         // Buffer output even into a pipe: by default Git flushes after every
         // record there, which makes a million-commit walk twice as slow.

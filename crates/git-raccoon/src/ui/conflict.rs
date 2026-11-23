@@ -254,7 +254,7 @@ pub fn show(
                         } else {
                             ui.label(
                                 RichText::new(
-                                    "No conflict markers in this file. It may be binary, or deleted on one side: pick a side for the whole file, or edit it and mark it resolved.",
+                                    "No conflict markers left in this file: check it below, then mark it resolved. If it's binary or deleted on one side, pick a side's whole file instead.",
                                 )
                                 .color(theme::muted()),
                             );
@@ -562,6 +562,8 @@ pub enum OverviewAction {
     Review(String),
     /// Bring a resolved file's conflict back.
     Unresolve(String),
+    /// Forget a file's remembered resolution, to resolve it by hand.
+    Forget(String),
     Continue,
 }
 
@@ -773,6 +775,7 @@ fn file_row(
     };
     row(ui, |ui| {
         let (glyph, colour) = match f.kind {
+            _ if f.remembered => (icon::CHECK_CIRCLE, theme::add()),
             Kind::DeletedOnOurs | Kind::DeletedOnTheirs => (icon::DIAMOND, theme::modified()),
             _ => (icon::WARNING, theme::danger()),
         };
@@ -783,6 +786,11 @@ fn file_row(
             Kind::DeletedOnOurs => (format!("deleted on {ours}"), format!("{theirs} changed it")),
             Kind::DeletedOnTheirs => (format!("deleted on {theirs}"), format!("{ours} changed it")),
             _ if f.binary => ("binary".into(), "pick one side's version".into()),
+            _ if f.remembered => (
+                "resolved as before".into(),
+                // Said by the badge; the row's buttons need the room.
+                String::new(),
+            ),
             _ if f.conflicts == 0 => (
                 "no conflicts left".into(),
                 "its text is resolved: mark it resolved".into(),
@@ -826,6 +834,27 @@ fn file_row(
                     }
                     if ui.button(format!("Keep {ours}'s")).clicked() {
                         action = Some(take(true));
+                    }
+                }
+                _ if f.remembered => {
+                    if ui.add(primary("Mark resolved")).clicked() {
+                        action = Some(OverviewAction::MarkResolved(path.clone()));
+                    }
+                    let redo = ui
+                        .button("Redo by hand")
+                        .on_hover_text("Forget that resolution and bring the conflict back");
+                    let name = format!("Redo {} by hand", f.path);
+                    ui.ctx()
+                        .accesskit_node_builder(redo.id, |n| n.set_label(name));
+                    if redo.clicked() {
+                        action = Some(OverviewAction::Forget(path.clone()));
+                    }
+                    let review = ui.button("Review");
+                    let name = format!("Review {}", f.path);
+                    ui.ctx()
+                        .accesskit_node_builder(review.id, |n| n.set_label(name));
+                    if review.clicked() {
+                        action = Some(OverviewAction::Open(path.clone()));
                     }
                 }
                 _ if f.conflicts == 0 => {

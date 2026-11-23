@@ -318,6 +318,8 @@ In a file, each conflict shows three versions side by side: **Before** (what bot
 
 **Ctrl+↑ / Ctrl+↓** move between conflicts. When none are left, **Mark resolved**.
 
+**Remember how I resolve conflicts** (*Settings › Git › Conflicts*, off to start with) uses Git's own `rerere` for Git Raccoon's Git, leaving your Git config alone. When a conflict you've resolved comes back (often in a long rebase, or merging main again), it's resolved the same way and listed as **resolved as before**: **Review** it, or **Redo by hand** to bring the conflict back. It still needs **Mark resolved**, so nothing goes through unchecked.
+
 **Ask an agent** (when one is connected in Settings › Agents) gives you a request to paste to it. It reads the conflicts and proposes the whole file, with its reasoning; that shows in place of the conflicts, and nothing is written until you choose **Use this** (undoable), **Edit it** first, or **Discard**.
 
 **Why?** shows, above the conflict in focus, the commits on each side that changed its lines (in a rebase, the commit being applied), with their messages, who made them and when, and the pull/merge request they came in with when the message says so. **Show these commits** marks them in the graph (**Back to** the file from there). When it's clear what happened (a rename on one side, lines only added on the other), a hint says so.

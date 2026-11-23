@@ -154,6 +154,9 @@ pub struct Settings {
     /// Fetch every remote in the background this often (minutes); 0: never.
     pub auto_fetch_minutes: u32,
     pub fetch_force: bool,
+    /// Have Git remember how conflicts were resolved, and resolve the same
+    /// ones that way again (rerere, for the app's Git only).
+    pub remember_resolutions: bool,
     /// How Pull goes.
     pub pull: PullOptions,
     pub hide_sidebar: bool,
@@ -360,6 +363,7 @@ impl Default for Settings {
             fetch_prune: true,
             auto_fetch_minutes: 10,
             fetch_force: false,
+            remember_resolutions: false,
             pull: PullOptions::default(),
             hide_sidebar: false,
             clone_dir: None,

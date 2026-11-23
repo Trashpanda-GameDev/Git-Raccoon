@@ -381,6 +381,9 @@ pub enum Op {
     MarkResolved(String),
     /// Bring a resolved file's conflict back.
     Unresolve(String),
+    /// Forget how a file's conflict was resolved before, and bring the
+    /// conflict back.
+    Forget(String),
     /// Skip the commit being applied (a rebase, or a series of picks).
     Skip,
     /// Undo a mixed reset: back from `expected` to `to`, files untouched.
@@ -607,6 +610,7 @@ impl Op {
             } => conflict::write(path, &file, &expected, &text),
             Op::MarkResolved(file) => conflict::mark_resolved(path, &file),
             Op::Unresolve(file) => conflict::unresolve(path, &file),
+            Op::Forget(file) => conflict::forget(path, &file),
             Op::Skip => merge::skip(path),
             Op::ResetKeep { expected, to } => undo::reset_keep(path, &expected, &to),
             Op::UndoMixedReset { expected, to } => undo::reset_mixed(path, &expected, &to),
@@ -674,7 +678,7 @@ impl Op {
             Op::Merge { .. } => "merge",
             Op::Continue => "continue",
             Op::Skip => "skip the commit",
-            Op::Unresolve(_) => "bring the conflict back",
+            Op::Unresolve(_) | Op::Forget(_) => "bring the conflict back",
             Op::Abort => "abort",
             Op::TakeSide { .. } | Op::WriteConflict { .. } | Op::MarkResolved(_) => {
                 "resolve the conflict"
@@ -702,6 +706,7 @@ impl Op {
                 | Op::WriteConflict { .. }
                 | Op::MarkResolved(_)
                 | Op::Unresolve(_)
+                | Op::Forget(_)
         )
     }
 

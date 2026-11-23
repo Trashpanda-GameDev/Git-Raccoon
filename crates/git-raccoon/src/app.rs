@@ -2553,6 +2553,9 @@ impl App {
                             repo.select_working();
                             repo.open_working_file(Side::Staged, file);
                         }
+                        Some(conflict::OverviewAction::Forget(file)) => {
+                            repo.run(&ctx, Op::Forget(file));
+                        }
                         Some(conflict::OverviewAction::Unresolve(file)) => {
                             repo.run(&ctx, Op::Unresolve(file));
                         }
@@ -2710,6 +2713,7 @@ impl eframe::App for App {
         self.zoom_input(ctx);
         self.apply_look(ctx);
         self.updater.tick(ctx, !self.settings.no_update_checks);
+        git_raccoon_core::conflict::set_remember(self.settings.remember_resolutions);
         self.poll_opening(ctx);
         // A submodule or worktree to open in a tab.
         if let Some(path) = self.repo.as_mut().and_then(|r| r.open_request.take()) {

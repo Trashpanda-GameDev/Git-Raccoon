@@ -204,6 +204,15 @@ pub struct ConflictedFile {
     pub conflicts: usize,
     /// Its text can't be read as text (binary, or not there).
     pub binary: bool,
+    /// Git resolved it the way it was resolved before (rerere): to check,
+    /// then mark resolved.
+    pub remembered: bool,
+}
+
+/// Turns remembering how conflicts are resolved (Git's rerere) on or off
+/// for the app's Git, leaving the user's own config alone.
+pub fn set_remember(on: bool) {
+    cli::set_remember(on);
 }
 
 /// The files with conflicts, in path order.
@@ -233,10 +242,33 @@ pub fn files(path: &str) -> Result<Vec<ConflictedFile>> {
             kind,
             conflicts,
             binary: text.is_none(),
+            remembered: false,
         });
     }
     out.sort_by(|a, b| a.path.cmp(&b.path));
+    // Text files left without markers may be rerere's work: when it's
+    // taking part (its MERGE_RR is there), those it didn't leave for the
+    // person ("remaining" lists the ones it couldn't resolve, and ones
+    // resolved by hand).
+    if out.iter().any(|f| f.conflicts == 0 && !f.binary) && repo.path().join("MERGE_RR").exists() {
+        let remaining: Vec<String> = cli::run(path, &["rerere", "remaining"], None)
+            .map(|o| o.lines().map(str::to_string).collect())
+            .unwrap_or_default();
+        for f in &mut out {
+            f.remembered = f.conflicts == 0
+                && !f.binary
+                && matches!(f.kind, Kind::BothChanged | Kind::BothAdded)
+                && !remaining.contains(&f.path);
+        }
+    }
     Ok(out)
+}
+
+/// Forgets how `file`'s conflict was resolved before, and brings its
+/// conflict back to resolve by hand.
+pub fn forget(path: &str, file: &str) -> Result<()> {
+    cli::run(path, &["rerere", "forget", "--", file], None)?;
+    cli::run(path, &["checkout", "--merge", "--", file], None).map(drop)
 }
 
 /// Fills in each conflict's common ancestor ("base"), which Git's markers
@@ -334,7 +366,13 @@ pub fn mark_resolved(path: &str, file: &str) -> Result<()> {
             "{file} still has conflict markers"
         )));
     }
-    cli::run(path, &["add", "--", file], None).map(drop)
+    cli::run(path, &["add", "--", file], None)?;
+    // Recorded now, so the same conflict is resolved this way next time
+    // (when remembering).
+    if cli::remembering() {
+        let _ = cli::run(path, &["rerere"], None);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -430,6 +468,28 @@ mod tests {
                 ("f.txt", Kind::BothChanged, 1)
             ]
         );
+    }
+
+    #[test]
+    fn remembers_resolutions_and_forgets_them() {
+        let (t, _) = conflicting();
+        git(&t, &["config", "rerere.enabled", "true"]);
+        merge(t.path(), "feature", MergeMode::Default).unwrap();
+        assert!(!files(t.path()).unwrap()[0].remembered);
+        let text = read(t.path(), "f.txt").unwrap();
+        write(t.path(), "f.txt", &text, "one\ntwo (both)\nthree\n").unwrap();
+        mark_resolved(t.path(), "f.txt").unwrap();
+        crate::merge::continue_op(t.path()).unwrap();
+        // The same merge again: resolved as before, still to be marked.
+        git(&t, &["reset", "-q", "--hard", "HEAD~1"]);
+        merge(t.path(), "feature", MergeMode::Default).unwrap();
+        assert_eq!(read(t.path(), "f.txt").unwrap(), "one\ntwo (both)\nthree\n");
+        let f = &files(t.path()).unwrap()[0];
+        assert!(f.remembered && f.conflicts == 0, "{f:?}");
+        // Redone by hand: the conflict is back.
+        forget(t.path(), "f.txt").unwrap();
+        let f = &files(t.path()).unwrap()[0];
+        assert!(!f.remembered && f.conflicts == 1, "{f:?}");
     }
 
     #[test]

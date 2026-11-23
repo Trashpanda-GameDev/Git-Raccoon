@@ -7307,3 +7307,75 @@ fn agents_propose_conflict_resolutions_for_the_person_to_choose() {
         Some(proposed)
     );
 }
+
+#[test]
+fn remembers_how_a_conflict_was_resolved() {
+    use egui::accesskit::Role;
+    let sample = Sample::build();
+    git(&sample, &["switch", "-q", "-c", "clash"]);
+    sample.write("README.md", "# Sample\n\nclash version\n");
+    git(&sample, &["commit", "-q", "-am", "README from clash"]);
+    git(&sample, &["switch", "-q", "main"]);
+    sample.write("README.md", "# Sample\n\nmain version\n");
+    git(&sample, &["commit", "-q", "-am", "README from main"]);
+    let mut h = harness(Settings {
+        remember_resolutions: true,
+        ..Settings::default()
+    });
+    open(&mut h, sample.path());
+    let merge = |h: &mut Harness<'_, App>| {
+        menu_item(h, "clash", "Merge into main");
+        h.get_by_role_and_label(Role::Button, "Merge").click();
+        wait_for(h, "the conflict", |app| conflicted(app) == 1);
+    };
+
+    // Resolved once, by hand.
+    merge(&mut h);
+    h.get_by_label("Resolve README.md").click();
+    wait_for(&mut h, "the file", |app| {
+        app.repo().unwrap().conflict.is_some()
+    });
+    h.get_by_label("Take clash for conflict 1").click();
+    wait_for(&mut h, "the pick", |app| {
+        app.repo()
+            .unwrap()
+            .conflict
+            .as_ref()
+            .is_some_and(|c| c.text.as_ref().is_ok_and(|t| !t.contains("<<<<<<<")))
+    });
+    h.get_by_label("Mark resolved").click();
+    wait_for(&mut h, "resolved", |app| conflicted(app) == 0);
+    h.get_by_label("Continue merge").click();
+    wait_for(&mut h, "the merge commit", |app| !in_progress(app));
+    h.get_by_label("Undo").click();
+    wait_for(&mut h, "undone", |app| {
+        head_summary(app) == "README from main"
+    });
+
+    // The same conflict again: resolved as before, still to be checked.
+    merge(&mut h);
+    wait_for(&mut h, "it's recognised", |app| {
+        app.repo()
+            .unwrap()
+            .conflict_files
+            .iter()
+            .any(|f| f.remembered)
+    });
+    h.run_ok();
+    h.get_by_label("resolved as before");
+    screenshot(&mut h, "33-resolved-as-before");
+    assert_eq!(
+        read(&sample, "README.md").as_deref(),
+        Some("# Sample\n\nclash version\n")
+    );
+    // Redone by hand: the conflict is back.
+    h.get_by_label("Redo README.md by hand").click();
+    wait_for(&mut h, "the conflict again", |app| {
+        app.repo()
+            .unwrap()
+            .conflict_files
+            .iter()
+            .any(|f| f.conflicts == 1 && !f.remembered)
+    });
+    assert!(read(&sample, "README.md").unwrap().contains("<<<<<<<"));
+}

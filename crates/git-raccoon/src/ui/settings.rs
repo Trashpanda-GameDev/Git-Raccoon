@@ -120,6 +120,7 @@ impl Section {
                 settings.pull = d.pull;
                 settings.fetch_prune = d.fetch_prune;
                 settings.fetch_force = d.fetch_force;
+                settings.remember_resolutions = d.remember_resolutions;
                 settings.auto_fetch_minutes = d.auto_fetch_minutes;
                 settings.split_diff = d.split_diff;
                 settings.whole_file = d.whole_file;
@@ -236,6 +237,12 @@ const ROWS: &[Row] = &[
         name: "Changed files",
         hint: "In the working changes and in commits.",
         words: "files paths folders tree",
+    },
+    Row {
+        section: Section::Git,
+        name: "Conflicts",
+        hint: "",
+        words: "conflicts remember resolutions rerere same again",
     },
     Row {
         section: Section::Accounts,
@@ -1452,6 +1459,16 @@ fn control(
                 RichText::new("Can drop tags you made here; asks first.")
                     .size(12.0)
                     .color(theme::modified()),
+            );
+        }
+        "Conflicts" => {
+            ui.checkbox(
+                &mut settings.remember_resolutions,
+                "Remember how I resolve conflicts",
+            );
+            hint(
+                ui,
+                "When the same conflict comes back (often in long rebases, or merging main again), it's resolved for you, for you to check and mark resolved. Git's own rerere, for Git Raccoon only: your Git config is left alone.",
             );
         }
         "Fetch automatically" => {
