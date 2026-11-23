@@ -77,6 +77,24 @@ fn git_asking(path: &str, ask: bool) -> Command {
     cmd
 }
 
+/// Lets a plain `ssh` (not through Git) ask its questions (passphrases, new
+/// hosts) in the app, as Git's do; with nobody to ask, it never waits on a
+/// terminal (`BatchMode`).
+pub(crate) fn asking_env(cmd: &mut Command) {
+    match crate::askpass::current() {
+        Some(ask) => {
+            cmd.env(crate::askpass::ENV, &ask.value);
+            if unset("SSH_ASKPASS") {
+                cmd.env("SSH_ASKPASS", &ask.program)
+                    .env("SSH_ASKPASS_REQUIRE", "force");
+            }
+        }
+        None => {
+            cmd.args(["-o", "BatchMode=yes"]);
+        }
+    }
+}
+
 /// Whether an environment variable is unset or empty (Git ignores empty ones).
 fn unset(name: &str) -> bool {
     std::env::var_os(name).is_none_or(|v| v.is_empty())

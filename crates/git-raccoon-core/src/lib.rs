@@ -24,6 +24,7 @@ pub mod repo;
 pub mod request;
 pub mod rewrite;
 pub mod search;
+pub mod ssh;
 pub mod stage;
 pub mod stash;
 pub mod sync;
