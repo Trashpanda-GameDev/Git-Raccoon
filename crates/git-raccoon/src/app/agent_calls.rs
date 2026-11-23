@@ -260,8 +260,9 @@ impl App {
                 None => call.fail("Which folder? Give its `path`."),
             },
             "start_request" => self.start_request(ctx, call),
+            "propose_resolution" => self.propose_resolution(ctx, call),
             "get_status" | "get_log" | "search_commits" | "get_commit" | "get_diff"
-            | "get_refs" => match self.agent_repo(&call) {
+            | "get_refs" | "get_conflicts" => match self.agent_repo(&call) {
                 Ok(path) => {
                     std::thread::spawn(move || {
                         let result = read(&call, &path);
@@ -478,6 +479,57 @@ impl App {
             repo.select(&full);
         }
         call.ok(format!("Showing {}.", &full[..full.len().min(10)]));
+    }
+
+    /// Shows an agent's resolution of a conflicted file, for the person to
+    /// use, edit or discard.
+    fn propose_resolution(&mut self, ctx: &egui::Context, call: Call) {
+        let path = match self.agent_repo(&call) {
+            Ok(p) => p,
+            Err(e) => return call.fail(e),
+        };
+        let (Some(file), Some(reasoning)) = (call.str("path"), call.str("reasoning")) else {
+            return call.fail("Give the file's `path`, its resolved `text`, and your `reasoning`.");
+        };
+        let Some(text) = call
+            .args
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+        else {
+            return call.fail("Give the file's resolved `text` (the whole file).");
+        };
+        if git_raccoon_core::conflict::parse(&text).is_some() {
+            return call.fail(
+                "The text still has conflict markers: resolve every conflict in it, then propose it.",
+            );
+        }
+        self.front(ctx, &path);
+        let Some(repo) = self.repo.as_mut() else {
+            return call.fail("No repository is open in Git Raccoon.");
+        };
+        if !repo.conflict_files.iter().any(|f| f.path == file) {
+            return call.fail(format!(
+                "{file} isn't conflicted (get_conflicts lists the files that are)."
+            ));
+        }
+        if let Some(f) = repo.forge.as_mut() {
+            f.open = None;
+        }
+        repo.planner = None;
+        repo.history_over_conflicts = false;
+        if repo.conflict.as_ref().is_none_or(|c| c.file != file) {
+            repo.open_conflict(file.clone());
+        }
+        repo.proposal = Some(crate::repo_view::Proposal {
+            file: file.clone(),
+            text,
+            reasoning,
+            agent: call.client.clone(),
+        });
+        call.ok(format!(
+            "Shown to the person with your reasoning. Nothing is written unless they choose to use it (they may edit it first); get_conflicts says whether {file} is still conflicted."
+        ));
     }
 
     fn start_request(&mut self, ctx: &egui::Context, call: Call) {
@@ -1233,6 +1285,59 @@ fn read(call: &Call, path: &str) -> Result<String, String> {
                 "stashes": r.stashes.iter().map(|s| json!({ "index": s.index, "message": s.message, "commit": s.target })).collect::<Vec<_>>(),
             })))
         }
+        "get_conflicts" => conflicts_now(path, call.str("path").as_deref()),
         other => Err(format!("Git Raccoon has no tool {other}.")),
     }
+}
+
+/// The conflicts in progress, for an agent: the sides, and each file's
+/// conflicts (all, or `only` one file).
+fn conflicts_now(path: &str, only: Option<&str>) -> Result<String, String> {
+    use git_raccoon_core::{conflict, merge};
+    let Some(state) = merge::in_progress(path).map_err(|e| e.to_string())? else {
+        return Ok("Nothing is in progress: no merge, rebase, cherry-pick or revert.".into());
+    };
+    let side =
+        |s: &merge::Side| json!({ "name": s.name, "commit": s.commit, "summary": s.summary });
+    let mut files = Vec::new();
+    for f in conflict::files(path).map_err(|e| e.to_string())? {
+        if only.is_some_and(|o| o != f.path) {
+            continue;
+        }
+        let kind = match f.kind {
+            conflict::Kind::BothChanged => "both changed it",
+            conflict::Kind::BothAdded => "both added it",
+            conflict::Kind::DeletedOnOurs => "deleted by ours, changed by theirs",
+            conflict::Kind::DeletedOnTheirs => "changed by ours, deleted by theirs",
+            conflict::Kind::Other => "other",
+        };
+        let mut entry = json!({ "path": f.path, "how": kind, "binary": f.binary });
+        if !f.binary
+            && let Ok(text) = conflict::read(path, &f.path)
+            && let Some(mut chunks) = conflict::parse(&text)
+        {
+            conflict::with_bases(path, &f.path, &mut chunks);
+            entry["conflicts"] = json!(
+                conflict::conflicts(&chunks)
+                    .map(|c| json!({ "base": c.base, "ours": c.ours, "theirs": c.theirs }))
+                    .collect::<Vec<_>>()
+            );
+            entry["text"] = json!(text);
+        }
+        files.push(entry);
+    }
+    if let Some(o) = only
+        && files.is_empty()
+    {
+        return Err(format!("{o} isn't conflicted."));
+    }
+    Ok(capped(pretty(&json!({
+        "in_progress": format!("{:?}", state.what).to_lowercase(),
+        "detail": state.detail,
+        "ours": side(&state.ours),
+        "theirs": side(&state.theirs),
+        "step": state.step.map(|(n, of)| json!({ "step": n, "of": of })),
+        "files": files,
+        "next": "propose_resolution shows the person a file's resolved text, with your reasoning.",
+    }))))
 }

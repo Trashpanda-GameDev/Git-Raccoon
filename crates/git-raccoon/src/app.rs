@@ -2432,7 +2432,55 @@ impl App {
                         ours: state.as_ref().map_or(&fallback.0, |s| &s.ours),
                         theirs: state.as_ref().map_or(&fallback.1, |s| &s.theirs),
                     };
-                    match conflict::show(ui, open, &names, busy) {
+                    let connected = ui
+                        .ctx()
+                        .data(|d| d.get_temp::<AgentsStatus>(agents_status_id()))
+                        .is_some_and(|a| !a.clients.is_empty());
+                    let agents = conflict::Agents {
+                        connected,
+                        proposal: repo.proposal.as_ref().filter(|p| p.file == open.file),
+                        used: repo.used_proposal.as_ref().filter(|u| {
+                            u.file == open.file && open.text.as_deref() == Ok(u.after.as_str())
+                        }),
+                    };
+                    let chosen = conflict::show(ui, open, &names, &agents, busy);
+                    // Writing an agent's proposal (or undoing that), once
+                    // the file is let go of.
+                    let mut write = None;
+                    match chosen {
+                        Some(conflict::Action::UseProposal) => {
+                            if let (Some(p), Ok(before)) = (repo.proposal.take(), &open.text) {
+                                repo.used_proposal = Some(crate::repo_view::UsedProposal {
+                                    file: p.file.clone(),
+                                    before: before.clone(),
+                                    after: p.text.clone(),
+                                    agent: p.agent,
+                                });
+                                write = Some(Op::WriteConflict {
+                                    file: p.file,
+                                    expected: before.clone(),
+                                    text: p.text,
+                                });
+                            }
+                        }
+                        Some(conflict::Action::UndoProposal) => {
+                            if let Some(u) = repo.used_proposal.take() {
+                                write = Some(Op::WriteConflict {
+                                    file: u.file,
+                                    expected: u.after,
+                                    text: u.before,
+                                });
+                            }
+                        }
+                        Some(conflict::Action::EditProposal) => {
+                            if let Some(p) = repo.proposal.take() {
+                                open.edit = Some(p.text);
+                            }
+                        }
+                        Some(conflict::Action::DiscardProposal) => repo.proposal = None,
+                        _ => {}
+                    }
+                    match chosen {
                         Some(conflict::Action::Pick(i, pick)) => repo.pick_conflict(&ctx, i, pick),
                         Some(conflict::Action::UseText(i, text)) => {
                             repo.write_conflict_result(&ctx, i, &text);
@@ -2469,7 +2517,17 @@ impl App {
                                 f.open_request(&ctx, n);
                             }
                         }
-                        None => {}
+                        // Handled above.
+                        Some(
+                            conflict::Action::UseProposal
+                            | conflict::Action::UndoProposal
+                            | conflict::Action::EditProposal
+                            | conflict::Action::DiscardProposal,
+                        )
+                        | None => {}
+                    }
+                    if let Some(op) = write {
+                        repo.run(&ctx, op);
                     }
                     return;
                 }

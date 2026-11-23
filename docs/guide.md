@@ -318,6 +318,8 @@ In a file, each conflict shows three versions side by side: **Before** (what bot
 
 **Ctrl+↑ / Ctrl+↓** move between conflicts. When none are left, **Mark resolved**.
 
+**Ask an agent** (when one is connected in Settings › Agents) gives you a request to paste to it. It reads the conflicts and proposes the whole file, with its reasoning; that shows in place of the conflicts, and nothing is written until you choose **Use this** (undoable), **Edit it** first, or **Discard**.
+
 **Why?** shows, above the conflict in focus, the commits on each side that changed its lines (in a rebase, the commit being applied), with their messages, who made them and when, and the pull/merge request they came in with when the message says so. **Show these commits** marks them in the graph (**Back to** the file from there). When it's clear what happened (a rename on one side, lines only added on the other), a hint says so.
 
 ## Rewriting history
@@ -365,6 +367,7 @@ What an agent can do:
 - **Read, freely:** the repositories open here, what you're looking at, status, history and search, commits and diffs, branches, tags and stashes, and pull/merge requests with their threads.
 - **Show you things:** select a commit, open a request or a repository, or start a new request filled in for you to check and open.
 - **Change things, once you allow it:** stage, commit, branches, checkout, stash, tags, merge, fetch, pull and push. Each change asks you: *Allow*, *Allow for this session*, or *Deny*. Discarding changes asks every time. Pushes never force, and pulls never throw changes away.
+- **Propose conflict resolutions:** they read the conflicts in progress and propose a file's resolution with their reasoning; you choose whether to use it (see *Conflicts*).
 - **Comment on requests, as drafts:** comments and replies go into your drafts; you send them when you finish your review. Resolving a thread asks you first.
 
 A robot in the toolbar shows while an agent is connected. Agents can only connect from this computer, with a key the app keeps beside its settings.

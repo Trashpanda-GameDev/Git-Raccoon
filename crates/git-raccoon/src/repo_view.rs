@@ -1326,6 +1326,26 @@ impl ConflictFile {
     }
 }
 
+/// An agent's resolution of a conflicted file, waiting for the person.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Proposal {
+    pub file: String,
+    /// The whole file, resolved.
+    pub text: String,
+    pub reasoning: String,
+    /// The agent's name ("claude-code").
+    pub agent: String,
+}
+
+/// A proposal that was used: the file's text before and after, to undo it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsedProposal {
+    pub file: String,
+    pub before: String,
+    pub after: String,
+    pub agent: String,
+}
+
 /// Whose commits are marked in the graph.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mark {
@@ -1478,6 +1498,9 @@ pub struct RepoView {
     /// A pull/merge request's commits, marked in the graph: its number,
     /// and the commits.
     pub highlight: Option<(Mark, std::collections::HashSet<String>)>,
+    /// An agent's proposed resolution, and the last one used (to undo).
+    pub proposal: Option<Proposal>,
+    pub used_proposal: Option<UsedProposal>,
     /// A folder to open in a tab once the operation running is done (a
     /// worktree being made).
     pub open_when_done: Option<String>,
@@ -1605,6 +1628,8 @@ impl RepoView {
             web: crate::forge::Web::default(),
             forge_stale: true,
             highlight: None,
+            proposal: None,
+            used_proposal: None,
             open_when_done: None,
             offer_request: None,
             committing: None,

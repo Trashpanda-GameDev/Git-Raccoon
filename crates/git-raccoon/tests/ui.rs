@@ -7203,3 +7203,107 @@ fn agents_read_freely_and_change_with_permission() {
     assert!(h.state().agent_address().is_none());
     let _ = std::fs::remove_dir_all(bin);
 }
+
+#[test]
+fn agents_propose_conflict_resolutions_for_the_person_to_choose() {
+    use egui::accesskit::Role;
+    let sample = Sample::build();
+    git(&sample, &["switch", "-q", "-c", "clash"]);
+    sample.write("README.md", "# Sample\n\nclash version\n");
+    git(&sample, &["commit", "-q", "-am", "README from clash"]);
+    git(&sample, &["switch", "-q", "main"]);
+    sample.write("README.md", "# Sample\n\nmain version\n");
+    git(&sample, &["commit", "-q", "-am", "README from main"]);
+    let mut h = harness(Settings {
+        agents: true,
+        ..Settings::default()
+    });
+    open(&mut h, sample.path());
+    let mut agent = AgentLink::connect(&mut h);
+    let (none, _) = agent.call(&mut h, "get_conflicts", serde_json::json!({}));
+    assert!(none.contains("Nothing is in progress"), "{none}");
+    menu_item(&mut h, "clash", "Merge into main");
+    h.get_by_role_and_label(Role::Button, "Merge").click();
+    wait_for(&mut h, "the conflict", |app| conflicted(app) == 1);
+
+    // Reading them: the sides by name, each conflict's three versions.
+    let (text, error) = agent.call(&mut h, "get_conflicts", serde_json::json!({}));
+    assert!(!error, "{text}");
+    let c: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(c["ours"]["name"], "main");
+    assert_eq!(c["theirs"]["name"], "clash");
+    assert_eq!(c["files"][0]["path"], "README.md");
+    assert_eq!(c["files"][0]["conflicts"][0]["ours"], "main version\n");
+    assert_eq!(c["files"][0]["conflicts"][0]["theirs"], "clash version\n");
+    assert!(c["files"][0]["conflicts"][0]["base"].is_string());
+
+    // Asking one, from the file.
+    h.get_by_label("Resolve README.md").click();
+    wait_for(&mut h, "the file", |app| {
+        app.repo().unwrap().conflict.is_some()
+    });
+    h.run_ok();
+    h.get_by_label_contains("Ask an agent").click();
+    h.run_ok();
+    h.get_by_label_contains("propose_resolution");
+    h.key_press(egui::Key::Escape);
+    h.run_ok();
+
+    // A proposal with markers left is refused; one without is shown.
+    let (why, error) = agent.call(
+        &mut h,
+        "propose_resolution",
+        serde_json::json!({ "path": "README.md", "reasoning": "x", "text": "<<<<<<< a\nx\n=======\ny\n>>>>>>> b\n" }),
+    );
+    assert!(error && why.contains("markers"), "{why}");
+    let proposed = "# Sample\n\nmain and clash version\n";
+    let (_, error) = agent.call(
+        &mut h,
+        "propose_resolution",
+        serde_json::json!({ "path": "README.md", "reasoning": "Both reworded the line; kept both words.", "text": proposed }),
+    );
+    assert!(!error);
+    h.run_ok();
+    h.get_by_label("test-agent proposes a resolution");
+    h.get_by_label("Both reworded the line; kept both words.");
+    screenshot(&mut h, "92-agent-proposal");
+    // Nothing written yet.
+    assert!(read(&sample, "README.md").unwrap().contains("<<<<<<<"));
+
+    // Used: written, and undoable.
+    h.get_by_label("Use this").click();
+    wait_for(&mut h, "the write", |app| {
+        app.repo()
+            .unwrap()
+            .conflict
+            .as_ref()
+            .is_some_and(|c| c.text.as_deref() == Ok(proposed))
+    });
+    assert_eq!(read(&sample, "README.md").as_deref(), Some(proposed));
+    h.run_ok();
+    screenshot(&mut h, "93-agent-used");
+    h.get_by_label("Undo using the proposal").click();
+    wait_for(&mut h, "the undo", |app| {
+        app.repo()
+            .unwrap()
+            .conflict
+            .as_ref()
+            .is_some_and(|c| c.text.as_ref().is_ok_and(|t| t.contains("<<<<<<<")))
+    });
+
+    // Edited first: it goes into the editor.
+    agent.call(
+        &mut h,
+        "propose_resolution",
+        serde_json::json!({ "path": "README.md", "reasoning": "Again.", "text": proposed }),
+    );
+    h.run_ok();
+    h.get_by_label("Edit it").click();
+    h.run_ok();
+    let repo = h.state().repo().unwrap();
+    assert!(repo.proposal.is_none());
+    assert_eq!(
+        repo.conflict.as_ref().and_then(|c| c.edit.as_deref()),
+        Some(proposed)
+    );
+}

@@ -534,6 +534,28 @@ pub fn tools() -> Value {
             &[],
             &read
         ),
+        // Conflicts.
+        tool(
+            "get_conflicts",
+            "Conflicts",
+            "The merge, rebase, cherry-pick or revert in progress, its two sides named by branch (\"ours\" is what the files had, \"theirs\" what's coming in), and each conflicted file: how it conflicts, and for text files each conflict's base (what both started from) and both sides, and the file's text with Git's markers. `path` for one file.",
+            json!({ "repository": repo, "path": { "type": "string" } }),
+            &[],
+            &read
+        ),
+        tool(
+            "propose_resolution",
+            "Propose a conflict's resolution",
+            "Shows the person a resolution for a conflicted file: its whole text, without conflict markers, and your reasoning (which side's change you kept, and why). Nothing is written unless they choose to use it; they may edit it first.",
+            json!({
+                "repository": repo,
+                "path": { "type": "string" },
+                "text": { "type": "string", "description": "The whole file as resolved." },
+                "reasoning": { "type": "string", "description": "A few plain sentences: what each side did, and what you kept." },
+            }),
+            &["path", "text", "reasoning"],
+            &read
+        ),
         // Changing (each asks the person first).
         tool(
             "stage",

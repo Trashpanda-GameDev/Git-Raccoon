@@ -31,6 +31,23 @@ pub enum Action {
     },
     /// Open the pull/merge request a commit came in with.
     OpenRequest(u64),
+    /// An agent's proposal: write it, edit it first, or drop it; or undo
+    /// writing it.
+    UseProposal,
+    EditProposal,
+    DiscardProposal,
+    UndoProposal,
+}
+
+/// What agents have to do with the open file.
+#[derive(Default)]
+pub struct Agents<'a> {
+    /// Whether one is connected (to offer asking one).
+    pub connected: bool,
+    /// A resolution one proposed for this file.
+    pub proposal: Option<&'a crate::repo_view::Proposal>,
+    /// One that was used for this file, still as written (to undo).
+    pub used: Option<&'a crate::repo_view::UsedProposal>,
 }
 
 const OURS: Color32 = Color32::from_rgb(0x3f, 0xb9, 0x8a);
@@ -48,6 +65,7 @@ pub fn show(
     ui: &mut egui::Ui,
     open: &mut ConflictFile,
     names: &Names<'_>,
+    agents: &Agents<'_>,
     busy: bool,
 ) -> Option<Action> {
     let mut action = None;
@@ -139,6 +157,11 @@ pub fn show(
                         if resolved.clicked() {
                             action = Some(Action::MarkResolved);
                         }
+                        if total > 0 && agents.connected && agents.proposal.is_none() {
+                            ui.menu_button(format!("{}  Ask an agent", icon::ROBOT), |ui| {
+                                ask_agent(ui, &open.file);
+                            });
+                        }
                         if total > 0 {
                             let why = ui
                                 .selectable_label(
@@ -206,13 +229,53 @@ pub fn show(
                         ui.label(RichText::new(e).color(theme::danger()));
                         return;
                     }
+                    if let Some(p) = agents.proposal {
+                        if let Some(a) = proposal_view(ui, p, open.chunks.as_deref(), busy) {
+                            action = Some(a);
+                        }
+                        return;
+                    }
                     let Some(chunks) = open.chunks.clone() else {
-                        ui.label(
-                            RichText::new(
-                                "No conflict markers in this file. It may be binary, or deleted on one side: pick a side for the whole file, or edit it and mark it resolved.",
-                            )
-                            .color(theme::muted()),
-                        );
+                        if let Some(used) = agents.used {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(icon::ROBOT).color(BASE));
+                                ui.label(format!(
+                                    "This is {}'s proposal, as you chose. Check it, then mark it resolved.",
+                                    used.agent
+                                ));
+                                let undo = ui.add_enabled(!busy, egui::Button::new("Undo"));
+                                ui.ctx().accesskit_node_builder(undo.id, |n| {
+                                    n.set_label("Undo using the proposal");
+                                });
+                                if undo.clicked() {
+                                    action = Some(Action::UndoProposal);
+                                }
+                            });
+                        } else {
+                            ui.label(
+                                RichText::new(
+                                    "No conflict markers in this file. It may be binary, or deleted on one side: pick a side for the whole file, or edit it and mark it resolved.",
+                                )
+                                .color(theme::muted()),
+                            );
+                        }
+                        // What it holds now, to check before marking it
+                        // resolved.
+                        if let Ok(text) = &open.text {
+                            ui.add_space(8.0);
+                            egui::Frame::new()
+                                .fill(theme::bg())
+                                .stroke(Stroke::new(1.0, theme::border()))
+                                .corner_radius(6)
+                                .inner_margin(egui::Margin::same(8))
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    ui.add(
+                                        egui::Label::new(RichText::new(text).monospace())
+                                            .selectable(true),
+                                    );
+                                });
+                        }
                         return;
                     };
                     if let Some(a) = chunk_list(ui, open, &chunks, names, busy) {
@@ -946,4 +1009,140 @@ fn why_panel(
             });
     }
     action
+}
+
+/// What to tell an agent, to have it propose a resolution for `file`.
+fn ask_agent(ui: &mut egui::Ui, file: &str) {
+    let prompt = format!(
+        "Resolve the conflicts in {file} in Git Raccoon: read them with get_conflicts, then show me your resolution with propose_resolution, saying what each side did and what you kept."
+    );
+    ui.set_max_width(360.0);
+    ui.label("Paste this to your agent (it's connected). Its resolution shows here, and nothing is written until you choose to use it.");
+    ui.add_space(4.0);
+    egui::Frame::new()
+        .fill(theme::bg())
+        .corner_radius(4)
+        .inner_margin(egui::Margin::same(6))
+        .show(ui, |ui| {
+            ui.add(
+                egui::Label::new(RichText::new(&prompt).monospace().size(12.0)).selectable(true),
+            );
+        });
+    ui.add_space(4.0);
+    if ui.button(format!("{}  Copy", icon::COPY)).clicked() {
+        ui.ctx().copy_text(prompt);
+        ui.close();
+    }
+}
+
+/// An agent's proposed resolution: its reasoning and the text, with what
+/// the conflicts became marked, and the choice.
+fn proposal_view(
+    ui: &mut egui::Ui,
+    p: &crate::repo_view::Proposal,
+    chunks: Option<&[Chunk]>,
+    busy: bool,
+) -> Option<Action> {
+    let mut action = None;
+    let count = chunks.map_or(0, |c| conflict::conflicts(c).count());
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(icon::ROBOT).color(BASE));
+        ui.label(RichText::new(format!("{} proposes a resolution", p.agent)).strong());
+        let of = match count {
+            1 => "for its 1 conflict".to_string(),
+            n => format!("for its {n} conflicts"),
+        };
+        ui.label(RichText::new(of).size(12.0).color(theme::muted()));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_enabled_ui(!busy, |ui| {
+                if ui
+                    .add(primary("Use this"))
+                    .on_hover_text("Write it to the file (you can undo it), then mark it resolved")
+                    .clicked()
+                {
+                    action = Some(Action::UseProposal);
+                }
+                if ui.button("Edit it").clicked() {
+                    action = Some(Action::EditProposal);
+                }
+                if ui.button("Discard").clicked() {
+                    action = Some(Action::DiscardProposal);
+                }
+            });
+        });
+    });
+    ui.add_space(8.0);
+    egui::Frame::new()
+        .fill(theme::bg_raised())
+        .stroke(Stroke::new(1.0, theme::border()))
+        .corner_radius(6)
+        .inner_margin(egui::Margin::same(10))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            tag_coloured(ui, "Its reasoning", BASE);
+            ui.add(egui::Label::new(&p.reasoning).selectable(true));
+        });
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Proposed result").strong());
+        ui.label(
+            RichText::new("nothing is written until you choose \u{201c}Use this\u{201d}")
+                .size(12.0)
+                .color(theme::muted()),
+        );
+    });
+    // Lines that aren't in the file's agreed parts: what the conflicts
+    // became.
+    let agreed: std::collections::HashSet<&str> = chunks
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|c| match c {
+            Chunk::Same(t) => Some(t.lines()),
+            Chunk::Conflict(_) => None,
+        })
+        .flatten()
+        .collect();
+    egui::Frame::new()
+        .fill(theme::bg())
+        .stroke(Stroke::new(1.0, BASE.gamma_multiply(0.6)))
+        .corner_radius(6)
+        .inner_margin(egui::Margin::same(8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let lines: Vec<&str> = p.text.lines().collect();
+            let width = lines.len().to_string().len();
+            for (i, line) in lines.iter().enumerate() {
+                let changed = !agreed.contains(line);
+                let row = egui::Frame::new()
+                    .fill(if changed {
+                        BASE.gamma_multiply(0.12)
+                    } else {
+                        Color32::TRANSPARENT
+                    })
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(format!("{:>width$}", i + 1))
+                                    .monospace()
+                                    .color(theme::muted()),
+                            );
+                            ui.label(RichText::new(*line).monospace());
+                        });
+                    });
+                let _ = row;
+            }
+        });
+    action
+}
+
+fn tag_coloured(ui: &mut egui::Ui, name: &str, colour: Color32) {
+    egui::Frame::new()
+        .fill(colour.gamma_multiply(0.15))
+        .corner_radius(4)
+        .inner_margin(egui::Margin::symmetric(6, 1))
+        .show(ui, |ui| {
+            ui.label(RichText::new(name).size(12.0).color(colour));
+        });
 }
