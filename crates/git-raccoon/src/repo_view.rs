@@ -1279,6 +1279,10 @@ pub struct ConflictFile {
     pub ticked: std::collections::BTreeSet<(usize, u8, usize)>,
     /// Each conflict's result as it stands (from the ticks, or typed).
     pub results: std::collections::BTreeMap<usize, String>,
+    /// Whether to show why the conflict in focus happened, and what was
+    /// found out for each conflict so far.
+    pub why_open: bool,
+    pub why: std::collections::BTreeMap<usize, Result<git_raccoon_core::why::Why, String>>,
 }
 
 impl ConflictFile {
@@ -1293,6 +1297,8 @@ impl ConflictFile {
             scroll: false,
             ticked: std::collections::BTreeSet::new(),
             results: std::collections::BTreeMap::new(),
+            why_open: false,
+            why: std::collections::BTreeMap::new(),
         };
         open.reload(path);
         open
@@ -1311,12 +1317,22 @@ impl ConflictFile {
         self.text = text;
         self.ticked.clear();
         self.results.clear();
+        self.why.clear();
         let left = self
             .chunks
             .as_ref()
             .map_or(0, |c| conflict::conflicts(c).count());
         self.current = self.current.min(left.saturating_sub(1));
     }
+}
+
+/// Whose commits are marked in the graph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Mark {
+    /// A pull/merge request's, by number.
+    Request(u64),
+    /// The commits behind one side of a conflict in a file.
+    Conflict { file: String, side: String },
 }
 
 /// What this system calls its trash.
@@ -1461,7 +1477,7 @@ pub struct RepoView {
     pub forge_stale: bool,
     /// A pull/merge request's commits, marked in the graph: its number,
     /// and the commits.
-    pub highlight: Option<(u64, std::collections::HashSet<String>)>,
+    pub highlight: Option<(Mark, std::collections::HashSet<String>)>,
     /// A folder to open in a tab once the operation running is done (a
     /// worktree being made).
     pub open_when_done: Option<String>,

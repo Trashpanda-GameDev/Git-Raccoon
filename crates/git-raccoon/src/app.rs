@@ -2399,9 +2399,25 @@ impl App {
                     }
                     return;
                 }
+                let path = repo.path().to_string();
                 if let Some(open) = &mut repo.conflict {
                     // The sides by name (from what's in progress).
                     let state = repo.status.as_ref().and_then(|s| s.in_progress.clone());
+                    // Why the conflict in focus happened, found out once.
+                    if open.why_open
+                        && !open.why.contains_key(&open.current)
+                        && let (Some(state), Some(chunks)) = (&state, &open.chunks)
+                    {
+                        let why = git_raccoon_core::why::why(
+                            &path,
+                            &open.file,
+                            state,
+                            chunks,
+                            open.current,
+                        )
+                        .map_err(|e| e.to_string());
+                        open.why.insert(open.current, why);
+                    }
                     let fallback = (
                         git_raccoon_core::merge::Side {
                             name: "ours".into(),
@@ -2435,6 +2451,24 @@ impl App {
                         Some(conflict::Action::SaveEdit) => repo.save_conflict_edit(&ctx),
                         Some(conflict::Action::CancelEdit) => open.edit = None,
                         Some(conflict::Action::Close) => repo.conflict = None,
+                        Some(conflict::Action::ShowCommits { ids, side }) => {
+                            let file = open.file.clone();
+                            let newest = ids.first().cloned();
+                            repo.history_over_conflicts = true;
+                            repo.highlight = Some((
+                                crate::repo_view::Mark::Conflict { file, side },
+                                ids.into_iter().collect(),
+                            ));
+                            match newest {
+                                Some(id) => repo.select(&id),
+                                None => repo.conflict = None,
+                            }
+                        }
+                        Some(conflict::Action::OpenRequest(n)) => {
+                            if let Some(f) = &mut repo.forge {
+                                f.open_request(&ctx, n);
+                            }
+                        }
                         None => {}
                     }
                     return;
@@ -2541,12 +2575,21 @@ impl App {
                 // The search box over the history, while searching (Ctrl+F).
                 if let Some(back) = highlight_bar(ui, repo) {
                     match back {
-                        Some(n) => {
+                        Some(crate::repo_view::Mark::Request(n)) => {
                             repo.highlight = None;
                             repo.deselect();
                             if let Some(f) = &mut repo.forge {
                                 f.open_request(&ctx, n);
                                 f.state.tab = crate::forge_view::Tab::Commits;
+                            }
+                            return;
+                        }
+                        Some(crate::repo_view::Mark::Conflict { file, .. }) => {
+                            repo.highlight = None;
+                            repo.history_over_conflicts = false;
+                            repo.open_conflict(file);
+                            if let Some(open) = &mut repo.conflict {
+                                open.why_open = true;
                             }
                             return;
                         }
@@ -3169,8 +3212,9 @@ fn new_draft_id() -> u64 {
 
 /// While a request's commits are marked in the graph: how many are here,
 /// and going back to it (`Some(Some(n))`) or clearing them (`Some(None)`).
-fn highlight_bar(ui: &mut egui::Ui, repo: &RepoView) -> Option<Option<u64>> {
-    let (n, ids) = repo.highlight.as_ref()?;
+fn highlight_bar(ui: &mut egui::Ui, repo: &RepoView) -> Option<Option<crate::repo_view::Mark>> {
+    use crate::repo_view::Mark;
+    let (mark, ids) = repo.highlight.as_ref()?;
     let kind = repo
         .forge
         .as_ref()
@@ -3187,18 +3231,29 @@ fn highlight_bar(ui: &mut egui::Ui, repo: &RepoView) -> Option<Option<u64>> {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 let s = if ids.len() == 1 { "" } else { "s" };
-                let text = if here == ids.len() {
-                    format!("{}'s {} commit{s}, marked.", kind.number(*n), ids.len())
-                } else {
-                    format!(
-                        "{}'s commits, marked: {here} of {} are in the graph (fetch, or check it out, for the rest).",
-                        kind.number(*n),
+                let (whose, back) = match mark {
+                    Mark::Request(n) => (
+                        format!("{}'s", kind.number(*n)),
+                        format!("Back to {}", kind.number(*n)),
+                    ),
+                    Mark::Conflict { file, side } => (
+                        format!("The {side} commit{s} behind the conflict in {file},"),
+                        format!("Back to {file}"),
+                    ),
+                };
+                let text = match mark {
+                    Mark::Request(_) if here == ids.len() => {
+                        format!("{whose} {} commit{s}, marked.", ids.len())
+                    }
+                    Mark::Request(_) => format!(
+                        "{whose} commits, marked: {here} of {} are in the graph (fetch, or check it out, for the rest).",
                         ids.len()
-                    )
+                    ),
+                    Mark::Conflict { .. } => format!("{whose} marked."),
                 };
                 ui.label(RichText::new(text).color(theme::text()));
-                if ui.small_button(format!("Back to {}", kind.number(*n))).clicked() {
-                    chosen = Some(Some(*n));
+                if ui.small_button(back).clicked() {
+                    chosen = Some(Some(mark.clone()));
                 }
                 if ui.small_button("Clear").clicked() {
                     chosen = Some(None);
@@ -3515,7 +3570,7 @@ fn request_action(
             let select = pick
                 .filter(|id| here.contains(&id))
                 .or_else(|| here.last().map(|id| (*id).clone()));
-            repo.highlight = Some((n, ids));
+            repo.highlight = Some((crate::repo_view::Mark::Request(n), ids));
             if let Some(id) = select {
                 repo.select(&id);
             } else if asked {

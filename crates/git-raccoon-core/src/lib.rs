@@ -32,6 +32,7 @@ mod testutil;
 pub mod trust;
 pub mod undo;
 pub mod watch;
+pub mod why;
 pub mod words;
 pub mod working;
 

@@ -23,6 +23,14 @@ pub enum Action {
     SaveEdit,
     CancelEdit,
     Close,
+    /// Mark these commits (newest first) in the graph: one side's, behind
+    /// the conflict in focus.
+    ShowCommits {
+        ids: Vec<String>,
+        side: String,
+    },
+    /// Open the pull/merge request a commit came in with.
+    OpenRequest(u64),
 }
 
 const OURS: Color32 = Color32::from_rgb(0x3f, 0xb9, 0x8a);
@@ -130,6 +138,20 @@ pub fn show(
                             .on_hover_text("Stage the file as it is now");
                         if resolved.clicked() {
                             action = Some(Action::MarkResolved);
+                        }
+                        if total > 0 {
+                            let why = ui
+                                .selectable_label(
+                                    open.why_open,
+                                    format!("{}  Why?", icon::QUESTION),
+                                )
+                                .on_hover_text("The commits on each side that changed these lines");
+                            ui.ctx().accesskit_node_builder(why.id, |n| {
+                                n.set_label("Why it happened");
+                            });
+                            if why.clicked() {
+                                open.why_open = !open.why_open;
+                            }
                         }
                         if ui
                             .button(format!("{}  Edit", icon::PENCIL_SIMPLE))
@@ -245,6 +267,12 @@ fn chunk_list(
                     .inner_margin(egui::Margin::same(10))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
+                        if focused && open.why_open {
+                            if let Some(a) = why_panel(ui, open.why.get(&index), names) {
+                                action = Some(a);
+                            }
+                            ui.add_space(8.0);
+                        }
                         if let Some(a) = conflict_card(ui, open, c, (index, total), names, busy) {
                             action = Some(a);
                         }
@@ -787,5 +815,135 @@ fn resolved_row(ui: &mut egui::Ui, file: &str, busy: bool) -> Option<OverviewAct
             });
         });
     });
+    action
+}
+
+/// Why a conflict happened: each side's commits that changed its lines,
+/// and a hint when it's clear what happened.
+fn why_panel(
+    ui: &mut egui::Ui,
+    why: Option<&Result<git_raccoon_core::why::Why, String>>,
+    names: &Names<'_>,
+) -> Option<Action> {
+    let why = match why {
+        Some(Ok(w)) => w,
+        Some(Err(e)) => {
+            ui.label(RichText::new(format!("Couldn't tell why: {e}")).color(theme::muted()));
+            return None;
+        }
+        None => return None,
+    };
+    let mut action = None;
+    let now = chrono::Utc::now().timestamp();
+    ui.columns(2, |cols| {
+        for (col, ours) in cols.iter_mut().zip([true, false]) {
+            let (side, changes) = if ours {
+                (names.ours, &why.ours)
+            } else {
+                (names.theirs, &why.theirs)
+            };
+            egui::Frame::new()
+                .fill(theme::bg_raised())
+                .stroke(Stroke::new(1.0, theme::border()))
+                .corner_radius(6)
+                .inner_margin(egui::Margin::same(10))
+                .show(col, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        tag(ui, &side.name, ours);
+                        let what = if !ours && why.applying {
+                            "the commit being applied".to_string()
+                        } else {
+                            match changes.len() {
+                                0 => "no commits found for these lines".into(),
+                                1 => "changed these lines in 1 commit".into(),
+                                n => format!("changed these lines in {n} commits"),
+                            }
+                        };
+                        ui.label(RichText::new(what).strong());
+                    });
+                    for c in changes {
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(crate::format::short_sha(&c.id))
+                                    .monospace()
+                                    .color(theme::muted()),
+                            );
+                            ui.add(egui::Label::new(&c.summary).truncate())
+                                .on_hover_text(&c.summary);
+                        });
+                        ui.label(
+                            RichText::new(format!(
+                                "{} · {}",
+                                c.author,
+                                crate::format::age(c.time, now)
+                            ))
+                            .size(12.0)
+                            .color(theme::muted()),
+                        );
+                        if let Some(first) = c.body.split("\n\n").next().filter(|b| !b.is_empty()) {
+                            let mut text = first.split_whitespace().collect::<Vec<_>>().join(" ");
+                            if text.chars().count() > 200 {
+                                text = text.chars().take(200).collect::<String>() + "…";
+                            }
+                            ui.label(
+                                RichText::new(format!("\u{201c}{text}\u{201d}"))
+                                    .italics()
+                                    .color(theme::muted()),
+                            );
+                        }
+                    }
+                    if changes.is_empty() {
+                        return;
+                    }
+                    ui.add_space(6.0);
+                    ui.horizontal_wrapped(|ui| {
+                        let text = if changes.len() == 1 {
+                            "Show this commit"
+                        } else {
+                            "Show these commits"
+                        };
+                        let show = ui.button(text).on_hover_text("Mark them in the graph");
+                        let label = format!("Show {}'s commits", side.name);
+                        ui.ctx()
+                            .accesskit_node_builder(show.id, |n| n.set_label(label.as_str()));
+                        if show.clicked() {
+                            action = Some(Action::ShowCommits {
+                                ids: changes.iter().map(|c| c.id.clone()).collect(),
+                                side: side.name.clone(),
+                            });
+                        }
+                        let mut requests: Vec<u64> =
+                            changes.iter().filter_map(|c| c.request).collect();
+                        requests.dedup();
+                        for n in requests {
+                            if ui
+                                .button(format!("#{n}  {}", icon::ARROW_UP_RIGHT))
+                                .on_hover_text("The request it came in with")
+                                .clicked()
+                            {
+                                action = Some(Action::OpenRequest(n));
+                            }
+                        }
+                    });
+                });
+        }
+    });
+    if let Some(hint) = &why.hint {
+        ui.add_space(6.0);
+        egui::Frame::new()
+            .fill(theme::bg_raised())
+            .stroke(Stroke::new(1.0, theme::border()))
+            .corner_radius(6)
+            .inner_margin(egui::Margin::symmetric(10, 6))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new(icon::LIGHTBULB).color(theme::accent()));
+                    ui.label(hint);
+                });
+            });
+    }
     action
 }

@@ -318,6 +318,8 @@ In a file, each conflict shows three versions side by side: **Before** (what bot
 
 **Ctrl+↑ / Ctrl+↓** move between conflicts. When none are left, **Mark resolved**.
 
+**Why?** shows, above the conflict in focus, the commits on each side that changed its lines (in a rebase, the commit being applied), with their messages, who made them and when, and the pull/merge request they came in with when the message says so. **Show these commits** marks them in the graph (**Back to** the file from there). When it's clear what happened (a rename on one side, lines only added on the other), a hint says so.
+
 ## Rewriting history
 
 Right-click a commit in the graph:

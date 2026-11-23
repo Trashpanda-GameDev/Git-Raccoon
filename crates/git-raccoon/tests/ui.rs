@@ -3717,11 +3717,9 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     h.run_ok();
     {
         let repo = h.state().repo().unwrap();
-        assert!(
-            repo.highlight
-                .as_ref()
-                .is_some_and(|(n, ids)| *n == 12 && ids.contains(&main))
-        );
+        assert!(repo.highlight.as_ref().is_some_and(|(n, ids)| *n
+            == git_raccoon::repo_view::Mark::Request(12)
+            && ids.contains(&main)));
         assert_eq!(
             repo.selected.as_ref().map(|s| s.id.clone()),
             Some(main.clone())
@@ -5364,6 +5362,35 @@ fn merges_resolves_conflicts_continues_and_aborts() {
         app.repo().unwrap().conflict.is_some()
     });
     screenshot(&mut h, "28-conflict");
+    // Why: the commit on each side that changed the line.
+    h.get_by_label("Why it happened").click();
+    h.run_ok();
+    assert_eq!(
+        h.get_all_by_label("changed these lines in 1 commit")
+            .count(),
+        2
+    );
+    screenshot(&mut h, "28b-conflict-why");
+    h.get_by_label("Show main's commits");
+    h.get_by_label("Show clash's commits").click();
+    h.run_ok();
+    screenshot(&mut h, "28c-conflict-commits");
+    {
+        let repo = h.state().repo().unwrap();
+        assert!(repo.conflict.is_none());
+        assert!(matches!(
+            &repo.highlight,
+            Some((git_raccoon::repo_view::Mark::Conflict { file, side }, ids))
+                if file == "README.md" && side == "clash" && ids.len() == 1
+        ));
+    }
+    h.get_by_label("Back to README.md").click();
+    wait_for(&mut h, "the file again", |app| {
+        app.repo().unwrap().conflict.is_some()
+    });
+    h.get_by_label("Show clash's commits");
+    h.get_by_label("Why it happened").click();
+    h.run_ok();
     // The three versions, named by branch; both sides, main's first.
     h.get_by_label("Take main for conflict 1");
     h.get_by_label("Take line 1 of clash in conflict 1");
