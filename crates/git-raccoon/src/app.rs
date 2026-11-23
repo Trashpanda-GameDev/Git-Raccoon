@@ -2125,8 +2125,12 @@ impl App {
             return;
         };
 
+        // A conflicted file open as panes takes the whole window, to check
+        // it undisturbed.
+        let focused = self.settings.conflict_panes
+            && repo.conflict.as_ref().is_some_and(|c| c.edit.is_none());
         // Sidebar.
-        if !self.settings.hide_sidebar {
+        if !self.settings.hide_sidebar && !focused {
             let jump = Panel::left("sidebar")
                 .resizable(true)
                 .default_size(240.0)
@@ -2232,7 +2236,9 @@ impl App {
             bottom: 8,
         });
         // A pull/merge request or issue from the forge.
-        if let Some(forge) = repo
+        if focused {
+            // No side panels while a conflict takes the whole window.
+        } else if let Some(forge) = repo
             .forge
             .as_mut()
             .filter(|f| matches!(f.open, Some(crate::forge_view::Opened::Issue(_))))
@@ -2443,7 +2449,9 @@ impl App {
                             u.file == open.file && open.text.as_deref() == Ok(u.after.as_str())
                         }),
                     };
+                    open.panes = self.settings.conflict_panes;
                     let chosen = conflict::show(ui, open, &names, &agents, busy);
+                    self.settings.conflict_panes = open.panes;
                     // Writing an agent's proposal (or undoing that), once
                     // the file is let go of.
                     let mut write = None;
@@ -2478,6 +2486,19 @@ impl App {
                             }
                         }
                         Some(conflict::Action::DiscardProposal) => repo.proposal = None,
+                        Some(conflict::Action::SaveAll(ref results)) => {
+                            if let Ok(current) = &open.text
+                                && let Some(chunks) = git_raccoon_core::conflict::parse(current)
+                            {
+                                write = Some(Op::WriteConflict {
+                                    file: open.file.clone(),
+                                    expected: current.clone(),
+                                    text: git_raccoon_core::conflict::resolve_many(
+                                        &chunks, results,
+                                    ),
+                                });
+                            }
+                        }
                         _ => {}
                     }
                     match chosen {
@@ -2520,6 +2541,7 @@ impl App {
                         // Handled above.
                         Some(
                             conflict::Action::UseProposal
+                            | conflict::Action::SaveAll(_)
                             | conflict::Action::UndoProposal
                             | conflict::Action::EditProposal
                             | conflict::Action::DiscardProposal,

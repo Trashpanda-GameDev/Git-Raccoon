@@ -34,6 +34,8 @@ pub enum Action {
     /// An agent's proposal: write it, edit it first, or drop it; or undo
     /// writing it.
     UseProposal,
+    /// Write every chosen result at once (the panes' Save).
+    SaveAll(std::collections::BTreeMap<usize, String>),
     EditProposal,
     DiscardProposal,
     UndoProposal,
@@ -50,9 +52,9 @@ pub struct Agents<'a> {
     pub used: Option<&'a crate::repo_view::UsedProposal>,
 }
 
-const OURS: Color32 = Color32::from_rgb(0x3f, 0xb9, 0x8a);
-const THEIRS: Color32 = Color32::from_rgb(0x5a, 0x9b, 0xf0);
-const BASE: Color32 = Color32::from_rgb(0xb3, 0x9d, 0xdb);
+pub(super) const OURS: Color32 = Color32::from_rgb(0x3f, 0xb9, 0x8a);
+pub(super) const THEIRS: Color32 = Color32::from_rgb(0x5a, 0x9b, 0xf0);
+pub(super) const BASE: Color32 = Color32::from_rgb(0xb3, 0x9d, 0xdb);
 
 /// The names of the two sides: what the files had ("ours"), and what's
 /// coming in ("theirs"), each with the commit's message if known.
@@ -109,6 +111,14 @@ pub fn show(
                             .size(12.0)
                             .color(theme::muted()),
                     );
+                } else if open.panes {
+                    // Where you are shows on the output's bar.
+                    let s = if total == 1 { "" } else { "s" };
+                    ui.label(
+                        RichText::new(format!("{total} conflict{s}"))
+                            .size(12.0)
+                            .color(theme::muted()),
+                    );
                 } else {
                     ui.label(
                         RichText::new(format!("conflict {} of {total}", open.current + 1))
@@ -162,7 +172,19 @@ pub fn show(
                                 ask_agent(ui, &open.file);
                             });
                         }
-                        if total > 0 {
+                        if total > 0 && open.panes {
+                            let chosen = crate::ui::conflict_panes::all_chosen(open, total);
+                            let save = ui
+                                .add_enabled(!chosen.is_empty(), primary_if("Save", !chosen.is_empty()))
+                                .on_hover_text("Write the output: each conflict you chose; the rest stay conflicts")
+                                .on_disabled_hover_text("Tick lines or conflicts first");
+                            ui.ctx()
+                                .accesskit_node_builder(save.id, |n| n.set_label("Save the output"));
+                            if save.clicked() {
+                                action = Some(Action::SaveAll(chosen));
+                            }
+                        }
+                        if total > 0 && !open.panes {
                             let why = ui
                                 .selectable_label(
                                     open.why_open,
@@ -182,6 +204,21 @@ pub fn show(
                             .clicked()
                         {
                             action = Some(Action::StartEdit);
+                        }
+                        // Cards, or panes.
+                        for (panes, glyph, tip) in [
+                            (true, icon::COLUMNS, "Show as panes: each side's whole file, and the output"),
+                            (false, icon::CARDS, "Show as cards: one per conflict"),
+                        ] {
+                            let b = ui
+                                .selectable_label(open.panes == panes, glyph)
+                                .on_hover_text(tip);
+                            let label = if panes { "Show as panes" } else { "Show as cards" };
+                            ui.ctx().accesskit_node_builder(b.id, |n| n.set_label(label));
+                            if b.clicked() {
+                                open.panes = panes;
+                                open.scroll = true;
+                            }
                         }
                         // One side's version of the whole file.
                         ui.menu_button(format!("Whole file  {}", icon::CARET_DOWN), |ui| {
@@ -208,6 +245,21 @@ pub fn show(
         Stroke::new(1.0, theme::border()),
     );
 
+    if open.panes
+        && open.edit.is_none()
+        && agents.proposal.is_none()
+        && open.text.is_ok()
+        && let Some(chunks) = open.chunks.clone()
+    {
+        egui::Frame::new()
+            .inner_margin(egui::Margin::same(8))
+            .show(ui, |ui| {
+                if let Some(a) = crate::ui::conflict_panes::show(ui, open, &chunks, names) {
+                    action = Some(a);
+                }
+            });
+        return action;
+    }
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -484,21 +536,7 @@ fn conflict_card(
 
     // The result: the ticked lines (yours, then theirs), or typed.
     if changed {
-        let mut text = String::new();
-        for column in [1u8, 2, 0] {
-            let source = match column {
-                0 => c.base.as_deref().unwrap_or_default(),
-                1 => c.ours.as_str(),
-                _ => c.theirs.as_str(),
-            };
-            for (line_no, line) in source.lines().enumerate() {
-                if open.ticked.contains(&(index, column, line_no)) {
-                    text.push_str(line);
-                    text.push('\n');
-                }
-            }
-        }
-        open.results.insert(index, text);
+        ticked_result(open, index, c);
     }
     ui.add_space(6.0);
     ui.horizontal(|ui| {
@@ -532,6 +570,30 @@ fn conflict_card(
         action = Some(Action::UseText(index, result.clone()));
     }
     action
+}
+
+/// Sets conflict `index`'s result to its ticked lines: ours, then theirs,
+/// then the base's.
+pub(super) fn ticked_result(open: &mut ConflictFile, index: usize, c: &conflict::Conflict) {
+    let mut text = String::new();
+    for column in [1u8, 2, 0] {
+        let source = match column {
+            0 => c.base.as_deref().unwrap_or_default(),
+            1 => c.ours.as_str(),
+            _ => c.theirs.as_str(),
+        };
+        for (line_no, line) in source.lines().enumerate() {
+            if open.ticked.contains(&(index, column, line_no)) {
+                text.push_str(line);
+                text.push('\n');
+            }
+        }
+    }
+    if text.is_empty() && !open.ticked.iter().any(|t| t.0 == index) {
+        open.results.remove(&index);
+    } else {
+        open.results.insert(index, text);
+    }
 }
 
 /// A primary button, greyed out unless `enabled`.

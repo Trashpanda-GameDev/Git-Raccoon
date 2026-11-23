@@ -157,6 +157,9 @@ pub struct Settings {
     /// Have Git remember how conflicts were resolved, and resolve the same
     /// ones that way again (rerere, for the app's Git only).
     pub remember_resolutions: bool,
+    /// The conflict editor as panes (each side's whole file, and the
+    /// output), rather than a card per conflict.
+    pub conflict_panes: bool,
     /// How Pull goes.
     pub pull: PullOptions,
     pub hide_sidebar: bool,
@@ -364,6 +367,7 @@ impl Default for Settings {
             auto_fetch_minutes: 10,
             fetch_force: false,
             remember_resolutions: false,
+            conflict_panes: false,
             pull: PullOptions::default(),
             hide_sidebar: false,
             clone_dir: None,

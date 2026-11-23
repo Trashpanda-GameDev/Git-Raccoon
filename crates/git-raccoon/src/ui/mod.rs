@@ -3,6 +3,7 @@
 pub mod askpass;
 pub mod clone;
 pub mod conflict;
+pub mod conflict_panes;
 pub mod crash;
 pub mod cursors;
 pub mod details;

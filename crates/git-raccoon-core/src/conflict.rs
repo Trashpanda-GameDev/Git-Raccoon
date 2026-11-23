@@ -123,33 +123,45 @@ pub fn conflicts(chunks: &[Chunk]) -> impl Iterator<Item = &Conflict> {
 /// The file with conflict number `index` replaced by `text` (lines picked
 /// from either side, or written by hand); the other conflicts stay.
 pub fn resolve_with(chunks: &[Chunk], index: usize, text: &str) -> String {
+    resolve_many(
+        chunks,
+        &std::collections::BTreeMap::from([(index, text.to_string())]),
+    )
+}
+
+/// The file with each conflict in `results` (by number, counting conflicts
+/// only) replaced by its text; the others stay, with their markers.
+pub fn resolve_many(
+    chunks: &[Chunk],
+    results: &std::collections::BTreeMap<usize, String>,
+) -> String {
     let mut out = String::new();
     let mut n = 0;
     for chunk in chunks {
         match chunk {
             Chunk::Same(same) => out.push_str(same),
-            Chunk::Conflict(_) if n == index => {
-                n += 1;
-                out.push_str(text);
-                if !text.is_empty() && !text.ends_with('\n') {
-                    out.push('\n');
-                }
-            }
             Chunk::Conflict(c) => {
-                n += 1;
-                out.push_str(
-                    &format!("<<<<<<< {}\n", c.ours_label).replace("<<<<<<< \n", "<<<<<<<\n"),
-                );
-                out.push_str(&c.ours);
-                if let Some(base) = &c.base {
-                    out.push_str("|||||||\n");
-                    out.push_str(base);
+                if let Some(text) = results.get(&n) {
+                    out.push_str(text);
+                    if !text.is_empty() && !text.ends_with('\n') {
+                        out.push('\n');
+                    }
+                } else {
+                    out.push_str(
+                        &format!("<<<<<<< {}\n", c.ours_label).replace("<<<<<<< \n", "<<<<<<<\n"),
+                    );
+                    out.push_str(&c.ours);
+                    if let Some(base) = &c.base {
+                        out.push_str("|||||||\n");
+                        out.push_str(base);
+                    }
+                    out.push_str("=======\n");
+                    out.push_str(&c.theirs);
+                    out.push_str(
+                        &format!(">>>>>>> {}\n", c.theirs_label).replace(">>>>>>> \n", ">>>>>>>\n"),
+                    );
                 }
-                out.push_str("=======\n");
-                out.push_str(&c.theirs);
-                out.push_str(
-                    &format!(">>>>>>> {}\n", c.theirs_label).replace(">>>>>>> \n", ">>>>>>>\n"),
-                );
+                n += 1;
             }
         }
     }
@@ -405,6 +417,24 @@ mod tests {
         assert_eq!(c.base.as_deref(), Some("base\n"));
         assert!(parse("no markers\n").is_none());
         assert!(parse("<<<<<<< HEAD\nunfinished\n").is_none());
+    }
+
+    #[test]
+    fn resolves_several_conflicts_at_once() {
+        let chunks = parse(SAMPLE).unwrap();
+        let both = resolve_many(
+            &chunks,
+            &std::collections::BTreeMap::from([(0, "T\n".to_string()), (1, "XY".to_string())]),
+        );
+        assert_eq!(both, "a\nT\nb\nXY\n");
+        let one = resolve_many(
+            &chunks,
+            &std::collections::BTreeMap::from([(1, String::new())]),
+        );
+        assert!(
+            one.starts_with("a\n<<<<<<< HEAD\nours 1\n") && one.ends_with("b\n"),
+            "{one}"
+        );
     }
 
     #[test]

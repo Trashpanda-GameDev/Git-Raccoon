@@ -1288,6 +1288,10 @@ pub struct ConflictFile {
     /// found out for each conflict so far.
     pub why_open: bool,
     pub why: std::collections::BTreeMap<usize, Result<git_raccoon_core::why::Why, String>>,
+    /// Shown as panes (each side's whole file, and the output) rather
+    /// than a card per conflict; and the share of the height the sides get.
+    pub panes: bool,
+    pub pane_split: f32,
 }
 
 impl ConflictFile {
@@ -1304,6 +1308,8 @@ impl ConflictFile {
             results: std::collections::BTreeMap::new(),
             why_open: false,
             why: std::collections::BTreeMap::new(),
+            panes: false,
+            pane_split: 0.55,
         };
         open.reload(path);
         open

@@ -3,6 +3,10 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.26
+
+- **Conflicts as panes**: switch the conflict editor to panes (the button next to *Edit*) for a focused view that takes the whole window: each side's whole file next to each other, with its commit, and the file as it will be saved below. Tick a whole conflict with the box at its first line, or click single lines; tick a side's header box to take it everywhere. **Save** writes every conflict you chose at once; the rest stay conflicts. Your choice of cards or panes is remembered.
+
 ## 0.5.25
 
 - **Conflicts in one place**: a merge, rebase, cherry-pick or revert that stops on conflicts now shows them all in place of the history: what's going on ("Rebasing feature/login onto main · commit 3 of 5: *Remember the last user*"), how far along you are, and every file with what it needs (*Resolve…*, *Keep main's* / *Delete it* for a file deleted on one side). Resolved files can be reviewed, or their conflict brought back. **Skip this commit** for rebases. Sides are named by branch, not "ours" and "theirs".

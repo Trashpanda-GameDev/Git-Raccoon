@@ -7381,3 +7381,69 @@ fn remembers_how_a_conflict_was_resolved() {
     });
     assert!(read(&sample, "README.md").unwrap().contains("<<<<<<<"));
 }
+
+#[test]
+fn resolves_conflicts_in_panes() {
+    use egui::accesskit::Role;
+    let sample = Sample::build();
+    sample.write("notes.txt", "a\nb\nc\nd\ne\n1\n2\n3\n4\n5\n6\nf\ng\n");
+    git(&sample, &["add", "notes.txt"]);
+    git(&sample, &["commit", "-q", "-m", "Notes"]);
+    git(&sample, &["switch", "-q", "-c", "clash"]);
+    sample.write(
+        "notes.txt",
+        "a\nB clash\nc\nd\ne\n1\n2\n3\n4\n5\n6\nF clash\ng\n",
+    );
+    git(&sample, &["commit", "-q", "-am", "Notes from clash"]);
+    git(&sample, &["switch", "-q", "main"]);
+    sample.write(
+        "notes.txt",
+        "a\nB main\nc\nd\ne\n1\n2\n3\n4\n5\n6\nF main\ng\n",
+    );
+    git(&sample, &["commit", "-q", "-am", "Notes from main"]);
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    menu_item(&mut h, "clash", "Merge into main");
+    h.get_by_role_and_label(Role::Button, "Merge").click();
+    wait_for(&mut h, "the conflict", |app| conflicted(app) == 1);
+    h.get_by_label("Resolve notes.txt").click();
+    wait_for(&mut h, "the file", |app| {
+        app.repo().unwrap().conflict.is_some()
+    });
+    h.run_ok();
+
+    // Panes, remembered.
+    h.get_by_label("Show as panes").click();
+    h.run_ok();
+    assert!(h.state().settings().conflict_panes);
+    // It takes the whole window: no sidebar, no working changes.
+    assert!(h.query_by_label("LOCAL").is_none() && h.query_by_label("Stage all").is_none());
+    screenshot(&mut h, "34a-panes");
+    // Conflict 1: main's line; conflict 2: both, a line at a time.
+    h.get_by_label("Take main's conflict 1").click();
+    h.run_ok();
+    h.get_by_label("Next conflict").click();
+    h.run_ok();
+    screenshot(&mut h, "34b-next");
+    h.get_by_label("Take line 1 of clash in conflict 2").click();
+    h.run_ok();
+    h.get_by_label("Take line 1 of main in conflict 2").click();
+    h.run_ok();
+    screenshot(&mut h, "34-conflict-panes");
+    h.get_by_label("Save the output").click();
+    wait_for(&mut h, "the write", |app| {
+        app.repo()
+            .unwrap()
+            .conflict
+            .as_ref()
+            .is_some_and(|c| c.text.as_ref().is_ok_and(|t| !t.contains("<<<<<<<")))
+    });
+    assert_eq!(
+        read(&sample, "notes.txt").as_deref(),
+        Some("a\nB main\nc\nd\ne\n1\n2\n3\n4\n5\n6\nF main\nF clash\ng\n")
+    );
+    h.get_by_label("Show as cards").click();
+    h.run_ok();
+    assert!(!h.state().settings().conflict_panes);
+    h.get_by_label_contains("Stage all");
+}
