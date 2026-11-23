@@ -564,8 +564,12 @@ impl App {
             .all_repos()
             .any(|r| r.is_staging() || r.is_committing())
             || self.cloning.is_some()
-            // ssh-add and SSH's tests on the SSH page ask too.
+            // ssh-add and SSH's tests on the SSH page ask too, and so do
+            // the checks after an SSH failure.
             || crate::ui::ssh_settings::asking(ctx)
+            || self
+                .all_repos()
+                .any(|r| r.ssh_problem.as_ref().is_some_and(|p| p.asking()))
             || self.prompt_kept;
         if !git_running && let Some(prompt) = self.prompt.take() {
             prompt.request.answer(None);
@@ -2752,6 +2756,29 @@ impl App {
             });
         if let Some(op) = dialog::show(&ctx, &mut repo.dialog, &repo.refs) {
             repo.run(&ctx, op);
+        }
+        // A fetch, pull or push that failed over SSH: why, and the fix.
+        let path = repo.path().to_string();
+        if let Some(problem) = &mut repo.ssh_problem {
+            use crate::ui::ssh_problem::{self, Fix};
+            match ssh_problem::show(&ctx, problem, &self.settings.accounts, &path) {
+                Some(Fix::Retry) => {
+                    let op = problem.op.clone();
+                    repo.ssh_problem = None;
+                    repo.run(&ctx, op);
+                }
+                Some(Fix::Run(op)) => {
+                    repo.ssh_problem = None;
+                    repo.run(&ctx, op);
+                }
+                Some(Fix::Settings) => {
+                    repo.ssh_problem = None;
+                    crate::ui::settings::open_on(&ctx, crate::ui::settings::Section::Ssh);
+                    self.settings_open = true;
+                }
+                Some(Fix::Close) => repo.ssh_problem = None,
+                None => {}
+            }
         }
     }
 }

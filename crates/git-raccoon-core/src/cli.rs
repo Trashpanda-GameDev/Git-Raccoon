@@ -90,7 +90,9 @@ fn git_asking(path: &str, ask: bool) -> Command {
         // With nobody to ask, SSH would wait for a passphrase or host key on
         // a terminal the app doesn't have (or, started from one, block on it
         // unseen). Keys in an agent and known hosts still work.
-        let ssh = chosen.as_deref().unwrap_or("ssh");
+        // The user's own core.sshCommand stays, with the option added.
+        let theirs = users_ssh_command(path);
+        let ssh = chosen.as_deref().or(theirs.as_deref()).unwrap_or("ssh");
         cmd.env("GIT_SSH_COMMAND", format!("{ssh} -o BatchMode=yes"));
     }
     #[cfg(windows)]
@@ -132,6 +134,34 @@ pub(crate) fn asking_env(cmd: &mut Command) {
             cmd.args(["-o", "BatchMode=yes"]);
         }
     }
+}
+
+/// The repository's (or user's) `core.sshCommand`, looked up once per
+/// repository: setting `GIT_SSH_COMMAND` would otherwise hide it.
+fn users_ssh_command(path: &str) -> Option<String> {
+    static SEEN: std::sync::Mutex<Option<std::collections::HashMap<String, Option<String>>>> =
+        std::sync::Mutex::new(None);
+    let mut seen = SEEN.lock().ok()?;
+    let seen = seen.get_or_insert_with(Default::default);
+    if let Some(found) = seen.get(path) {
+        return found.clone();
+    }
+    let mut cmd = Command::new("git");
+    cmd.args(["-C", path, "config", "core.sshCommand"])
+        .stdin(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        cmd.creation_flags(0x0800_0000);
+    }
+    let found = cmd
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|c| !c.is_empty());
+    seen.insert(path.to_string(), found.clone());
+    found
 }
 
 /// Whether an environment variable is unset or empty (Git ignores empty ones).

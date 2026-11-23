@@ -1341,6 +1341,142 @@ pub fn replace_host_key(ssh: &Ssh, dir: &Path, host: &str, line: &str) -> Result
         .map_err(|e| Error::Unsupported(format!("couldn't write known_hosts: {e}")))
 }
 
+/// Whether Git's error is SSH failing to connect or sign in (rather than
+/// Git refusing something).
+pub fn is_ssh_failure(text: &str) -> bool {
+    let t = text.to_lowercase();
+    t.contains("permission denied (publickey")
+        || t.contains("host key verification failed")
+        || t.contains("remote host identification has changed")
+        || t.contains("ssh: connect to host")
+        || t.contains("ssh: could not resolve hostname")
+        || t.contains("kex_exchange_identification")
+        || t.contains("connection closed by remote host")
+            && t.contains("could not read from remote")
+}
+
+/// A remote's SSH address, in either form Git takes:
+/// `git@github.com:owner/repo.git` or `ssh://git@host:2222/owner/repo.git`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SshUrl {
+    pub user: String,
+    pub host: String,
+    pub port: Option<u16>,
+    /// "owner/repo.git" (subgroups included).
+    pub path: String,
+}
+
+pub fn parse_url(url: &str) -> Option<SshUrl> {
+    let url = url.trim();
+    if let Some(rest) = url
+        .strip_prefix("ssh://")
+        .or_else(|| url.strip_prefix("git+ssh://"))
+    {
+        let (authority, path) = rest.split_once('/')?;
+        let (user, hostport) = authority.rsplit_once('@').unwrap_or(("", authority));
+        let (host, port) = match hostport.rsplit_once(':') {
+            Some((h, p)) if p.chars().all(|c| c.is_ascii_digit()) => (h, p.parse().ok()),
+            _ => (hostport, None),
+        };
+        return Some(SshUrl {
+            user: user.to_string(),
+            host: host.to_string(),
+            port,
+            path: path.to_string(),
+        });
+    }
+    if url.contains("://") {
+        return None;
+    }
+    // scp-like: [user@]host:path (not a Windows drive like C:\).
+    let (before, path) = url.split_once(':')?;
+    if before.len() == 1 || before.contains('/') || path.starts_with("//") {
+        return None;
+    }
+    let (user, host) = before.rsplit_once('@').unwrap_or(("", before));
+    Some(SshUrl {
+        user: user.to_string(),
+        host: host.to_string(),
+        port: None,
+        path: path.trim_start_matches('/').to_string(),
+    })
+}
+
+/// The HTTPS address for an SSH one (`git@github.com:o/r.git` →
+/// `https://github.com/o/r.git`); GitHub's port-443 SSH host maps back to
+/// github.com.
+pub fn https_url(url: &str) -> Option<String> {
+    let u = parse_url(url)?;
+    let host = match u.host.as_str() {
+        "ssh.github.com" => "github.com",
+        "altssh.gitlab.com" => "gitlab.com",
+        h => h,
+    };
+    Some(format!("https://{host}/{}", u.path))
+}
+
+/// The SSH address for an HTTPS one (`https://github.com/o/r` →
+/// `git@github.com:o/r.git`).
+pub fn ssh_url(url: &str) -> Option<String> {
+    let rest = url
+        .trim()
+        .strip_prefix("https://")
+        .or_else(|| url.trim().strip_prefix("http://"))?;
+    let (authority, path) = rest.split_once('/')?;
+    // Credentials and a web port don't carry over.
+    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = host.split(':').next().unwrap_or(host);
+    let path = path.trim_end_matches('/');
+    if path.is_empty() {
+        return None;
+    }
+    let path = if path.ends_with(".git") {
+        path.to_string()
+    } else {
+        format!("{path}.git")
+    };
+    Some(format!("git@{host}:{path}"))
+}
+
+/// GitHub's SSH over port 443 (for when port 22 is blocked):
+/// `ssh://git@ssh.github.com:443/o/r.git`. Only for GitHub.
+pub fn port_443_url(url: &str) -> Option<String> {
+    let u = parse_url(url)?;
+    if !matches!(u.host.as_str(), "github.com" | "ssh.github.com") {
+        return None;
+    }
+    Some(format!("ssh://git@ssh.github.com:443/{}", u.path))
+}
+
+/// Everything known about why SSH to a remote fails: the connection test,
+/// and the keys and agent it had to offer.
+#[derive(Debug, Clone)]
+pub struct Diagnosis {
+    pub url: SshUrl,
+    pub connection: Connection,
+    pub keys: Vec<Key>,
+    pub agent: Agent,
+}
+
+/// Tests the connection to `url`'s host the way Git would (the `ssh` Git
+/// runs, asking in the app when it can), and gathers the keys and agent.
+/// Blocks.
+pub fn diagnose(ssh: &Ssh, url: &SshUrl) -> Diagnosis {
+    let user = if url.user.is_empty() {
+        "git"
+    } else {
+        &url.user
+    };
+    let connection = test_connection(ssh, user, &url.host, url.port)
+        .unwrap_or_else(|e| Connection::Other(e.to_string()));
+    Diagnosis {
+        url: url.clone(),
+        connection,
+        keys: ssh_dir().as_deref().map(keys).unwrap_or_default(),
+        agent: agent(ssh),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1966,6 +2102,72 @@ mod tests {
             hosts.iter().any(|h| h.names == ["gitlab.com"]),
             "others kept"
         );
+    }
+
+    #[test]
+    fn tells_ssh_failures_from_others() {
+        assert!(is_ssh_failure(
+            "git@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository."
+        ));
+        assert!(is_ssh_failure(
+            "Host key verification failed.\nfatal: Could not read from remote repository."
+        ));
+        assert!(is_ssh_failure(
+            "ssh: connect to host github.com port 22: Connection timed out"
+        ));
+        assert!(is_ssh_failure(
+            "ssh: Could not resolve hostname githb.com: Name or service not known"
+        ));
+        assert!(!is_ssh_failure("! [rejected] main -> main (fetch first)"));
+        assert!(!is_ssh_failure(
+            "fatal: Authentication failed for 'https://github.com/o/r.git/'"
+        ));
+    }
+
+    #[test]
+    fn converts_remote_addresses() {
+        assert_eq!(
+            parse_url("git@github.com:rocky/stash-box.git"),
+            Some(SshUrl {
+                user: "git".into(),
+                host: "github.com".into(),
+                port: None,
+                path: "rocky/stash-box.git".into()
+            })
+        );
+        assert_eq!(
+            parse_url("ssh://git@git.example.com:2222/team/sub/app.git"),
+            Some(SshUrl {
+                user: "git".into(),
+                host: "git.example.com".into(),
+                port: Some(2222),
+                path: "team/sub/app.git".into()
+            })
+        );
+        assert_eq!(parse_url("https://github.com/o/r.git"), None);
+        assert_eq!(parse_url(r"C:\repos\app"), None);
+        assert_eq!(parse_url("/srv/git/app.git"), None);
+        assert_eq!(
+            https_url("git@gitlab.com:team/sub/app.git").as_deref(),
+            Some("https://gitlab.com/team/sub/app.git")
+        );
+        assert_eq!(
+            https_url("ssh://git@ssh.github.com:443/o/r.git").as_deref(),
+            Some("https://github.com/o/r.git")
+        );
+        assert_eq!(
+            ssh_url("https://github.com/o/r").as_deref(),
+            Some("git@github.com:o/r.git")
+        );
+        assert_eq!(
+            ssh_url("https://me@gitlab.example.com:8443/team/sub/app.git/").as_deref(),
+            Some("git@gitlab.example.com:team/sub/app.git")
+        );
+        assert_eq!(
+            port_443_url("git@github.com:o/r.git").as_deref(),
+            Some("ssh://git@ssh.github.com:443/o/r.git")
+        );
+        assert_eq!(port_443_url("git@gitlab.com:o/r.git"), None);
     }
 
     #[test]

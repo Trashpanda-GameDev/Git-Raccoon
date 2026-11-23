@@ -7680,3 +7680,78 @@ fn checks_a_new_hosts_key_against_the_published_ones() {
     h.run_ok();
     assert_eq!(answer.try_recv().unwrap().as_deref(), Some("yes"));
 }
+
+/// A failed push over SSH: why, with the fix.
+#[cfg(unix)]
+#[test]
+fn explains_an_ssh_failure_and_offers_the_fix() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let sample = Sample::build();
+    let home = std::env::temp_dir().join(format!("git-raccoon-sshfail-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    let dir = home.join(".ssh");
+    git_raccoon_core::ssh::set_ssh_dir(Some(dir.clone()));
+    git_raccoon_core::ssh::create_key(&dir, "id_ed25519", "rocky@box", None).unwrap();
+    // An ssh that offers a key, which the host refuses.
+    let fake = home.join("ssh");
+    std::fs::write(
+        &fake,
+        "#!/bin/sh\necho 'debug1: Offering public key: /home/r/.ssh/id_ed25519 ED25519 SHA256:zzz agent' >&2\necho 'git@git.example.com: Permission denied (publickey).' >&2\nexit 255\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    git(
+        &sample,
+        &["config", "core.sshCommand", &fake.to_string_lossy()],
+    );
+    // Not github.com: some setups rewrite its SSH addresses to HTTPS.
+    git(
+        &sample,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "git@git.example.com:rocky/app.git",
+        ],
+    );
+    git(
+        &sample,
+        &["commit", "-q", "--allow-empty", "-m", "Local work"],
+    );
+
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    h.get_by_label("Push").click();
+    let start = Instant::now();
+    while h
+        .query_by_label_contains("didn't accept your SSH key")
+        .is_none()
+    {
+        assert!(
+            start.elapsed() < Duration::from_secs(30),
+            "no SSH problem shown; error: {:?}",
+            h.state().error()
+        );
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    h.run_ok();
+    h.get_by_label_contains("Couldn't push: git.example.com didn't accept your SSH key");
+    h.get_by_label("Key found in ~/.ssh");
+    h.get_by_label("git.example.com reachable");
+    assert!(
+        h.state().repo().unwrap().refresh_error.is_none(),
+        "not Git's words"
+    );
+    screenshot(&mut h, "100-ssh-failure");
+
+    // HTTPS instead: the remote's address changes (then it tries again).
+    h.get_by_label("Use HTTPS for origin instead").click();
+    wait_for(&mut h, "the new address", |app| {
+        app.repo().unwrap().refs.remotes.iter().any(|r| {
+            r.name == "origin" && r.url.as_deref() == Some("https://git.example.com/rocky/app.git")
+        })
+    });
+    git_raccoon_core::ssh::set_ssh_dir(None);
+    let _ = std::fs::remove_dir_all(&home);
+}

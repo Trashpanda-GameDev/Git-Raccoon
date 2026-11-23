@@ -371,6 +371,16 @@ pub fn open_on_updates(ctx: &egui::Context) {
     ctx.data_mut(|d| d.insert_temp(id, view));
 }
 
+/// Opens the settings window on a page next time it's shown.
+pub fn open_on(ctx: &egui::Context, section: Section) {
+    let id = egui::Id::new("settings-window");
+    let mut view: View = ctx.data(|d| d.get_temp(id)).unwrap_or_default();
+    view.section = section;
+    view.search.clear();
+    view.editing = None;
+    ctx.data_mut(|d| d.insert_temp(id, view));
+}
+
 /// Opens the settings window on the Agents page next time it's shown.
 pub fn open_on_agents(ctx: &egui::Context) {
     let id = egui::Id::new("settings-window");

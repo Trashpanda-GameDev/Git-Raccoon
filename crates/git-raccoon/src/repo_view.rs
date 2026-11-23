@@ -622,7 +622,7 @@ impl Op {
         }
     }
 
-    fn verb(&self) -> &'static str {
+    pub(crate) fn verb(&self) -> &'static str {
         match self {
             Op::StageFile(_)
             | Op::StageAll
@@ -1582,6 +1582,8 @@ pub struct RepoView {
     auto_fetch: Option<Task<Result<(), String>>>,
     /// Why the last background fetch failed, if it did.
     pub auto_fetch_error: Option<String>,
+    /// A fetch, pull or push that failed over SSH, being looked into.
+    pub(crate) ssh_problem: Option<crate::ui::ssh_problem::SshProblem>,
     pub extras: Extras,
     /// A repository (a submodule or worktree) to open in a tab.
     pub open_request: Option<String>,
@@ -1692,6 +1694,7 @@ impl RepoView {
             last_fetch: std::time::Instant::now(),
             auto_fetch: None,
             auto_fetch_error: None,
+            ssh_problem: None,
             refresh_started: std::time::Instant::now(),
             diff: Keyed::default(),
             images: Keyed::default(),
@@ -1938,7 +1941,14 @@ impl RepoView {
         if let Some(result) = self.auto_fetch.as_ref().and_then(Task::poll) {
             self.auto_fetch = None;
             self.last_fetch = std::time::Instant::now();
-            self.auto_fetch_error = result.err();
+            // SSH failing: said quietly, with where to find out more.
+            self.auto_fetch_error = result.err().map(|e| {
+                if git_raccoon_core::ssh::is_ssh_failure(&e) {
+                    "it couldn't connect over SSH. Fetch to see why, and the fix.".into()
+                } else {
+                    e
+                }
+            });
             self.refresh(ctx);
         }
         if minutes == 0 || self.auto_fetch.is_some() || self.op.is_some() {
@@ -2878,6 +2888,38 @@ impl RepoView {
         });
     }
 
+    /// The remote an operation went to over SSH, and its address: the
+    /// one it names, else the upstream's, else origin.
+    fn ssh_remote(&self, op: &Op) -> Option<(String, String)> {
+        let named = match op {
+            Op::Then(ops) => return ops.iter().rev().find_map(|o| self.ssh_remote(o)),
+            Op::FetchRemote(r, _)
+            | Op::PushBranch { remote: r, .. }
+            | Op::Push {
+                to: Some((r, _)), ..
+            }
+            | Op::Pull { from: Some(r), .. }
+            | Op::FetchInto { remote: r, .. } => Some(r.clone()),
+            Op::Fetch(_) | Op::Pull { .. } | Op::Push { .. } => None,
+            _ => return None,
+        };
+        let remote = named
+            .or_else(|| {
+                self.head_upstream()
+                    .and_then(|u| u.name.split_once('/').map(|(r, _)| r.to_string()))
+            })
+            .unwrap_or_else(|| "origin".into());
+        let url = self
+            .refs
+            .remotes
+            .iter()
+            .find(|r| r.name == remote)?
+            .url
+            .clone()?;
+        git_raccoon_core::ssh::parse_url(&url)?;
+        Some((remote, url))
+    }
+
     /// When Git refused an operation for a reason the user can act on,
     /// offers the way on. Returns whether it did.
     fn offer_way_on(&mut self, op: &Op, error: &Error) -> bool {
@@ -3309,7 +3351,18 @@ impl RepoView {
                 }
                 Ok(None) => {}
                 Err(e) => {
-                    if !self.offer_way_on(&op, &e) {
+                    let said = e.to_string();
+                    if git_raccoon_core::ssh::is_ssh_failure(&said)
+                        && let Some((remote, url)) = self.ssh_remote(&op)
+                    {
+                        // Found out why, with the fix, instead of Git's words.
+                        self.ssh_problem = Some(crate::ui::ssh_problem::SshProblem::new(
+                            op.clone(),
+                            remote,
+                            url,
+                            said,
+                        ));
+                    } else if !self.offer_way_on(&op, &e) {
                         self.refresh_error = Some(format!("Could not {}:\n{e}", op.verb()));
                     }
                 }

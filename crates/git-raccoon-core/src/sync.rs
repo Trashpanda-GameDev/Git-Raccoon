@@ -63,11 +63,11 @@ fn adds_hint(text: String) -> Error {
         )
     } else if lower.contains("permission denied (publickey") {
         Some(
-            "Git couldn't sign in over SSH. Add your key to your SSH agent (ssh-add), or check the key is registered with the host.",
+            "Git couldn't sign in over SSH. Settings › SSH shows your keys, whether they're in the agent and on your accounts, and can test the connection.",
         )
     } else if lower.contains("host key verification failed") {
         Some(
-            "This host isn't known yet. Connect once from a terminal (for example: ssh -T git@github.com) to confirm its key.",
+            "SSH doesn't trust this host yet. Test the connection in Settings › SSH: it asks, and checks the host's key against the one it publishes.",
         )
     } else {
         None
