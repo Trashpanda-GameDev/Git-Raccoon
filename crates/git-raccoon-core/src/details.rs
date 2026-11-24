@@ -272,7 +272,7 @@ pub(crate) fn find_delta(diff: &Diff, file: &str) -> Result<usize> {
 }
 
 /// Blobs larger than this are reported by size only.
-pub(crate) const MAX_BLOB_BYTES: usize = 20 * 1024 * 1024;
+pub const MAX_BLOB_BYTES: usize = 20 * 1024 * 1024;
 
 /// One version of a file's contents, for previews such as images.
 #[derive(Debug)]

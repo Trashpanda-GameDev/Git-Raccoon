@@ -45,6 +45,29 @@ pub fn file_at(path: &str, id: &str, file: &str) -> Result<Option<Vec<u8>>> {
     Ok(Some(blob.content().to_vec()))
 }
 
+/// A file's two versions for a preview: `old_file` at `from` and `file` at
+/// `to` (a side is `None` where it isn't there).
+pub fn blobs_between(
+    path: &str,
+    from: &str,
+    to: &str,
+    old_file: &str,
+    file: &str,
+) -> Result<crate::details::FileBlobs> {
+    let side = |id: &str, file: &str| -> Result<Option<crate::details::BlobData>> {
+        Ok(
+            file_at(path, id, file)?.map(|bytes| crate::details::BlobData {
+                size: bytes.len(),
+                bytes: (bytes.len() <= crate::details::MAX_BLOB_BYTES).then_some(bytes),
+            }),
+        )
+    };
+    Ok(crate::details::FileBlobs {
+        old: side(from, old_file)?,
+        new: side(to, file)?,
+    })
+}
+
 /// What changed from `from` to `to` (each a commit or branch), file by file.
 pub fn changes(path: &str, from: &str, to: &str) -> Result<Vec<FileDiff>> {
     let repo = Repository::discover(path)?;

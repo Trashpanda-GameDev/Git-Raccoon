@@ -3579,6 +3579,8 @@ fn new_form(repo: &RepoView, branch: Option<&str>) -> Option<crate::ui::forge::N
         compared: String::new(),
         files: Vec::new(),
         open_file: None,
+        image_blobs: Default::default(),
+        images: Default::default(),
         template: (!templates.is_empty()).then_some(0),
         templates,
         reviewers: Vec::new(),
@@ -3634,8 +3636,15 @@ fn compare_form(repo: &RepoView, form: &mut crate::ui::forge::NewForm) {
     }
     // What it changes: from where it left the target.
     form.open_file = None;
-    form.files = git_raccoon_core::request::merge_base(repo.path(), &source, &target)
-        .and_then(|base| git_raccoon_core::request::changes(repo.path(), &base, &source))
+    form.images.clear();
+    form.image_blobs.clear();
+    let base = git_raccoon_core::request::merge_base(repo.path(), &source, &target).ok();
+    form.files = base
+        .as_deref()
+        .ok_or(())
+        .and_then(|base| {
+            git_raccoon_core::request::changes(repo.path(), base, &source).map_err(drop)
+        })
         .map(|files| {
             files
                 .into_iter()
@@ -3643,6 +3652,21 @@ fn compare_form(repo: &RepoView, form: &mut crate::ui::forge::NewForm) {
                 .collect()
         })
         .unwrap_or_default();
+    // Images' two versions, for previews.
+    if let Some(base) = &base {
+        for d in &form.files {
+            let path = &d.diff.path;
+            if !crate::images::is_image(path) {
+                continue;
+            }
+            let old = d.diff.old_path.as_deref().unwrap_or(path);
+            if let Ok(blobs) =
+                git_raccoon_core::request::blobs_between(repo.path(), base, &source, old, path)
+            {
+                form.image_blobs.insert(path.clone(), blobs);
+            }
+        }
+    }
     form.to_push = match upstream.filter(|u| !u.gone) {
         Some(u) => u.ahead,
         None => form.commits.len(),

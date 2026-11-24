@@ -847,22 +847,254 @@ pub(crate) fn side(
     code(painter, body, line, &d.jobs[h][l], shift);
 }
 
-fn image_preview(ui: &mut egui::Ui, pair: &ImagePair) {
+/// How a changed image is shown: the two versions side by side, one frame
+/// with a line to slide between them, or one laid over the other.
+#[derive(Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub(crate) enum ImageView {
+    #[default]
+    SideBySide,
+    Swipe,
+    Onion,
+}
+
+const IMAGE_VIEW: &str = "image-view";
+/// Where the swipe line is, across the image (0 = all after, 1 = all before).
+const SWIPE_AT: &str = "image-swipe-at";
+/// How much of the after version shows in the onion skin.
+const ONION_MIX: &str = "image-onion-mix";
+
+pub(crate) fn image_preview(ui: &mut egui::Ui, pair: &ImagePair) {
     egui::Frame::new()
         .inner_margin(egui::Margin::same(16))
         .show(ui, |ui| {
-            let gap = 16.0;
-            let w = ((ui.available_width() - gap) / 2.0).max(120.0);
-            ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = gap;
-                image_side(ui, "Before", pair.old.as_ref(), "New file", w);
-                image_side(ui, "After", pair.new.as_ref(), "Deleted", w);
-            });
+            // Both versions are pictures: they can be compared in one frame.
+            let both = match (&pair.old, &pair.new) {
+                (Some(old), Some(new)) => match (&old.preview, &new.preview) {
+                    (Preview::Image { .. }, Preview::Image { .. }) => Some((old, new)),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let id = egui::Id::new(IMAGE_VIEW);
+            let mut view = if both.is_some() {
+                ui.data_mut(|d| d.get_persisted::<ImageView>(id))
+                    .unwrap_or_default()
+            } else {
+                ImageView::SideBySide
+            };
+            if both.is_some() {
+                ui.horizontal(|ui| {
+                    let picked = widgets::segmented(
+                        ui,
+                        view,
+                        &[
+                            (ImageView::SideBySide, "Side by side"),
+                            (ImageView::Swipe, "Swipe"),
+                            (ImageView::Onion, "Onion skin"),
+                        ],
+                    );
+                    if picked != view {
+                        view = picked;
+                        ui.data_mut(|d| d.insert_persisted(id, view));
+                    }
+                    if view == ImageView::Onion {
+                        ui.add_space(16.0);
+                        onion_slider(ui);
+                    }
+                });
+                ui.add_space(10.0);
+            }
+            match (view, both) {
+                (ImageView::Swipe | ImageView::Onion, Some((old, new))) => {
+                    overlaid(ui, view, old, new)
+                }
+                _ => {
+                    let gap = 16.0;
+                    let w = ((ui.available_width() - gap) / 2.0).max(120.0);
+                    ui.horizontal_top(|ui| {
+                        ui.spacing_mut().item_spacing.x = gap;
+                        image_side(ui, "Before", pair.old.as_ref(), "New file", w);
+                        image_side(ui, "After", pair.new.as_ref(), "Deleted", w);
+                    });
+                }
+            }
         });
     ui.painter().hline(
         ui.max_rect().x_range(),
         ui.cursor().top(),
         Stroke::new(1.0, theme::border()),
+    );
+}
+
+/// "Before ━━●━━ After": how much of each version the onion skin shows.
+fn onion_slider(ui: &mut egui::Ui) {
+    let id = egui::Id::new(ONION_MIX);
+    let mut mix = ui.data_mut(|d| d.get_persisted::<f32>(id)).unwrap_or(0.5);
+    let small = |t: &str| RichText::new(t).size(12.0).color(theme::muted());
+    ui.label(small("Before"));
+    let slider = ui.add(
+        egui::Slider::new(&mut mix, 0.0..=1.0)
+            .show_value(false)
+            .trailing_fill(true),
+    );
+    slider.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Slider,
+            true,
+            "How much of the after version shows",
+        )
+    });
+    ui.label(small("After"));
+    if slider.changed() {
+        ui.data_mut(|d| d.insert_persisted(id, mix));
+    }
+}
+
+/// "64 × 69 · 653 B" for a side.
+fn describe(side: &Side) -> String {
+    match &side.preview {
+        Preview::Image { width, height, .. } => {
+            format!("{width} × {height} · {}", format::bytes(side.size))
+        }
+        _ => format::bytes(side.size),
+    }
+}
+
+/// Both versions in one frame, centred on each other at the same scale: the
+/// before on the left of a line you slide and the after on its right, or the
+/// after laid over the before as much as the slider says.
+fn overlaid(ui: &mut egui::Ui, view: ImageView, old: &Side, new: &Side) {
+    let (
+        Preview::Image {
+            texture: before,
+            width: bw,
+            height: bh,
+        },
+        Preview::Image {
+            texture: after,
+            width: aw,
+            height: ah,
+        },
+    ) = (&old.preview, &new.preview)
+    else {
+        return;
+    };
+    ui.horizontal(|ui| {
+        let muted = |t: String| RichText::new(t).size(12.0).color(theme::muted());
+        ui.label(RichText::new("Before").strong().size(12.0));
+        ui.label(muted(describe(old)));
+        ui.label(muted(icon::ARROW_RIGHT.into()));
+        ui.label(RichText::new("After").strong().size(12.0));
+        ui.label(muted(describe(new)));
+    });
+    let width = ui.available_width().max(120.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, IMAGE_BOX), Sense::hover());
+    let painter = ui.painter_at(rect);
+    checkerboard(&painter, rect);
+
+    // One scale for both, so their pixels line up; never enlarged.
+    let (bw, bh, aw, ah) = (*bw as f32, *bh as f32, *aw as f32, *ah as f32);
+    let fit = rect.shrink(12.0);
+    let scale = (fit.width() / bw.max(aw))
+        .min(fit.height() / bh.max(ah))
+        .min(1.0);
+    let at = |w: f32, h: f32| Rect::from_center_size(rect.center(), egui::vec2(w, h) * scale);
+    let (b_rect, a_rect) = (at(bw, bh), at(aw, ah));
+    let both = b_rect.union(a_rect);
+    let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+    let draw = |painter: &egui::Painter, texture: &egui::TextureHandle, shown: Rect, alpha: f32| {
+        painter.image(
+            texture.id(),
+            shown,
+            uv,
+            Color32::WHITE.gamma_multiply(alpha),
+        );
+    };
+
+    match view {
+        ImageView::Onion => {
+            let mix = ui
+                .data_mut(|d| d.get_persisted::<f32>(egui::Id::new(ONION_MIX)))
+                .unwrap_or(0.5);
+            draw(&painter, before, b_rect, 1.0 - mix);
+            draw(&painter, after, a_rect, mix);
+        }
+        _ => {
+            let id = egui::Id::new(SWIPE_AT);
+            let mut share = ui.data_mut(|d| d.get_persisted::<f32>(id)).unwrap_or(0.5);
+            // Dragging (or clicking) anywhere on the picture moves the line.
+            let hit = ui.interact(rect, ui.id().with("image-swipe"), Sense::click_and_drag());
+            hit.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::Other,
+                    true,
+                    "Slide between before and after",
+                )
+            });
+            let hit = hit.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+            if (hit.dragged() || hit.clicked())
+                && let Some(p) = hit.interact_pointer_pos()
+                && both.width() > 0.0
+            {
+                share = ((p.x - both.left()) / both.width()).clamp(0.0, 1.0);
+                ui.data_mut(|d| d.insert_persisted(id, share));
+                ui.ctx().request_repaint();
+            }
+            let x = both.left() + both.width() * share;
+            let left = Rect::from_x_y_ranges(rect.left()..=x, rect.y_range());
+            let right = Rect::from_x_y_ranges(x..=rect.right(), rect.y_range());
+            draw(&painter.with_clip_rect(left), before, b_rect, 1.0);
+            draw(&painter.with_clip_rect(right), after, a_rect, 1.0);
+
+            // The line, with a grip in the middle and a word on each side.
+            let ys = rect.shrink(1.0).y_range();
+            let active = hit.hovered() || hit.dragged();
+            let colour = if active {
+                theme::accent()
+            } else {
+                theme::text()
+            };
+            painter.vline(x, ys, Stroke::new(2.0, colour));
+            painter.circle(
+                Pos2::new(x, rect.center().y),
+                10.0,
+                theme::bg_raised(),
+                Stroke::new(2.0, colour),
+            );
+            painter.text(
+                Pos2::new(x, rect.center().y),
+                egui::Align2::CENTER_CENTER,
+                icon::ARROWS_LEFT_RIGHT,
+                egui::FontId::proportional(12.0),
+                colour,
+            );
+            let tag = |pos: Pos2, align: egui::Align2, text: &str| {
+                let galley = painter.layout_no_wrap(text.into(), theme::body(11.0), theme::text());
+                let r = align.anchor_size(pos, galley.size() + egui::vec2(12.0, 6.0));
+                painter.rect_filled(r, 4, theme::bg_raised().gamma_multiply(0.9));
+                painter.galley(r.min + egui::vec2(6.0, 3.0), galley, theme::text());
+            };
+            if x - rect.left() > 70.0 {
+                tag(
+                    Pos2::new(x - 8.0, rect.top() + 8.0),
+                    egui::Align2::RIGHT_TOP,
+                    "Before",
+                );
+            }
+            if rect.right() - x > 70.0 {
+                tag(
+                    Pos2::new(x + 8.0, rect.top() + 8.0),
+                    egui::Align2::LEFT_TOP,
+                    "After",
+                );
+            }
+        }
+    }
+    painter.rect_stroke(
+        rect,
+        6,
+        Stroke::new(1.0, theme::border()),
+        egui::StrokeKind::Inside,
     );
 }
 

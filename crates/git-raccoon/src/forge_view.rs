@@ -125,6 +125,8 @@ pub struct RequestState {
     /// Files shown whole, and blamed, by path (`Err` if they couldn't be).
     pub wholes: HashMap<String, Result<Arc<RenderedDiff>, String>>,
     pub blames: HashMap<String, Result<Arc<Blame>, String>>,
+    /// Image files' two versions, by path, for previews.
+    pub images: HashMap<String, Result<Arc<crate::images::ImagePair>, String>>,
     loading: Vec<(String, Task<Result<Loaded, String>>)>,
     /// The thread gone to with Previous / Next in Changes (its id), and
     /// whether it's still to be scrolled to.
@@ -150,6 +152,7 @@ pub struct Synced {
 enum Loaded {
     Whole(Arc<RenderedDiff>),
     Blame(Arc<Blame>),
+    Images(Arc<crate::images::ImagePair>),
 }
 
 /// A page of requests and one of issues, each with whether there are more.
@@ -467,9 +470,14 @@ impl ForgeView {
                     Ok(Loaded::Blame(b)) => {
                         state.blames.insert(path, Ok(b));
                     }
+                    Ok(Loaded::Images(pair)) => {
+                        state.images.insert(path, Ok(pair));
+                    }
                     Err(e) => {
                         if kind == "blame" {
                             state.blames.insert(path, Err(e));
+                        } else if kind == "images" {
+                            state.images.insert(path, Err(e));
                         } else {
                             state.wholes.insert(path, Err(e));
                         }
@@ -509,6 +517,26 @@ impl ForgeView {
                 ))))
             });
             state.loading.push((whole_key, task));
+        }
+        let images_key = format!("images\0{}", file.path);
+        if crate::images::is_image(&file.path)
+            && !state.images.contains_key(&file.path)
+            && !busy(state, &images_key)
+        {
+            let (root, refs, file) = (root.to_string(), o.refs.clone(), file.clone());
+            let ctx2 = ctx.clone();
+            let task = Task::spawn(ctx, move || {
+                use git_raccoon_core::request;
+                let base = request::merge_base(&root, &refs.head, &refs.base)
+                    .map_err(|e| e.to_string())?;
+                let old_path = file.old_path.as_deref().unwrap_or(&file.path);
+                let blobs = request::blobs_between(&root, &base, &refs.head, old_path, &file.path)
+                    .map_err(|e| e.to_string())?;
+                Ok(Loaded::Images(Arc::new(crate::images::ImagePair::decode(
+                    &ctx2, &file.path, blobs,
+                ))))
+            });
+            state.loading.push((images_key, task));
         }
         let blame_key = format!("blame\0{}", file.path);
         if state.blame && !state.blames.contains_key(&file.path) && !busy(state, &blame_key) {

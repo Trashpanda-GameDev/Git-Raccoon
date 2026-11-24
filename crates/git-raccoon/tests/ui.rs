@@ -276,6 +276,33 @@ fn settle(h: &mut Harness<'_, App>) {
     panic!("app still busy after 20 s");
 }
 
+/// An image open in a diff: side by side, then a line slid across one
+/// frame, then one laid over the other; the choice is kept.
+fn compares_images(h: &mut Harness<'_, App>) {
+    let data = |h: &Harness<'_, App>, key: &str| {
+        h.ctx
+            .data_mut(|d| d.get_persisted::<f32>(egui::Id::new(key)))
+    };
+    h.get_by_label("Side by side");
+    assert!(h.query_by_label("Slide between before and after").is_none());
+    h.get_by_label("Swipe").click();
+    h.run_ok();
+    let frame = h.get_by_label("Slide between before and after").rect();
+    let from = frame.center();
+    drag(h, from, from - egui::vec2(frame.width() / 8.0, 0.0));
+    let at = data(h, "image-swipe-at").expect("the line moved");
+    assert!(at < 0.5, "the line went left: {at}");
+    screenshot(h, "6b-image-swipe");
+    h.get_by_label("Onion skin").click();
+    h.run_ok();
+    h.get_by_label("How much of the after version shows");
+    assert!(h.query_by_label("Slide between before and after").is_none());
+    screenshot(h, "6c-image-onion");
+    // Back as it was, for the screenshots after.
+    h.get_by_label("Side by side").click();
+    h.run_ok();
+}
+
 fn screenshot(h: &mut Harness<'_, App>, name: &str) {
     let Ok(dir) = std::env::var("GIT_RACCOON_SCREENSHOTS") else {
         return;
@@ -406,6 +433,7 @@ fn browses_history_details_diffs_and_images() {
     h.get_by_label("assets/icon.png").click();
     settle(&mut h);
     screenshot(&mut h, "6-image");
+    compares_images(&mut h);
     h.key_press(Key::Escape);
     h.run_ok();
 
@@ -3801,7 +3829,8 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
         ("GET /api/v4/projects/team%2Fapp/merge_requests/12/diffs", r#"[{"old_path": "README.md", "new_path": "README.md",
             "diff": "@@ -1,2 +1,4 @@\n # Sample\n-Old line\n+New line\n+Another\n+Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide Wide\n"},
             {"old_path": "src/a-rather-long-folder-name/a-rather-long-folder-name/a-rather-long-folder-name/a-rather-long-folder-name/and-a-file-with-a-long-name-too.rs", "new_path": "src/a-rather-long-folder-name/a-rather-long-folder-name/a-rather-long-folder-name/a-rather-long-folder-name/and-a-file-with-a-long-name-too.rs",
-            "diff": "@@ -1 +1 @@\n-a\n+b\n"}]"#.into()),
+            "diff": "@@ -1 +1 @@\n-a\n+b\n"},
+            {"old_path": "assets/icon.png", "new_path": "assets/icon.png", "diff": ""}]"#.into()),
         ("GET /api/v4/projects/team%2Fapp/merge_requests/12/commits", format!(r#"[{{"id": "{main}", "title": "Cache the pipeline",
             "author_name": "Ada", "created_at": "2026-11-01T00:00:00Z"}}]"#)),
         ("GET /api/v4/projects/team%2Fapp/merge_requests/12/discussions", r#"[
@@ -4142,6 +4171,26 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     });
     h.run_ok();
     screenshot(&mut h, "59-request-whole-split-blame");
+    // An image: its two versions, from its commits here.
+    h.get_by_label("assets/icon.png").click();
+    wait_for(&mut h, "the images", |app| {
+        matches!(state(app).images.get("assets/icon.png"), Some(Ok(_)))
+    });
+    h.run_ok();
+    h.get_by_label("Swipe");
+    h.get_by_label("Side by side").click();
+    h.run_ok();
+    screenshot(&mut h, "59c-request-image");
+    // Back to the README (also a file in the sidebar's list).
+    h.state_mut()
+        .repo_mut()
+        .unwrap()
+        .forge
+        .as_mut()
+        .unwrap()
+        .state
+        .file = Some("README.md".into());
+    h.run_ok();
     moves_the_split_line(&mut h);
     // The thread is still under its line.
     h.get_by_label("Why another?");

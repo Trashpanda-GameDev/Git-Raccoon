@@ -110,6 +110,10 @@ pub struct NewForm {
     /// The files it changes, laid out, and the one open.
     pub files: Vec<std::sync::Arc<crate::highlight::RenderedDiff>>,
     pub open_file: Option<usize>,
+    /// Image files' two versions, read with the changes, and once decoded
+    /// (when first opened), by path.
+    pub image_blobs: std::collections::HashMap<String, git_raccoon_core::details::FileBlobs>,
+    pub images: std::collections::HashMap<String, std::sync::Arc<crate::images::ImagePair>>,
     /// The repository's templates (name, text), and the one picked.
     pub templates: Vec<(String, String)>,
     pub template: Option<usize>,
@@ -486,7 +490,7 @@ pub fn new_request(ui: &mut egui::Ui, f: &mut NewForm) -> Option<NewAction> {
     match f.tab {
         NewTab::Description => description(ui, f),
         NewTab::Commits => commits(ui, f),
-        NewTab::Changes => changed_files(ui, &f.files, &mut f.open_file),
+        NewTab::Changes => changed_files(ui, f),
     }
     action
 }
@@ -623,11 +627,8 @@ fn commits(ui: &mut egui::Ui, f: &NewForm) {
 
 /// The files it changes, with how many lines each adds and removes, beside
 /// the diff of the one picked.
-fn changed_files(
-    ui: &mut egui::Ui,
-    files: &[std::sync::Arc<crate::highlight::RenderedDiff>],
-    open: &mut Option<usize>,
-) {
+fn changed_files(ui: &mut egui::Ui, f: &mut NewForm) {
+    let (files, open) = (&f.files, &mut f.open_file);
     use git_raccoon_core::details::LineKind;
     if files.is_empty() {
         ui.add_space(24.0);
@@ -724,6 +725,21 @@ fn changed_files(
             ui.set_width(ui.available_width());
             ui.horizontal_centered(|ui| ui.label(RichText::new(&d.diff.path).strong()));
         });
+    let path = &d.diff.path;
+    if crate::images::is_image(path) {
+        if !f.images.contains_key(path)
+            && let Some(blobs) = f.image_blobs.remove(path)
+        {
+            let pair = crate::images::ImagePair::decode(ui.ctx(), path, blobs);
+            f.images.insert(path.clone(), std::sync::Arc::new(pair));
+        }
+        if let Some(pair) = f.images.get(path) {
+            crate::ui::diff::image_preview(ui, pair);
+            if d.diff.binary {
+                return;
+            }
+        }
+    }
     if d.diff.binary {
         ui.add_space(24.0);
         ui.vertical_centered(|ui| ui.label(RichText::new("Binary file.").color(theme::muted())));
@@ -788,6 +804,8 @@ mod tests {
             compared: "main".into(),
             files: Vec::new(),
             open_file: None,
+            image_blobs: Default::default(),
+            images: Default::default(),
             templates: Vec::new(),
             template: None,
             reviewers: Vec::new(),

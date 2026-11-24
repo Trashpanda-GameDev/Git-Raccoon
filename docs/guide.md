@@ -120,6 +120,8 @@ Click a file to see its diff. Switch between:
 
 Diffs have syntax highlighting, the changed words marked, and image previews. Long lines scroll sideways.
 
+A changed image can be compared three ways: **Side by side**, **Swipe** (one frame, with a line you drag across it: the old version on its left, the new on its right) and **Onion skin** (the new version laid over the old, with a slider for how much of each shows). The choice is kept. Images show this way in pull/merge requests too, and when opening a new one.
+
 With a file open, **↑** and **↓** open the previous or next file in its list (a commit's files, or the staged or unstaged changes).
 
 ### Search

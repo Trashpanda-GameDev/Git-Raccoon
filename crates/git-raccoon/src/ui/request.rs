@@ -1843,6 +1843,31 @@ fn changes(
                 .color(theme::muted()),
         );
     }
+    if crate::images::is_image(&f.path) {
+        match state.images.get(&f.path) {
+            Some(Ok(pair)) => crate::ui::diff::image_preview(ui, pair),
+            Some(Err(e)) => {
+                ui.label(
+                    RichText::new(format!("  The images couldn't be shown: {e}."))
+                        .size(12.0)
+                        .color(theme::muted()),
+                );
+            }
+            None => {
+                let why = why_not
+                    .clone()
+                    .unwrap_or_else(|| "Loading the images…".into());
+                ui.label(
+                    RichText::new(format!("  {why}"))
+                        .size(12.0)
+                        .color(theme::muted()),
+                );
+            }
+        }
+        if d.diff.binary {
+            return;
+        }
+    }
     if d.diff.binary {
         ui.add_space(24.0);
         ui.vertical_centered(|ui| {
