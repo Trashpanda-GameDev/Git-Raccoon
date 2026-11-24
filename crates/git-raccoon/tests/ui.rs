@@ -8625,6 +8625,7 @@ fn finds_the_commit_that_broke_it_by_hand() {
     // Right-click the newest (broken) commit.
     h.get_by_label("Step 7").click_secondary();
     h.run_ok();
+    screenshot(&mut h, "94-bisect-menu");
     h.get_by_label("Find which commit broke something…").click();
     settle(&mut h);
     // v1 is suggested; 6 in between, about 3 steps; changes put aside.
@@ -8825,15 +8826,35 @@ fn lets_a_command_test_each_commit() {
             .as_ref()
             .is_some_and(|s| matches!(s.preview, Some((_, _, Ok(_)))))
     });
+    // A little slow, as a real test would be: its steps can be seen.
     let command = if cfg!(windows) {
         "findstr /x ok state"
     } else {
-        "grep -qx ok state"
+        "echo testing step $(cat step.txt); sleep 0.3; grep -qx ok state"
     };
     type_into(&mut h, "Test command", command);
     h.get_by_label("Test with this command").click();
     h.run_ok();
-    screenshot(&mut h, "98-bisect-command");
+    // Two steps in: the list, and the one running with its output.
+    let two_in = |app: &App| {
+        app.repo()
+            .unwrap()
+            .bisect
+            .running
+            .as_ref()
+            .and_then(|r| {
+                r.log
+                    .lock()
+                    .ok()
+                    .map(|l| l.steps.len() >= 2 && l.current.is_some())
+            })
+            .unwrap_or(false)
+    };
+    if !cfg!(windows) {
+        wait_for(&mut h, "two steps", two_in);
+        h.run_ok();
+        screenshot(&mut h, "98-bisect-command");
+    }
     wait_for(&mut h, "the answer", |app| {
         app.repo().unwrap().bisect.found.is_some()
     });

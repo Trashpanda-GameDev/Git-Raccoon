@@ -541,10 +541,22 @@ fn steps(ui: &mut egui::Ui, bisect: &mut Bisect, ctx: &egui::Context, path: &str
         let n = done.len() + usize::from(current.is_some());
         ui.horizontal(|ui| {
             ui.label(RichText::new("Steps").strong());
-            #[expect(clippy::cast_precision_loss, reason = "a few steps")]
-            let fraction = if estimate == 0 { 0.0 } else { done.len() as f32 / estimate.max(n) as f32 };
-            ui.add(egui::ProgressBar::new(fraction).desired_width(180.0));
-            ui.label(RichText::new(format!("{n} of about {}", estimate.max(n))).color(theme::muted()));
+            if n == 0 {
+                // The search is starting: the first commit is being checked out.
+                ui.spinner();
+                ui.label(RichText::new("Starting…").color(theme::muted()));
+            } else {
+                let total = estimate.max(n);
+                #[expect(clippy::cast_precision_loss, reason = "a few steps")]
+                let fraction = done.len() as f32 / total as f32;
+                ui.add(
+                    egui::ProgressBar::new(fraction)
+                        .desired_width(180.0)
+                        .desired_height(8.0)
+                        .fill(theme::accent()),
+                );
+                ui.label(RichText::new(format!("{n} of about {total}")).color(theme::muted()));
+            }
         });
         ui.add_space(6.0);
         for (i, s) in done.iter().enumerate() {
@@ -621,7 +633,9 @@ fn steps(ui: &mut egui::Ui, bisect: &mut Bisect, ctx: &egui::Context, path: &str
 
 fn seconds(d: Duration) -> String {
     let s = d.as_secs();
-    if s < 60 {
+    if s < 10 {
+        format!("{:.1} s", d.as_secs_f32())
+    } else if s < 60 {
         format!("{s} s")
     } else {
         format!("{} min {} s", s / 60, s % 60)
