@@ -403,6 +403,32 @@ In a file, each conflict shows three versions side by side: **Before** (what bot
 
 **Why?** shows, above the conflict in focus, the commits on each side that changed its lines (in a rebase, the commit being applied), with their messages, who made them and when, and the pull/merge request they came in with when the message says so. **Show these commits** marks them in the graph (**Back to** the file from there). When it's clear what happened (a rename on one side, lines only added on the other), a hint says so.
 
+## Merge tools, diff tools and an editor
+
+Other programs can do some of the work: a **merge tool** for conflicts, a **diff tool** for changes, and an **editor** for files. Choose them in **Settings › Tools**:
+
+- **Merge tool:** *Git config default* (your Git's own `merge.tool`, named, as in "Git config default (KDiff3)"), *Built in only*, one of those found on this computer (KDiff3, Meld, Beyond Compare, P4Merge, WinMerge, Visual Studio Code, JetBrains' IDEs such as Rider), or a *Custom command…* with `$BASE`, `$LOCAL` (yours), `$REMOTE` (theirs) and `$MERGED` (the file to save into). These are Git Raccoon's own settings; your Git config is left alone.
+- **Diff tool:** *Use the merge tool* (to start with), *Built in only*, one of the list, or a command with `$LOCAL` and `$REMOTE`.
+- **Editor:** *None*, one found here (VS Code, Sublime Text, Notepad++, Zed, JetBrains' IDEs), or a command with `$FILE` and `$LINE`.
+
+**Opening a conflict in the merge tool:** **Open in KDiff3** in the conflict editor's header (the ▾ beside it lists the others found here), or on a file's row in the conflicts overview. The three versions are written out beside the file and the tool starts on them; a bar says it's open, with **Bring KDiff3 forward** and **Stop waiting**. When you save and close it there, its result comes back into the conflict editor to check before you **Mark resolved**. A tool that closes without saving changes nothing, and says so.
+
+**Open in the diff tool** and **Open in editor** are in a diff's title bar (a commit's file or your working changes); the editor opens the file at the line you picked, or the first change. A pull/merge request's **Changes** has the diff tool too, and the conflict editor opens the file in the editor at the conflict you're on.
+
+### A tool for some files
+
+Some files are best merged by a tool made for them: Unity's scenes and prefabs by **UnityYAMLMerge**, say. In **Settings › Tools › For some files** (with the repository open), **Add a rule…**, or **Unity's files…** to fill in Unity's text assets:
+
+- **Files:** names like `*.unity *.prefab *.asset *.meta` (as in `.gitattributes`; `Assets/**/*.prefab` for a folder).
+- **Tool**, and **when:** *Automatically while merging* (the tool merges what it can during the merge itself; only what it can't is left as a conflict), or *When I open the file* (*Open in…* in the conflict editor uses it for these files). Automatically is for tools that can merge on their own, like UnityYAMLMerge.
+- **For:** *Just me* keeps it on this computer (`.git/info/attributes`); *Everyone on this repository* adds the lines to `.gitattributes`, for you to commit. Either way, the command that runs the tool stays in your own `.git/config`, since its path is this computer's.
+
+What it writes is shown before anything is saved, and **Test on a sample** tries the tool on a file here (merging it with itself). Rules are listed with **Change** and **Remove**; removing one takes out exactly its lines.
+
+The rule runs through Git's own *merge driver*, `git-raccoon merge-driver …`, so merging from a terminal uses it too. **UnityYAMLMerge comes from the project's own Unity**: the version in `ProjectSettings/ProjectVersion.txt`, found among Unity Hub's editors (wherever Hub installs them) each time it runs, so upgrading Unity doesn't break the rule. If that version isn't installed, or the tool can't merge a file, the file is left as Git's usual conflict, never half-merged.
+
+**After a merge,** the conflicts overview says what the tools did: "UnityYAMLMerge merged 3 files on its own" (**Review them** in the working changes before committing), and, for a file a tool left as a conflict, why (such as "the project's Unity, 2022.3.12f1, isn't installed"), with **Open in UnityYAMLMerge** on its row. Agents see the same in `get_conflicts`.
+
 ## Rewriting history
 
 Right-click a commit in the graph:

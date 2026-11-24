@@ -3,6 +3,15 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.32
+
+- **Merge tools, diff tools and an editor.** *Settings › Tools* chooses the programs to use: your Git's own merge tool, one found on this computer (KDiff3, Meld, Beyond Compare, P4Merge, WinMerge, Visual Studio Code, JetBrains' IDEs), or a command of your own; a diff tool (the merge tool, to start with); and an editor.
+  - **Open a conflict in the merge tool** from the conflict editor or the conflicts overview: when you save and close it, its result comes back to check before it's marked resolved. A tool that closes without saving changes nothing.
+  - **Open in the diff tool** on a commit's file, your working changes, or a pull/merge request's file; **Open in editor** at the line you're looking at, from a diff or the conflict editor.
+- **A tool for some files.** Rules by file name (`*.unity *.prefab *.asset`…): a tool merges them *automatically while merging*, leaving only what it can't as conflicts, or opens them from the conflict editor. For just you, or for everyone through `.gitattributes`. What's written is shown first, and *Test on a sample* tries it. Merging from a terminal uses the rules too.
+  - **Unity:** UnityYAMLMerge from the project's own Unity version, found each time, so upgrading Unity doesn't break it; when that version isn't installed, the files are left as conflicts and the overview says why. *Unity's files…* fills in the rule.
+  - **After a merge:** "UnityYAMLMerge merged 3 files on its own", to review, beside the conflicts that are left.
+
 ## 0.5.31
 
 - **Compare images three ways.** A changed image can be shown **Side by side**, with **Swipe** (one frame, and a line you drag across it: the old version on its left, the new on its right) or as an **Onion skin** (the new version laid over the old, with a slider for how much of each shows). Your choice is kept.

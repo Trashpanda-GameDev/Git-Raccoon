@@ -2459,6 +2459,7 @@ mod tests {
             find("tools"),
             [
                 "Merge tool",
+                "For some files",
                 "Diff tool",
                 "Editor",
                 "Terminal",
@@ -2466,5 +2467,6 @@ mod tests {
             ]
         );
         assert_eq!(find("beyond compare"), ["Merge tool", "Diff tool"]);
+        assert_eq!(find("unity"), ["Merge tool", "For some files"]);
     }
 }
