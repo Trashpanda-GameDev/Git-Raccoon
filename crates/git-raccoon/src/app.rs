@@ -3832,6 +3832,11 @@ fn request_action(
                 s.edit_comment(n, &comment, &body)
             });
         }
+        Action::React(to, name, add) => {
+            f.react_here(&to, &name, add);
+            let me = f.state.me.clone().unwrap_or_default();
+            f.send(ctx, Sent::React, move |s| s.react(n, &to, &name, add, &me));
+        }
         Action::DeleteComment(comment) => {
             f.send(ctx, Sent::Comment, move |s| s.delete_comment(n, &comment));
         }

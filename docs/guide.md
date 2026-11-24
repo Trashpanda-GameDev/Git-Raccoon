@@ -313,7 +313,9 @@ When you're done, press **Finish review**: add a summary if you like, choose **C
 
 Drafts can be edited or deleted. They're kept on GitHub (in your pending review) or GitLab (as draft notes) as you write them, so they're there on the website or another computer too, and drafts started there show up here. Comments on the whole request stay on your computer until you finish, as GitHub can't hold them in a review.
 
-Your own posted comments have a pencil (edit) and a bin (delete) beside them. Emoji people reacted with show under each comment, with how many ("👍 2"); one without an emoji here shows its name (":party_parrot: 1").
+Your own posted comments have a pencil (edit) and a bin (delete) beside them.
+
+**Reactions**: the emoji people reacted with show under the request's description and under each comment, with how many ("👍 2"; one without an emoji here shows its name, ":party_parrot: 1"). Yours are highlighted. Click one to add yours, or click yours to take it back; the smiley button adds another (👍 👎 😄 🎉 😕 ❤ 🚀 👀, the ones GitHub takes). Reactions are sent straight away, not kept for your review.
 
 ### Suggested changes
 

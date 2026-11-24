@@ -53,6 +53,8 @@ pub enum Action {
     UpdateBranch,
     /// Change a posted comment's text, or delete it.
     EditComment(review::Comment, String),
+    /// Give a reaction (or, `false`, take yours back).
+    React(review::ReactTo, String, bool),
     DeleteComment(review::Comment),
     /// Apply suggestions on the forge (GitLab), in one commit with this
     /// message.
@@ -847,31 +849,108 @@ fn posted(
         frame,
         action,
     );
-    reactions(ui, &c.reactions);
+    reactions(
+        ui,
+        &c.reactions,
+        &review::ReactTo::Comment(c.clone()),
+        state,
+        action,
+    );
 }
 
-/// The emoji people reacted to a comment with, each with how many: "👍 2".
-/// One we have no emoji for shows its name (":party_parrot: 1").
-fn reactions(ui: &mut egui::Ui, reactions: &[review::Reaction]) {
-    if reactions.is_empty() {
-        return;
-    }
-    ui.add_space(4.0);
+/// The emoji people reacted with, each with how many ("👍 2"; one we have
+/// no emoji for shows its name, ":party_parrot: 1"). Yours stand out, and
+/// clicking one gives yours or takes it back; the button after them adds
+/// another.
+fn reactions(
+    ui: &mut egui::Ui,
+    list: &[review::Reaction],
+    to: &review::ReactTo,
+    state: &RequestState,
+    action: &mut Option<Action>,
+) {
+    let me = state.me.as_deref().unwrap_or_default();
+    let busy = state.sending.is_some();
+    ui.add_space(2.0);
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
-        for r in reactions {
+        for r in list {
+            let mine = r.is_mine(me);
             let text = format!("{} {}", crate::emoji::shown(&r.name), r.count);
-            let people = if r.count == 1 { "person" } else { "people" };
-            egui::Frame::new()
-                .fill(theme::bg_raised())
-                .stroke(egui::Stroke::new(1.0, theme::border()))
-                .corner_radius(10)
-                .inner_margin(egui::Margin::symmetric(7, 1))
-                .show(ui, |ui| ui.label(RichText::new(text).size(12.0)))
-                .inner
-                .on_hover_text(format!(":{}: · {} {people}", r.name, r.count));
+            let (fill, stroke) = if mine {
+                (theme::accent_fill(), theme::accent())
+            } else {
+                (theme::bg_raised(), theme::border())
+            };
+            let chip = ui
+                .add_enabled(
+                    !busy,
+                    egui::Button::new(RichText::new(text).size(12.0))
+                        .fill(fill)
+                        .stroke(egui::Stroke::new(1.0, stroke))
+                        .corner_radius(10)
+                        .min_size(egui::vec2(0.0, 22.0)),
+                )
+                .on_hover_text(reaction_tip(r, mine));
+            if chip.clicked() {
+                *action = Some(Action::React(to.clone(), r.name.clone(), !mine));
+            }
         }
+        let add = ui.add_enabled_ui(!busy, |ui| {
+            ui.menu_button(
+                RichText::new(format!("{}+", icon::SMILEY))
+                    .size(13.0)
+                    .color(theme::muted()),
+                |ui| {
+                    ui.horizontal(|ui| {
+                        for name in review::OFFERED {
+                            let given = list.iter().any(|r| r.name == name && r.is_mine(me));
+                            let pick = ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new(crate::emoji::shown(name)).size(18.0),
+                                    )
+                                    .selected(given)
+                                    .frame_when_inactive(false),
+                                )
+                                .on_hover_text(format!(":{name}:"));
+                            ui.ctx().accesskit_node_builder(pick.id, |n| {
+                                n.set_label(format!("React with {name}"));
+                            });
+                            if pick.clicked() {
+                                *action = Some(Action::React(to.clone(), name.to_string(), !given));
+                                ui.close();
+                            }
+                        }
+                    });
+                },
+            )
+            .response
+        });
+        let add = add.inner.on_hover_text("Add a reaction");
+        ui.ctx()
+            .accesskit_node_builder(add.id, |n| n.set_label("Add a reaction"));
     });
+}
+
+/// "You and 2 others reacted with :tada:", or who did, where it's known.
+fn reaction_tip(r: &review::Reaction, mine: bool) -> String {
+    let who = if r.by.is_empty() {
+        match (mine, r.count) {
+            (true, 1) => "You".to_string(),
+            (true, n) => format!("You and {} more", n - 1),
+            (false, 1) => "1 person".to_string(),
+            (false, n) => format!("{n} people"),
+        }
+    } else {
+        r.by.join(", ")
+    };
+    let then = if mine {
+        " (click to take yours back)"
+    } else {
+        " (click to add yours)"
+    };
+    format!("{who} reacted with :{}:{then}", r.name)
 }
 
 /// A thread: its comments, drafts answering it, and Reply and Resolve.
@@ -1262,6 +1341,7 @@ fn conversation(
                         who_and_when(ui, &r.author, "opened it", r.created, here.now);
                         ui.add_space(2.0);
                         markdown(ui, &mut state.markdown, &r.body);
+                        reactions(ui, &o.reactions, &review::ReactTo::Request, state, action);
                     });
                     if !o.checks.is_empty() {
                         card(ui, |ui| {

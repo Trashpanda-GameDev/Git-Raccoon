@@ -36,6 +36,63 @@ pub struct Comment {
 pub struct Reaction {
     pub name: String,
     pub count: u32,
+    /// You gave it (GitHub says so).
+    pub mine: bool,
+    /// Who gave it, where the forge says (GitLab).
+    pub by: Vec<String>,
+}
+
+/// The reactions offered: the ones GitHub takes (GitLab takes any emoji).
+pub const OFFERED: [&str; 8] = [
+    "thumbsup",
+    "thumbsdown",
+    "laughing",
+    "tada",
+    "confused",
+    "heart",
+    "rocket",
+    "eyes",
+];
+
+/// What a reaction goes on: the request itself, or one of its comments.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ReactTo {
+    Request,
+    Comment(Comment),
+}
+
+/// Adds (or takes back) `me`'s reaction `name` in `list`, as the forge
+/// will once it's sent.
+pub fn react(list: &mut Vec<Reaction>, name: &str, add: bool, me: &str) {
+    let at = list.iter().position(|r| r.name == name);
+    match (at, add) {
+        (Some(i), true) => {
+            let r = &mut list[i];
+            if !r.is_mine(me) {
+                r.count += 1;
+                r.mine = true;
+                r.by.push(me.to_string());
+            }
+        }
+        (None, true) => list.push(Reaction {
+            name: name.to_string(),
+            count: 1,
+            mine: true,
+            by: vec![me.to_string()],
+        }),
+        (Some(i), false) => {
+            let r = &mut list[i];
+            if r.is_mine(me) {
+                r.count = r.count.saturating_sub(1);
+                r.mine = false;
+                r.by.retain(|b| b != me);
+            }
+            if r.count == 0 {
+                list.remove(i);
+            }
+        }
+        (None, false) => {}
+    }
 }
 
 impl Reaction {
@@ -55,17 +112,44 @@ impl Reaction {
         })
     }
 
-    /// Tallies names given one at a time (GitLab lists each award), in
-    /// the order each was first given.
-    pub fn tally<'a>(names: impl IntoIterator<Item = &'a str>) -> Vec<Reaction> {
+    /// GitHub's REST name for one of [`OFFERED`] ("thumbsup" is "+1").
+    pub fn github_content(name: &str) -> Option<&'static str> {
+        Some(match name {
+            "thumbsup" => "+1",
+            "thumbsdown" => "-1",
+            "laughing" => "laugh",
+            "tada" => "hooray",
+            "confused" => "confused",
+            "heart" => "heart",
+            "rocket" => "rocket",
+            "eyes" => "eyes",
+            _ => return None,
+        })
+    }
+
+    /// Whether `me` gave it.
+    pub fn is_mine(&self, me: &str) -> bool {
+        self.mine || (!me.is_empty() && self.by.iter().any(|b| b == me))
+    }
+
+    /// Tallies awards given one at a time (GitLab lists each: its name and
+    /// who gave it), in the order each was first given.
+    pub fn tally<'a>(awards: impl IntoIterator<Item = (&'a str, &'a str)>) -> Vec<Reaction> {
         let mut out: Vec<Reaction> = Vec::new();
-        for name in names {
-            match out.iter_mut().find(|r| r.name == name) {
-                Some(r) => r.count += 1,
-                None => out.push(Reaction {
-                    name: name.to_string(),
-                    count: 1,
-                }),
+        for (name, who) in awards {
+            let at = match out.iter().position(|r| r.name == name) {
+                Some(i) => i,
+                None => {
+                    out.push(Reaction {
+                        name: name.to_string(),
+                        ..Reaction::default()
+                    });
+                    out.len() - 1
+                }
+            };
+            out[at].count += 1;
+            if !who.is_empty() {
+                out[at].by.push(who.to_string());
             }
         }
         out
@@ -402,6 +486,8 @@ pub struct Overview {
     pub pending_review: Option<String>,
     /// Your draft comments kept on the forge.
     pub pending: Vec<Draft>,
+    /// Emoji people reacted to the request itself with.
+    pub reactions: Vec<Reaction>,
     /// Parts that couldn't be loaded, and why ("its approvals (GitLab had
     /// a problem on its side (500), for …/approvals)"); the rest shows
     /// without them.
@@ -589,6 +675,32 @@ pub fn excerpt(patch: &str, at: &Anchor) -> Vec<PatchLine> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gives_and_takes_back_reactions_here() {
+        let mut list = vec![Reaction {
+            name: "heart".into(),
+            count: 1,
+            by: vec!["milo".into()],
+            ..Reaction::default()
+        }];
+        react(&mut list, "heart", true, "rocky");
+        assert_eq!((list[0].count, list[0].is_mine("rocky")), (2, true));
+        // Giving it twice counts once.
+        react(&mut list, "heart", true, "rocky");
+        assert_eq!(list[0].count, 2);
+        react(&mut list, "tada", true, "rocky");
+        assert_eq!(list[1].count, 1);
+        react(&mut list, "tada", false, "rocky");
+        assert_eq!(list.len(), 1, "none left: gone");
+        react(&mut list, "heart", false, "rocky");
+        assert_eq!((list[0].count, list[0].is_mine("rocky")), (1, false));
+        // Someone else's can't be taken back.
+        react(&mut list, "heart", false, "rocky");
+        assert_eq!(list[0].count, 1);
+        assert_eq!(Reaction::github_content("tada"), Some("hooray"));
+        assert_eq!(Reaction::github_content("party_parrot"), None);
+    }
 
     #[test]
     fn lists_threads_on_code_by_file_then_line() {

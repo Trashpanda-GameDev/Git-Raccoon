@@ -64,6 +64,7 @@ pub enum Sent {
     Apply,
     Update,
     Comment,
+    React,
 }
 
 /// How the open request's view stands: what's picked and being written.
@@ -532,6 +533,34 @@ impl ForgeView {
     }
 
     /// The open request with everything its view shows, once loaded.
+    /// Shows your reaction given (or taken back) before the forge has it;
+    /// the reload after sending brings what the forge has.
+    pub fn react_here(&mut self, to: &forge::review::ReactTo, name: &str, add: bool) {
+        use forge::review::{Event, ReactTo, react};
+        let me = self.state.me.clone().unwrap_or_default();
+        let Some((_, Ok((_, o)))) = &mut self.details else {
+            return;
+        };
+        match to {
+            ReactTo::Request => react(&mut o.reactions, name, add, &me),
+            ReactTo::Comment(c) => {
+                let comments = o
+                    .events
+                    .iter_mut()
+                    .filter_map(|e| match e {
+                        Event::Comment(c) => Some(c),
+                        _ => None,
+                    })
+                    .chain(o.threads.iter_mut().flat_map(|t| t.comments.iter_mut()));
+                for posted in comments {
+                    if posted.id == c.id && posted.on_code == c.on_code {
+                        react(&mut posted.reactions, name, add, &me);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn viewed(&self) -> Option<&Viewed> {
         match (&self.details, self.open) {
             (Some((n, Ok(v))), Some(Opened::Request(m))) if *n == m => Some(v),
@@ -607,6 +636,7 @@ impl ForgeView {
                 Sent::Apply => "Applied: GitLab committed it to the branch (pull to get it here).",
                 Sent::Update => "It's being brought up to date: reload in a moment to see.",
                 Sent::Comment => "Saved.",
+                Sent::React => "",
             };
             let merged = matches!(what, Sent::Merge) && result.is_ok();
             if result.is_ok() {
@@ -627,7 +657,11 @@ impl ForgeView {
                     self.state.batch_message.clear();
                 }
             }
-            self.state.sent = Some(result.map(|()| done.to_string()));
+            // A reaction shows straight away: only a failure is said.
+            self.state.sent = match (what, result) {
+                (Sent::React, Ok(())) => None,
+                (_, result) => Some(result.map(|()| done.to_string())),
+            };
             self.state.sending = None;
             self.reloading = true;
         }

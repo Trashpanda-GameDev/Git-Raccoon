@@ -3815,8 +3815,12 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
                     "to_content": "One more\n", "applied": false, "appliable": true}],
                 "position": {"old_path": "README.md", "new_path": "README.md", "old_line": null, "new_line": 3}}]}]"#.into()),
         // Reactions, by note.
-        ("GET /api/v4/projects/team%2Fapp/merge_requests/12/notes/1/award_emoji", r#"[{"name": "thumbsup"},
-            {"name": "thumbsup"}, {"name": "party_parrot"}]"#.into()),
+        ("GET /api/v4/projects/team%2Fapp/merge_requests/12/notes/1/award_emoji", r#"[{"name": "thumbsup", "user": {"username": "milo"}},
+            {"name": "thumbsup", "user": {"username": "ada"}}, {"name": "party_parrot", "user": {"username": "milo"}}]"#.into()),
+        ("GET /api/v4/projects/team%2Fapp/merge_requests/12/award_emoji", r#"[{"name": "eyes", "user": {"username": "rocky"}}]"#.into()),
+        // Giving reactions.
+        ("POST /api/v4/projects/team%2Fapp/merge_requests/12/award_emoji", r#"{"id": 70}"#.into()),
+        ("POST /api/v4/projects/team%2Fapp/merge_requests/12/notes/1/award_emoji", r#"{"id": 71}"#.into()),
         ("GET /api/v4/projects/team%2Fapp/merge_requests/12/notes/2/award_emoji", r#"[{"name": "tada"}]"#.into()),
         ("GET /api/v4/projects/team%2Fapp/merge_requests/12/notes/7/award_emoji", "[]".into()),
         ("GET /api/v4/projects/team%2Fapp/merge_requests/13", mr(13, "Faster start", "cache")),
@@ -3911,7 +3915,35 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     h.get_by_label("👍 2");
     h.get_by_label(":party_parrot: 1");
     h.get_by_label("🎉 1");
+    h.get_by_label("👀 1");
     screenshot(&mut h, "50-merge-request");
+
+    // Giving one: click someone's, and it's yours too, straight away.
+    let sent = |what: &str| {
+        seen.lock()
+            .unwrap()
+            .iter()
+            .any(|(r, b)| r.starts_with(what) && b.contains("\"name\""))
+    };
+    h.get_by_label("👍 2").click();
+    h.step();
+    h.step();
+    h.get_by_label("👍 3");
+    wait_for(&mut h, "the reaction sent", |_| {
+        sent("POST /api/v4/projects/team%2Fapp/merge_requests/12/notes/1/award_emoji")
+    });
+    // On the merge request itself, from the picker (its button comes first).
+    h.get_all_by_label("Add a reaction").next().unwrap().click();
+    h.run_ok();
+    screenshot(&mut h, "50b-reaction-picker");
+    h.get_by_label("React with rocket").click();
+    h.step();
+    h.step();
+    h.get_by_label("🚀 1");
+    wait_for(&mut h, "the merge request's reaction sent", |_| {
+        sent("POST /api/v4/projects/team%2Fapp/merge_requests/12/award_emoji")
+    });
+    settle(&mut h);
 
     // Its commits, marked in the graph; and back.
     h.get_by_label("Commits tab").click();
@@ -3974,6 +4006,8 @@ fn shows_merge_requests_and_issues_from_a_self_managed_gitlab() {
     h.get_by_label("+ One more");
     h.get_by_label("− Another");
     screenshot(&mut h, "58-suggestion");
+    h.get_by_label("Apply suggestion").scroll_to_me();
+    h.run_ok();
     h.get_by_label("Apply suggestion").click();
     let applied = |app: &App| {
         app.repo()

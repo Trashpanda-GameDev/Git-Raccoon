@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use super::http::{self, Auth, encode, text};
 use super::review::{
     Anchor, Change, Check, Comment, Commit, DiffRefs, Draft, Event, File, Finish, Line, Merge,
-    Method, Outcome, Overview, Reaction, State, Suggestion, Thread, Verdict,
+    Method, Outcome, Overview, ReactTo, Reaction, State, Suggestion, Thread, Verdict,
 };
 use super::{Checks, Choices, Issue, NewRequest, Request, Review, Session, soft, timestamp};
 
@@ -139,6 +139,55 @@ fn note(n: &Value) -> Comment {
     }
 }
 
+/// The award emoji GitLab lists (each with who gave it), as reactions.
+fn tally(list: &Value) -> Vec<Reaction> {
+    Reaction::tally(list.as_array().into_iter().flatten().filter_map(|a| {
+        Some((
+            a["name"].as_str()?,
+            a["user"]["username"].as_str().unwrap_or_default(),
+        ))
+    }))
+}
+
+/// Where awards go: the merge request, or one of its notes.
+fn awards_url(s: &Session, number: u64, to: &ReactTo) -> String {
+    match to {
+        ReactTo::Request => format!("{}/merge_requests/{number}/award_emoji", api(s)),
+        ReactTo::Comment(c) => format!(
+            "{}/merge_requests/{number}/notes/{}/award_emoji",
+            api(s),
+            c.id
+        ),
+    }
+}
+
+/// Awards `name` as you (`me`), or takes your award back.
+pub fn react(
+    s: &Session,
+    number: u64,
+    to: &ReactTo,
+    name: &str,
+    add: bool,
+    me: &str,
+) -> Result<(), String> {
+    let url = awards_url(s, number, to);
+    let auth = Auth::Bearer(&s.token);
+    if add {
+        http::post(FORGE, &url, &auth, &json!({"name": name}))?;
+        return Ok(());
+    }
+    // Yours is found among them by your name.
+    let list = http::get(FORGE, &format!("{url}?per_page=100"), &auth)?;
+    let yours =
+        list.as_array().into_iter().flatten().find(|a| {
+            a["name"].as_str() == Some(name) && a["user"]["username"].as_str() == Some(me)
+        });
+    if let Some(id) = yours.and_then(|a| a["id"].as_u64()) {
+        http::delete(FORGE, &format!("{url}/{id}"), &auth)?;
+    }
+    Ok(())
+}
+
 /// The most notes whose reactions are asked for (one request each).
 const MAX_AWARDED: usize = 200;
 
@@ -168,12 +217,7 @@ fn awards(
                                 ),
                             )
                             .ok()?;
-                            let names = list
-                                .as_array()
-                                .into_iter()
-                                .flatten()
-                                .filter_map(|a| a["name"].as_str());
-                            let reactions = Reaction::tally(names);
+                            let reactions = tally(&list);
                             (!reactions.is_empty()).then(|| (id.clone(), reactions))
                         })
                         .collect::<Vec<_>>()
@@ -448,6 +492,17 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
         if let Some(r) = awarded.remove(&c.id) {
             c.reactions = r;
         }
+    }
+    // And the merge request's own.
+    if let Some(list) = soft(
+        get(
+            s,
+            &format!("/merge_requests/{number}/award_emoji?per_page=100"),
+        ),
+        "its reactions",
+        &mut o.missing,
+    ) {
+        o.reactions = tally(&list);
     }
     // Your draft notes (only you see them).
     let drafts = soft(
@@ -943,8 +998,10 @@ mod tests {
                     .into(),
             ),
             // Reactions to the two notes (not GitLab's own).
-            (200, r#"[{"name":"thumbsup"}]"#.into()),
-            (200, r#"[{"name":"thumbsup"}]"#.into()),
+            (200, r#"[{"name":"thumbsup","user":{"username":"milo"}}]"#.into()),
+            (200, r#"[{"name":"thumbsup","user":{"username":"milo"}}]"#.into()),
+            // The merge request's own.
+            (200, r#"[{"name":"rocket","user":{"username":"rocky"}}]"#.into()),
             // A draft note of yours, kept there.
             (
                 200,
@@ -1003,10 +1060,14 @@ mod tests {
             hi.reactions,
             [Reaction {
                 name: "thumbsup".into(),
-                count: 1
+                count: 1,
+                mine: false,
+                by: vec!["milo".into()]
             }]
         );
         assert_eq!(o.threads[0].comments[0].reactions.len(), 1);
+        assert_eq!(o.reactions[0].by, ["rocky"]);
+        assert!(o.reactions[0].is_mine("rocky"));
         assert!(
             matches!(&o.events[1], Event::Review { verdict: Verdict::Approved, author, .. } if author == "rocky")
         );
@@ -1068,27 +1129,27 @@ mod tests {
             seen[2].0,
             "GET /api/v4/projects/team%2Fsub%2Fapp/pipelines/99/jobs?per_page=100"
         );
-        assert_eq!(seen[10].0, format!("POST {api}/draft_notes"));
-        let first: Value = serde_json::from_str(&seen[10].2).unwrap();
+        assert_eq!(seen[11].0, format!("POST {api}/draft_notes"));
+        let first: Value = serde_json::from_str(&seen[11].2).unwrap();
         assert_eq!(first["position"]["head_sha"], "h");
         assert_eq!(first["position"]["new_line"], 1);
         assert_eq!(first["position"]["line_range"]["start"]["type"], "old");
-        let reply: Value = serde_json::from_str(&seen[11].2).unwrap();
+        let reply: Value = serde_json::from_str(&seen[12].2).unwrap();
         assert_eq!(reply["in_reply_to_discussion_id"], "d3");
-        assert_eq!(seen[12].0, format!("POST {api}/draft_notes/bulk_publish"));
-        assert_eq!(seen[13].0, format!("POST {api}/notes"));
-        assert_eq!(seen[14].0, format!("POST {api}/approve"));
-        assert_eq!(seen[15].0, "PUT /api/v4/suggestions/batch_apply");
-        assert_eq!(seen[16].0, format!("PUT {api}/rebase"));
-        assert_eq!(seen[17].0, format!("PUT {api}/notes/3"));
-        assert_eq!(seen[17].2, r#"{"body":"Why z?"}"#);
-        assert_eq!(seen[18].0, format!("DELETE {api}/notes/3"));
-        assert_eq!(seen[8].0, format!("GET {api}/draft_notes?per_page=100"));
-        assert_eq!(seen[19].0, format!("PUT {api}/draft_notes/55"));
-        assert_eq!(seen[19].2, r#"{"note":"Sure now"}"#);
-        assert_eq!(seen[20].0, format!("DELETE {api}/draft_notes/55"));
+        assert_eq!(seen[13].0, format!("POST {api}/draft_notes/bulk_publish"));
+        assert_eq!(seen[14].0, format!("POST {api}/notes"));
+        assert_eq!(seen[15].0, format!("POST {api}/approve"));
+        assert_eq!(seen[16].0, "PUT /api/v4/suggestions/batch_apply");
+        assert_eq!(seen[17].0, format!("PUT {api}/rebase"));
+        assert_eq!(seen[18].0, format!("PUT {api}/notes/3"));
+        assert_eq!(seen[18].2, r#"{"body":"Why z?"}"#);
+        assert_eq!(seen[19].0, format!("DELETE {api}/notes/3"));
+        assert_eq!(seen[9].0, format!("GET {api}/draft_notes?per_page=100"));
+        assert_eq!(seen[20].0, format!("PUT {api}/draft_notes/55"));
+        assert_eq!(seen[20].2, r#"{"note":"Sure now"}"#);
+        assert_eq!(seen[21].0, format!("DELETE {api}/draft_notes/55"));
         assert_eq!(
-            serde_json::from_str::<Value>(&seen[15].2).unwrap(),
+            serde_json::from_str::<Value>(&seen[16].2).unwrap(),
             json!({"ids": [77], "commit_message": "Use z"})
         );
     }
@@ -1124,6 +1185,43 @@ mod tests {
     }
 
     #[test]
+    fn reacts_and_takes_it_back() {
+        let (base, seen) = mock::serve(vec![
+            (201, r#"{"id": 1}"#.into()),
+            (201, r#"{"id": 2}"#.into()),
+            // Taking one back: yours is found among them by your name.
+            (
+                200,
+                r#"[{"id": 7, "name": "heart", "user": {"username": "milo"}},
+                    {"id": 8, "name": "heart", "user": {"username": "rocky"}}]"#
+                    .into(),
+            ),
+            (204, String::new()),
+        ]);
+        let s = session(&base);
+        let note = Comment {
+            id: "3".into(),
+            ..Comment::default()
+        };
+        s.react(12, &ReactTo::Request, "rocket", true, "rocky")
+            .unwrap();
+        s.react(12, &ReactTo::Comment(note.clone()), "heart", true, "rocky")
+            .unwrap();
+        s.react(12, &ReactTo::Comment(note), "heart", false, "rocky")
+            .unwrap();
+        let seen = seen.lock().unwrap();
+        let api = "/api/v4/projects/team%2Fsub%2Fapp/merge_requests/12";
+        assert_eq!(seen[0].0, format!("POST {api}/award_emoji"));
+        assert_eq!(seen[0].2, r#"{"name":"rocket"}"#);
+        assert_eq!(seen[1].0, format!("POST {api}/notes/3/award_emoji"));
+        assert_eq!(
+            seen[2].0,
+            format!("GET {api}/notes/3/award_emoji?per_page=100")
+        );
+        assert_eq!(seen[3].0, format!("DELETE {api}/notes/3/award_emoji/8"));
+    }
+
+    #[test]
     fn shows_what_it_can_when_parts_fail() {
         let (base, _) = mock::serve(vec![
             (200, MR.into()),
@@ -1137,6 +1235,7 @@ mod tests {
                 200,
                 r#"{"changes":[{"old_path":"a.rs","new_path":"a.rs","diff":"@@ -1 +1 @@\n-x\n+y\n"}]}"#.into(),
             ),
+            (200, "[]".into()),
             (200, "[]".into()),
             (200, "[]".into()),
             (200, "[]".into()),

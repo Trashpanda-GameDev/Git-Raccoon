@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use super::http::{self, Auth, text};
 use super::review::{
     self, Anchor, Change, Check, Comment, Commit, DiffRefs, Draft, Event, File, Finish, Line,
-    Merge, Method, Outcome, Overview, Reaction, State, Suggestion, Thread, Verdict,
+    Merge, Method, Outcome, Overview, ReactTo, Reaction, State, Suggestion, Thread, Verdict,
 };
 use super::{Checks, Choices, Issue, NewRequest, Request, Review, Session, soft, timestamp};
 
@@ -172,7 +172,7 @@ const THREADS: &str = "query($owner: String!, $name: String!, $n: Int!, $after: 
         diffSide startDiffSide
         comments(first: 100) {
           pageInfo { hasNextPage endCursor }
-          nodes { databaseId body createdAt diffHunk author { login } reactionGroups { content reactors { totalCount } } }
+          nodes { databaseId body createdAt diffHunk author { login } reactionGroups { content viewerHasReacted reactors { totalCount } } }
         }
       }
     }
@@ -184,7 +184,7 @@ const MORE_COMMENTS: &str = "query($id: ID!, $after: String) {
   node(id: $id) { ... on PullRequestReviewThread {
     comments(first: 100, after: $after) {
       pageInfo { hasNextPage endCursor }
-      nodes { databaseId body createdAt diffHunk author { login } reactionGroups { content reactors { totalCount } } }
+      nodes { databaseId body createdAt diffHunk author { login } reactionGroups { content viewerHasReacted reactors { totalCount } } }
     }
   } }
 }";
@@ -291,9 +291,90 @@ fn rest_reactions(v: &Value) -> Vec<Reaction> {
         (count > 0).then(|| Reaction {
             name: name.to_string(),
             count,
+            ..Reaction::default()
         })
     })
     .collect()
+}
+
+/// GraphQL's reaction groups: each kind, how many, and whether you gave it.
+fn groups(v: &Value) -> Vec<Reaction> {
+    v.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|g| {
+            let count = u32::try_from(g["reactors"]["totalCount"].as_u64()?).ok()?;
+            let name = Reaction::github(g["content"].as_str()?)?;
+            (count > 0).then(|| Reaction {
+                name: name.to_string(),
+                count,
+                mine: g["viewerHasReacted"].as_bool().unwrap_or(false),
+                by: Vec::new(),
+            })
+        })
+        .collect()
+}
+
+/// The request's own reactions and its comments' (whether they're yours,
+/// which REST doesn't say), the last 100 comments' at most.
+const REACTIONS: &str = "query($owner: String!, $name: String!, $n: Int!) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $n) {
+    reactionGroups { content viewerHasReacted reactors { totalCount } }
+    comments(last: 100) { nodes { databaseId
+      reactionGroups { content viewerHasReacted reactors { totalCount } } } }
+  } }
+}";
+
+/// Fills in the request's reactions, and which of its comments' are yours.
+fn reactions(s: &Session, number: u64, o: &mut Overview) -> Result<(), String> {
+    let (owner, name) = owner_name(s);
+    let v = query(
+        s,
+        REACTIONS,
+        json!({"owner": owner, "name": name, "n": number}),
+    )?;
+    let pr = &v["data"]["repository"]["pullRequest"];
+    if pr.is_null() {
+        return Ok(());
+    }
+    o.reactions = groups(&pr["reactionGroups"]);
+    for node in pr["comments"]["nodes"].as_array().into_iter().flatten() {
+        let id = node["databaseId"].as_u64().unwrap_or_default().to_string();
+        for e in &mut o.events {
+            if let Event::Comment(c) = e
+                && c.id == id
+            {
+                c.reactions = groups(&node["reactionGroups"]);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Where a reaction goes: the request (an issue, to GitHub), or a comment.
+fn reactions_url(s: &Session, number: u64, to: &ReactTo) -> String {
+    match to {
+        ReactTo::Request => format!("{}/issues/{number}/reactions", api(s)),
+        ReactTo::Comment(c) => format!("{}/reactions", comment_url(s, c)),
+    }
+}
+
+/// Adds your reaction `name`, or takes it back.
+pub fn react(s: &Session, number: u64, to: &ReactTo, name: &str, add: bool) -> Result<(), String> {
+    let content = Reaction::github_content(name)
+        .ok_or_else(|| "GitHub only takes 👍 👎 😄 🎉 😕 ❤ 🚀 👀".to_string())?;
+    let url = reactions_url(s, number, to);
+    let auth = Auth::Bearer(&s.token);
+    // Adding one that's there gives it back: that's how its id is found to
+    // take it back.
+    let given = http::post(FORGE, &url, &auth, &json!({"content": content}))?;
+    if !add {
+        let id = given["id"]
+            .as_u64()
+            .ok_or_else(|| format!("{FORGE} didn't say which reaction was yours"))?;
+        http::delete(FORGE, &format!("{url}/{id}"), &auth)?;
+    }
+    Ok(())
 }
 
 fn thread(v: &Value) -> Thread {
@@ -308,19 +389,7 @@ fn thread(v: &Value) -> Thread {
             created: timestamp(c["createdAt"].as_str().unwrap_or_default()),
             suggestions: Vec::new(),
             on_code: true,
-            reactions: c["reactionGroups"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|g| {
-                    let count = u32::try_from(g["reactors"]["totalCount"].as_u64()?).ok()?;
-                    let name = Reaction::github(g["content"].as_str()?)?;
-                    (count > 0).then(|| Reaction {
-                        name: name.to_string(),
-                        count,
-                    })
-                })
-                .collect(),
+            reactions: groups(&c["reactionGroups"]),
         })
         .collect();
     let outdated = v["isOutdated"].as_bool().unwrap_or(false) || v["line"].is_null();
@@ -469,6 +538,12 @@ pub fn view(s: &Session, number: u64) -> Result<(Request, Overview), String> {
             reactions: rest_reactions(&c["reactions"]),
         }));
     }
+    // Reactions: the request's, and which are yours.
+    soft(
+        reactions(s, number, &mut o),
+        "its reactions",
+        &mut o.missing,
+    );
     for review in reviews.as_array().into_iter().flatten() {
         let verdict = match review["state"].as_str() {
             Some("APPROVED") => Verdict::Approved,
@@ -975,6 +1050,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn reacts_and_takes_it_back() {
+        let (base, seen) = mock::serve(vec![
+            (201, r#"{"id": 1}"#.into()),
+            (201, r#"{"id": 2}"#.into()),
+            // Taking one back: adding it again says which is yours.
+            (200, r#"{"id": 31}"#.into()),
+            (204, String::new()),
+        ]);
+        let s = session(&base);
+        let on_code = Comment {
+            id: "42".into(),
+            on_code: true,
+            ..Comment::default()
+        };
+        s.react(7, &ReactTo::Request, "tada", true, "").unwrap();
+        s.react(7, &ReactTo::Comment(on_code.clone()), "thumbsup", true, "")
+            .unwrap();
+        s.react(7, &ReactTo::Comment(on_code.clone()), "thumbsup", false, "")
+            .unwrap();
+        let other = s.react(7, &ReactTo::Comment(on_code), "party_parrot", true, "");
+        assert!(other.unwrap_err().starts_with("GitHub only takes"));
+        let seen = seen.lock().unwrap();
+        let api = "/api/v3/repos/rocky/stash-box";
+        assert_eq!(seen[0].0, format!("POST {api}/issues/7/reactions"));
+        assert_eq!(seen[0].2, r#"{"content":"hooray"}"#);
+        assert_eq!(seen[1].0, format!("POST {api}/pulls/comments/42/reactions"));
+        assert_eq!(seen[1].2, r#"{"content":"+1"}"#);
+        assert_eq!(seen[2].0, format!("POST {api}/pulls/comments/42/reactions"));
+        assert_eq!(
+            seen[3].0,
+            format!("DELETE {api}/pulls/comments/42/reactions/31")
+        );
+        assert_eq!(seen.len(), 4);
+    }
+
+    #[test]
     fn reads_reactions() {
         let rest = json!({"+1": 2, "-1": 0, "laugh": 0, "hooray": 1, "confused": 0,
             "heart": 0, "rocket": 3, "eyes": 0, "total_count": 6, "url": "u"});
@@ -994,7 +1105,7 @@ mod tests {
             "databaseId": 1, "body": "b", "createdAt": "2026-11-01T00:00:00Z",
             "author": {"login": "a"},
             "reactionGroups": [
-                {"content": "THUMBS_UP", "reactors": {"totalCount": 1}},
+                {"content": "THUMBS_UP", "viewerHasReacted": true, "reactors": {"totalCount": 1}},
                 {"content": "EYES", "reactors": {"totalCount": 0}},
                 {"content": "HEART", "reactors": {"totalCount": 4}}
             ]
@@ -1004,11 +1115,14 @@ mod tests {
             [
                 Reaction {
                     name: "thumbsup".into(),
-                    count: 1
+                    count: 1,
+                    mine: true,
+                    by: Vec::new()
                 },
                 Reaction {
                     name: "heart".into(),
-                    count: 4
+                    count: 4,
+                    ..Reaction::default()
                 }
             ]
         );
@@ -1174,7 +1288,17 @@ mod tests {
             ),
             (
                 200,
-                r#"[{"id":5,"user":{"login":"milo"},"body":"**Looks** good","created_at":"2026-11-02T00:00:00Z"}]"#
+                r#"[{"id":5,"user":{"login":"milo"},"body":"**Looks** good","created_at":"2026-11-02T00:00:00Z",
+                    "reactions":{"+1":1}}]"#
+                    .into(),
+            ),
+            // Reactions: the request's, and which of the comments' are yours.
+            (
+                200,
+                r#"{"data":{"repository":{"pullRequest":{
+                    "reactionGroups":[{"content":"ROCKET","viewerHasReacted":false,"reactors":{"totalCount":2}}],
+                    "comments":{"nodes":[{"databaseId":5,"reactionGroups":[
+                        {"content":"THUMBS_UP","viewerHasReacted":true,"reactors":{"totalCount":1}}]}]}}}}}"#
                     .into(),
             ),
             // The pending review's comment.
@@ -1212,6 +1336,13 @@ mod tests {
         assert_eq!(o.files[1].old_path.as_deref(), Some("old.rs"));
         assert_eq!(o.commits[0].summary, "Add the map");
         assert_eq!(o.checks[0].name, "build");
+        assert_eq!(o.reactions[0].name, "rocket");
+        assert_eq!(o.reactions[0].count, 2);
+        let Some(Event::Comment(looks)) = o.events.iter().find(|e| matches!(e, Event::Comment(_)))
+        else {
+            panic!("the comment")
+        };
+        assert!(looks.reactions[0].mine, "yours, which REST doesn't say");
         assert_eq!(o.threads.len(), 1);
         let t = &o.threads[0];
         let at = t.at.as_ref().unwrap();
@@ -1297,12 +1428,12 @@ mod tests {
 
         let seen = seen.lock().unwrap();
         assert_eq!(
-            seen[7].0,
+            seen[8].0,
             "GET /api/v3/repos/rocky/stash-box/pulls/7/reviews/9/comments?per_page=100"
         );
-        assert_eq!(seen[8].0, "POST /api/graphql");
+        assert_eq!(seen[9].0, "POST /api/graphql");
         // The new line comment, and the reply, go into the pending review.
-        let line: Value = serde_json::from_str(&seen[10].2).unwrap();
+        let line: Value = serde_json::from_str(&seen[11].2).unwrap();
         assert!(
             line["query"]
                 .as_str()
@@ -1314,9 +1445,9 @@ mod tests {
             json!({"review": "R0", "path": "src/map.rs", "line": 1, "side": "LEFT",
                 "body": "Gone?", "startLine": null, "startSide": null})
         );
-        let reply: Value = serde_json::from_str(&seen[11].2).unwrap();
+        let reply: Value = serde_json::from_str(&seen[12].2).unwrap();
         assert_eq!(reply["variables"]["thread"], "T1");
-        let submit: Value = serde_json::from_str(&seen[12].2).unwrap();
+        let submit: Value = serde_json::from_str(&seen[13].2).unwrap();
         assert!(
             submit["query"]
                 .as_str()
@@ -1327,18 +1458,18 @@ mod tests {
             submit["variables"],
             json!({"id": "R0", "event": "REQUEST_CHANGES", "body": "Close"})
         );
-        assert!(seen[13].2.contains("resolveReviewThread"));
+        assert!(seen[14].2.contains("resolveReviewThread"));
         assert_eq!(
-            seen[14].0,
+            seen[15].0,
             "PUT /api/v3/repos/rocky/stash-box/pulls/7/merge"
         );
-        let merge: Value = serde_json::from_str(&seen[14].2).unwrap();
+        let merge: Value = serde_json::from_str(&seen[15].2).unwrap();
         assert_eq!(
             merge,
             json!({"merge_method": "squash", "commit_title": "Faster lookups (#7)", "commit_message": "Uses a hash map."})
         );
         assert_eq!(
-            seen[15].0,
+            seen[16].0,
             "DELETE /api/v3/repos/rocky/stash-box/git/refs/heads/index"
         );
     }

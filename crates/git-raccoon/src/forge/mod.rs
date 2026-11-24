@@ -466,6 +466,22 @@ impl Session {
         }
     }
 
+    /// Adds your reaction `name` to the request or one of its comments, or
+    /// takes it back. `me` is your name there (GitLab finds yours by it).
+    pub fn react(
+        &self,
+        number: u64,
+        to: &review::ReactTo,
+        name: &str,
+        add: bool,
+        me: &str,
+    ) -> Result<(), String> {
+        match self.project.kind {
+            Kind::GitHub => github::react(self, number, to, name, add),
+            Kind::GitLab => gitlab::react(self, number, to, name, add, me),
+        }
+    }
+
     /// Changes a posted comment's text.
     pub fn edit_comment(
         &self,
