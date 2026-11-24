@@ -41,6 +41,17 @@ pub enum Action {
     /// Switch files between paths and folders.
     ToggleTree,
     Close,
+    /// Commit as this profile from now on.
+    UseProfile(usize),
+    ManageProfiles,
+}
+
+/// Who commits: the profile in use, the others, and a warning when the
+/// repository belongs to an account another profile has.
+pub struct CommitAs<'a> {
+    pub profiles: &'a [crate::profiles::Profile],
+    pub active: usize,
+    pub warning: Option<&'a crate::profiles::Warning>,
 }
 
 pub struct State<'a> {
@@ -57,6 +68,7 @@ pub struct State<'a> {
     pub tree: bool,
     /// The files picked (to stage, discard, ignore or stash together).
     pub selection: &'a mut FileSelection,
+    pub commit_as: Option<CommitAs<'a>>,
 }
 
 /// Files picked in one of the lists: a click picks one, Ctrl+click adds
@@ -214,6 +226,7 @@ pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
         draft,
         tree,
         selection,
+        commit_as,
     } = st;
     ui.horizontal(|ui| {
         ui.set_height(36.0);
@@ -305,7 +318,9 @@ pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
         )
         .show(ui, |ui| {
             let can_stash = !status.is_clean() && !staging && !committing;
-            if let Some(a) = commit_box(ui, draft, staged, committing, can_stash) {
+            if let Some(a) =
+                commit_box(ui, draft, staged, committing, can_stash, commit_as.as_ref())
+            {
                 action = Some(a);
             }
         });
@@ -686,6 +701,7 @@ fn commit_box(
     staged: usize,
     committing: bool,
     can_stash: bool,
+    commit_as: Option<&CommitAs<'_>>,
 ) -> Option<Action> {
     let mut action = None;
     ui.horizontal(|ui| {
@@ -771,14 +787,27 @@ fn commit_box(
         );
     }
 
+    // Who it's committed as.
+    let profile = commit_as.and_then(|c| c.profiles.get(c.active));
+    if let Some(c) = commit_as
+        && let Some(a) = committing_as(ui, c)
+    {
+        action = Some(a);
+    }
+
     let can_commit = !committing && !draft.summary.trim().is_empty() && (draft.amend || staged > 0);
+    // "as Work" once there's more than one profile.
+    let as_whom = match (commit_as, profile) {
+        (Some(c), Some(p)) if c.profiles.len() > 1 => format!(" as {}", p.name),
+        _ => String::new(),
+    };
     let label = if committing {
         "Committing…".to_string()
     } else if draft.amend {
-        "Amend commit".to_string()
+        format!("Amend commit{as_whom}")
     } else {
         format!(
-            "Commit {staged} {}",
+            "Commit {staged} {}{as_whom}",
             if staged == 1 { "file" } else { "files" }
         )
     };
@@ -835,6 +864,137 @@ fn commit_box(
         && ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter));
     if can_commit && (clicked.clicked() || shortcut) {
         action = Some(Action::Commit);
+    }
+    action
+}
+
+/// "Committing as" the profile in use (click to switch), and a warning
+/// when the repository belongs to an account another profile has.
+fn committing_as(ui: &mut egui::Ui, c: &CommitAs<'_>) -> Option<Action> {
+    let mut action = None;
+    let p = c.profiles.get(c.active)?;
+    let several = c.profiles.len() > 1;
+    let width = ui.available_width();
+    let (rect, row) = ui.allocate_exact_size(egui::vec2(width, 38.0), egui::Sense::click());
+    row.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            true,
+            format!("Committing as {}, {}. Change profile", p.name, p.who()),
+        )
+    });
+    let painter = ui.painter();
+    let fill = if row.hovered() {
+        theme::bg_hover()
+    } else {
+        theme::bg()
+    };
+    painter.rect(
+        rect,
+        6,
+        fill,
+        egui::Stroke::new(1.0, theme::border()),
+        egui::StrokeKind::Inside,
+    );
+    crate::ui::profiles::paint_badge(
+        painter,
+        egui::pos2(rect.left() + 20.0, rect.center().y),
+        p,
+        22.0,
+    );
+    let text = egui::Rect::from_min_max(
+        egui::pos2(rect.left() + 40.0, rect.top() + 3.0),
+        egui::pos2(rect.right() - 70.0, rect.bottom() - 3.0),
+    );
+    let mid = text.center().y;
+    widgets::text_in(
+        painter,
+        egui::Rect::from_min_max(text.min, egui::pos2(text.right(), mid)),
+        &format!("Committing as {}", p.name),
+        theme::body(11.0),
+        theme::muted(),
+    );
+    widgets::text_in(
+        painter,
+        egui::Rect::from_min_max(egui::pos2(text.left(), mid), text.max),
+        &p.who(),
+        theme::body(12.5),
+        theme::text(),
+    );
+    painter.text(
+        egui::pos2(rect.right() - 10.0, rect.center().y),
+        egui::Align2::RIGHT_CENTER,
+        if several {
+            format!("Change {}", icon::CARET_DOWN)
+        } else {
+            "Profiles…".to_string()
+        },
+        theme::body(11.5),
+        theme::muted(),
+    );
+    let row = row.on_hover_text(
+        "New commits use this name and email; push, pull and requests use its accounts",
+    );
+    egui::Popup::menu(&row).width(width).show(|ui| {
+        for (i, other) in c.profiles.iter().enumerate() {
+            let text = format!("{} · {}", other.name, other.who());
+            if ui
+                .add(egui::Button::selectable(i == c.active, text))
+                .clicked()
+            {
+                action = Some(Action::UseProfile(i));
+                ui.close();
+            }
+        }
+        ui.separator();
+        if ui
+            .button(format!("{}  Manage profiles…", icon::GEAR_SIX))
+            .clicked()
+        {
+            action = Some(Action::ManageProfiles);
+            ui.close();
+        }
+    });
+    if let Some(w) = c.warning {
+        egui::Frame::new()
+            .fill(theme::modified().gamma_multiply(0.15))
+            .stroke(egui::Stroke::new(
+                1.0,
+                theme::modified().gamma_multiply(0.6),
+            ))
+            .corner_radius(6)
+            .inner_margin(egui::Margin::symmetric(8, 6))
+            .show(ui, |ui| {
+                ui.set_width(width - 16.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    ui.label(
+                        RichText::new(format!("{}  {}", icon::WARNING, w.text))
+                            .size(12.0)
+                            .color(theme::modified()),
+                    );
+                    match w.switch.and_then(|i| c.profiles.get(i).map(|p| (i, p))) {
+                        Some((i, other)) => {
+                            let switch = ui.link(
+                                RichText::new(format!("Switch to {}", other.name))
+                                    .size(12.0)
+                                    .strong(),
+                            );
+                            if switch.clicked() {
+                                action = Some(Action::UseProfile(i));
+                            }
+                        }
+                        None => {
+                            if ui
+                                .link(RichText::new("Manage profiles").size(12.0).strong())
+                                .clicked()
+                            {
+                                action = Some(Action::ManageProfiles);
+                            }
+                        }
+                    }
+                });
+            });
     }
     action
 }

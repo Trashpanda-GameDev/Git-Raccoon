@@ -8289,3 +8289,233 @@ fn sets_up_ssh_from_nothing() {
     git_raccoon_core::ssh::set_ssh_dir(None);
     let _ = std::fs::remove_dir_all(&home);
 }
+
+#[test]
+fn profiles_choose_who_commits_and_which_accounts() {
+    use egui::accesskit::Role;
+    use git_raccoon::forge::{Account, Kind, accounts};
+    use git_raccoon::profiles::{AccountRef, Profile};
+    let sample = Sample::build();
+    let (base, _seen) = forge_server(
+        vec![("GET /api/v4/user", r#"{"username": "rockyraccoon"}"#.into())],
+        sample.path().into(),
+    );
+    // The repository is on rockyraccoon's own space.
+    git(
+        &sample,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            &format!("{base}/rockyraccoon/notes.git"),
+        ],
+    );
+    accounts::use_memory_store();
+    let account = |login: &str| Account {
+        kind: Kind::GitLab,
+        base: base.clone(),
+        login: login.into(),
+        client: None,
+    };
+    let (work, me) = (account("rocky-acme"), account("rockyraccoon"));
+    for a in [&work, &me] {
+        accounts::save(
+            a,
+            &accounts::Secret {
+                token: "glpat".into(),
+                refresh: None,
+                expires: None,
+            },
+        )
+        .unwrap();
+    }
+    let mut h = harness(Settings {
+        accounts: vec![work.clone(), me.clone()],
+        profiles: vec![
+            Profile {
+                name: "Work".into(),
+                colour: 0,
+                commit_name: "Rocky Raccoon".into(),
+                email: "rocky@acme.example".into(),
+                accounts: vec![AccountRef::of(&work)],
+            },
+            Profile {
+                name: "Personal".into(),
+                colour: 1,
+                commit_name: "Rocky".into(),
+                email: "rocky@raccoon.example".into(),
+                accounts: vec![AccountRef::of(&me)],
+            },
+        ],
+        ..Settings::default()
+    });
+    open(&mut h, sample.path());
+    settle(&mut h);
+    let active = |h: &Harness<'_, App>| h.state().settings().active_profile;
+    // Work's account isn't this forge's owner: the forge uses Work's.
+    let using = |h: &Harness<'_, App>| {
+        h.state()
+            .repo()
+            .unwrap()
+            .forge
+            .as_ref()
+            .and_then(|f| f.account.as_ref().map(|a| a.login.clone()))
+    };
+    wait_for(&mut h, "the forge", |app| {
+        app.repo().unwrap().forge.is_some()
+    });
+    assert_eq!(using(&h).as_deref(), Some("rocky-acme"));
+
+    // The commit box says who commits, and warns: this is Personal's.
+    sample.write("notes.md", "notes\n");
+    wait_for(&mut h, "the WIP row", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| !s.unstaged.is_empty())
+    });
+    h.get_by_label("Working changes").click();
+    settle(&mut h);
+    h.get_by_label_contains("Committing as Work");
+    h.get_by_label_contains("an account in your Personal profile");
+    h.get_by_label("Commit 0 files as Work");
+    screenshot(&mut h, "90-commit-as-profile");
+    h.get_by_label("Switch to Personal").click();
+    settle(&mut h);
+    assert_eq!(active(&h), 1);
+    assert!(h.query_by_label_contains("an account in your").is_none());
+    wait_for(&mut h, "Personal's account in use", |app| {
+        app.repo()
+            .unwrap()
+            .forge
+            .as_ref()
+            .and_then(|f| f.account.as_ref())
+            .is_some_and(|a| a.login == "rockyraccoon")
+    });
+
+    // Committing as Personal, Git's config untouched.
+    h.get_by_label("Stage notes.md").click();
+    wait_for(&mut h, "notes.md staged", |app| {
+        app.repo()
+            .unwrap()
+            .status
+            .as_ref()
+            .is_some_and(|s| s.staged.len() == 1)
+    });
+    type_into(&mut h, "Commit summary", "Add notes");
+    h.get_by_label("Commit 1 file as Personal").click();
+    wait_for(&mut h, "the commit", |app| {
+        app.repo().unwrap().draft.summary.is_empty() && !app.is_busy()
+    });
+    let repo = Repository::open(sample.path()).unwrap();
+    let head = repo.head().unwrap().peel_to_commit().unwrap();
+    assert_eq!(head.author().name(), Some("Rocky"));
+    assert_eq!(head.author().email(), Some("rocky@raccoon.example"));
+    assert!(
+        repo.config()
+            .unwrap()
+            .get_string("user.email")
+            .is_err_and(|_| true)
+            || repo
+                .config()
+                .unwrap()
+                .get_string("user.email")
+                .ok()
+                .as_deref()
+                != Some("rocky@raccoon.example"),
+        "not written to Git's config"
+    );
+
+    // The switcher at the top right.
+    h.get_by_label("Profile: Personal").click();
+    h.run_ok();
+    screenshot(&mut h, "91-profile-switcher");
+    h.get_by_role_and_label(Role::Button, "Work").click();
+    settle(&mut h);
+    assert_eq!(active(&h), 0);
+
+    // Settings › Profiles, from the switcher: rename Work, and give it the
+    // other account (one per forge: it's swapped in).
+    h.get_by_label("Profile: Work").click();
+    h.run_ok();
+    h.get_by_label_contains("Manage profiles").click();
+    settle(&mut h);
+    screenshot(&mut h, "92-settings-profiles");
+    h.get_by_role_and_label(Role::TextInput, "Profile name")
+        .click();
+    h.run_ok();
+    h.key_press(Key::End);
+    h.get_by_role_and_label(Role::TextInput, "Profile name")
+        .type_text(" (Acme)");
+    h.run_ok();
+    assert_eq!(h.state().settings().profiles[0].name, "Work (Acme)");
+    h.get_by_label(&format!(
+        "Use {} · rockyraccoon in this profile",
+        me.place()
+    ))
+    .click();
+    settle(&mut h);
+    let p = &h.state().settings().profiles[0];
+    assert!(p.uses(&me) && !p.uses(&work), "swapped in");
+    wait_for(&mut h, "the swapped account in use", |app| {
+        app.repo()
+            .unwrap()
+            .forge
+            .as_ref()
+            .and_then(|f| f.account.as_ref())
+            .is_some_and(|a| a.login == "rockyraccoon")
+    });
+
+    // Accounts: which profiles use each; signing out says who loses it.
+    h.get_by_role_and_label(Role::Button, "Accounts").click();
+    settle(&mut h);
+    h.get_by_label("Used by Work (Acme) and Personal");
+    h.get_by_label("In no profile: not used until one has it.");
+    h.get_by_label(&format!("Sign out of {} as rockyraccoon", me.place()))
+        .click();
+    settle(&mut h);
+    h.get_by_label_contains("Work (Acme) and Personal profiles will lose it.");
+    screenshot(&mut h, "93-sign-out-profiles");
+    h.get_by_label("Confirm sign out").click();
+    settle(&mut h);
+    assert!(h.state().settings().profiles.iter().all(|p| !p.uses(&me)));
+
+    // Switching from the command palette.
+    h.get_by_label("Close settings").click();
+    settle(&mut h);
+    press(&mut h, egui::Modifiers::COMMAND, Key::K);
+    h.run_ok();
+    h.get_by_label_contains("Switch profile to Personal")
+        .click();
+    settle(&mut h);
+    assert_eq!(active(&h), 1);
+}
+
+#[test]
+fn makes_a_default_profile_on_first_run() {
+    use git_raccoon::forge::{Account, Kind};
+    let gh = |login: &str| Account {
+        kind: Kind::GitHub,
+        base: "https://github.com".into(),
+        login: login.into(),
+        client: None,
+    };
+    let h = harness(Settings {
+        accounts: vec![gh("rocky-acme"), gh("rockyraccoon")],
+        ..Settings::default()
+    });
+    let s = h.state().settings();
+    assert_eq!(s.profiles.len(), 1);
+    assert_eq!(s.profiles[0].name, "Default");
+    // One account per forge: the first.
+    assert!(s.profiles[0].uses(&gh("rocky-acme")) && !s.profiles[0].uses(&gh("rockyraccoon")));
+    let (name, email) = git_raccoon::profiles::git_identity();
+    assert_eq!(
+        (
+            s.profiles[0].commit_name.clone(),
+            s.profiles[0].email.clone()
+        ),
+        (name, email)
+    );
+}

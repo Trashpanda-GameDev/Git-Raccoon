@@ -39,6 +39,10 @@ pub enum Action {
     PickSshKey,
     /// The guided SSH setup for an account (by its place in the list).
     SetUpSsh(usize),
+    /// The profile in use, or its accounts, changed.
+    ProfilesChanged,
+    /// Sign in to another account, for this profile.
+    SignInFor(usize),
 }
 
 /// A part of the settings.
@@ -47,6 +51,7 @@ pub enum Section {
     #[default]
     Appearance,
     Git,
+    Profiles,
     Accounts,
     Ssh,
     Tools,
@@ -56,9 +61,10 @@ pub enum Section {
 }
 
 impl Section {
-    const ALL: [Section; 8] = [
+    const ALL: [Section; 9] = [
         Section::Appearance,
         Section::Git,
+        Section::Profiles,
         Section::Accounts,
         Section::Ssh,
         Section::Tools,
@@ -71,6 +77,7 @@ impl Section {
         match self {
             Section::Appearance => "Appearance",
             Section::Git => "Git",
+            Section::Profiles => "Profiles",
             Section::Accounts => "Accounts",
             Section::Tools => "Tools",
             Section::Ssh => "SSH",
@@ -84,6 +91,7 @@ impl Section {
         match self {
             Section::Appearance => icon::PALETTE,
             Section::Git => icon::GIT_BRANCH,
+            Section::Profiles => icon::IDENTIFICATION_BADGE,
             Section::Accounts => icon::USER_CIRCLE,
             Section::Tools => icon::TERMINAL_WINDOW,
             Section::Ssh => icon::KEY,
@@ -98,6 +106,9 @@ impl Section {
             Section::Appearance => "How Git Raccoon looks, and how much fits on screen.",
             Section::Git => {
                 "What Fetch, Pull and the diffs do, unless you choose otherwise at the time."
+            }
+            Section::Profiles => {
+                "Who you commit as, and which accounts push, pull and show requests. Switch between them at the top right."
             }
             Section::Accounts => {
                 "GitHub and GitLab accounts, for pull requests, issues and cloning."
@@ -143,12 +154,15 @@ impl Section {
             }
             Section::Agents => settings.agents = d.agents,
             Section::Updates => settings.no_update_checks = d.no_update_checks,
-            Section::Accounts | Section::Ssh | Section::About => {}
+            Section::Profiles | Section::Accounts | Section::Ssh | Section::About => {}
         }
     }
 
     fn resettable(self) -> bool {
-        !matches!(self, Section::Accounts | Section::Ssh | Section::About)
+        !matches!(
+            self,
+            Section::Profiles | Section::Accounts | Section::Ssh | Section::About
+        )
     }
 }
 
@@ -256,6 +270,12 @@ const ROWS: &[Row] = &[
         words: "conflicts remember resolutions rerere same again",
     },
     Row {
+        section: Section::Profiles,
+        name: "Profiles",
+        hint: "Who you commit as, and with which accounts.",
+        words: "profiles profile identity name email work personal commit author committer accounts switch",
+    },
+    Row {
         section: Section::Accounts,
         name: "Signed in",
         hint: "Tokens are kept in your system's keychain.",
@@ -359,6 +379,10 @@ struct View {
     light: bool,
     /// Deleting it was asked for once: the button now says to confirm.
     deleting: bool,
+    /// The profile shown in Settings › Profiles.
+    profile: crate::ui::profiles::Editing,
+    /// The account whose sign-out is waiting to be confirmed.
+    signing_out: Option<usize>,
 }
 
 const LABEL: f32 = 190.0;
@@ -380,6 +404,20 @@ pub fn open_on(ctx: &egui::Context, section: Section) {
     view.section = section;
     view.search.clear();
     view.editing = None;
+    ctx.data_mut(|d| d.insert_temp(id, view));
+}
+
+/// Opens the settings window on Profiles, showing profile `i`.
+pub fn open_on_profile(ctx: &egui::Context, i: usize) {
+    let id = egui::Id::new("settings-window");
+    let mut view: View = ctx.data(|d| d.get_temp(id)).unwrap_or_default();
+    view.section = Section::Profiles;
+    view.search.clear();
+    view.editing = None;
+    view.profile = crate::ui::profiles::Editing {
+        profile: i,
+        deleting: false,
+    };
     ctx.data_mut(|d| d.insert_temp(id, view));
 }
 
@@ -1133,8 +1171,26 @@ fn page(
         }
     });
     ui.add_space(8.0);
+    if section == Section::Profiles {
+        profiles(ui, settings, view, action);
+        return;
+    }
     for row in ROWS.iter().filter(|r| r.section == section) {
         draw(ui, settings, row, view, action);
+    }
+}
+
+/// Settings › Profiles' editor.
+fn profiles(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    view: &mut View,
+    action: &mut Option<Action>,
+) {
+    match crate::ui::profiles::editor(ui, settings, &mut view.profile) {
+        Some(crate::ui::profiles::Edit::Changed) => *action = Some(Action::ProfilesChanged),
+        Some(crate::ui::profiles::Edit::SignInFor(i)) => *action = Some(Action::SignInFor(i)),
+        None => {}
     }
 }
 
@@ -1274,6 +1330,15 @@ fn connect_agent(ui: &mut egui::Ui) {
         ui,
         "Git Raccoon has to be open, with agent access on, for an agent to reach it.",
     );
+}
+
+/// "Work", "Work and Personal", "Work, Personal and Home".
+fn and_list(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
 }
 
 fn hint(ui: &mut egui::Ui, text: impl Into<String>) {
@@ -1559,11 +1624,13 @@ fn control(
         },
         "SSH agent" => crate::ui::ssh_settings::agent_row(ui, &settings.accounts),
         "Hosts" => crate::ui::ssh_settings::hosts_row(ui, &settings.accounts),
+        "Profiles" => profiles(ui, settings, view, action),
         "Signed in" => {
             if settings.accounts.is_empty() {
                 hint(ui, "None yet.");
             }
             for (i, a) in settings.accounts.iter().enumerate() {
+                let using = settings.profiles_using(a);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(a.place()).strong());
                     ui.label(&a.login);
@@ -1583,10 +1650,52 @@ fn control(
                             n.set_label(format!("Sign out of {} as {}", a.place(), a.login));
                         });
                         if out.clicked() {
-                            *action = Some(Action::SignOut(i));
+                            view.signing_out = Some(i);
                         }
                     });
                 });
+                // Which profiles use it.
+                let used = if using.is_empty() {
+                    "In no profile: not used until one has it.".to_string()
+                } else {
+                    format!("Used by {}", and_list(&using))
+                };
+                ui.label(RichText::new(used).size(12.0).color(theme::muted()));
+                // Signing out says first which profiles lose it.
+                if view.signing_out == Some(i) {
+                    ui.horizontal_wrapped(|ui| {
+                        let lose = if using.is_empty() {
+                            format!("Sign out of {} as {}?", a.place(), a.login)
+                        } else {
+                            format!(
+                                "Sign out of {} as {}? {} {} lose it.",
+                                a.place(),
+                                a.login,
+                                and_list(&using),
+                                if using.len() == 1 {
+                                    "profile will"
+                                } else {
+                                    "profiles will"
+                                }
+                            )
+                        };
+                        ui.label(RichText::new(lose).size(12.5).color(theme::danger()));
+                        let sure = ui.add(
+                            egui::Button::new(RichText::new("Sign out").color(theme::on_accent()))
+                                .fill(theme::danger()),
+                        );
+                        ui.ctx()
+                            .accesskit_node_builder(sure.id, |n| n.set_label("Confirm sign out"));
+                        if sure.clicked() {
+                            *action = Some(Action::SignOut(i));
+                            view.signing_out = None;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            view.signing_out = None;
+                        }
+                    });
+                }
+                ui.add_space(4.0);
             }
             ui.add_space(4.0);
             let add = ui.button(format!("{}  Add account…", icon::PLUS));

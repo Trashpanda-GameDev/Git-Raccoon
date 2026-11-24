@@ -5,6 +5,11 @@ release page). Newest first; a version's heading is just its number.
 
 ## 0.5.29
 
+- **Profiles: who you commit as, and with which accounts.** A profile has a name, a colour, the name and email to commit as, and the GitHub and GitLab accounts it uses (one per forge). Switch at the top right, or from the command palette; Git Raccoon's commits use the profile's name and email (your Git config is left alone), and pushing, pulling, pull/merge requests and cloning use its accounts.
+  - Your first run of this version makes a **Default** profile from your Git name and email, with your signed-in accounts: nothing changes until you add another.
+  - **Settings › Profiles**: add, duplicate and delete profiles, and choose each one's accounts (one account can be in several profiles). *Sign in to another account…* adds one to that profile.
+  - **The commit box** says who you're committing as (click to switch), and Commit says "as Work" once there's more than one profile. When the repository is on the space of an account only another profile has, it warns, with *Switch to Personal*.
+  - **Settings › Accounts** says which profiles use each account, and signing out says which lose it first.
 - **Search a file's history**: with *History* on, the box at the top of the list (or Ctrl+F) finds the commits that changed the file by message, author, SHA, or any file they changed, as you type.
 - **Search filters**, in a file's history and in the graph's search: `author:`, `committer:`, `message:`, `sha:`, `path:`, and dates with `after:`, `before:` and `date:` (`2026-11-23`, `2026-11`, `2026`, `yesterday`, or `2w` ago). They combine, with words besides: `loader author:ada after:2026-06`. The funnel button lists them. The search runs through the whole history as you type, without building an index.
 - **Copy a commit's SHA**: right-click a commit › *Copy SHA* or *Copy short SHA*.

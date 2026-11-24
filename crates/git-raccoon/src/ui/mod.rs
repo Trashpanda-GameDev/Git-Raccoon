@@ -17,6 +17,7 @@ pub mod history;
 pub mod licenses;
 pub mod new_repo;
 pub mod palette;
+pub mod profiles;
 pub mod push_to;
 pub mod rebase;
 pub mod repo_form;

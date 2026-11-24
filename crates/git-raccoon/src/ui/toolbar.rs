@@ -36,6 +36,8 @@ pub enum Action {
     /// Open a terminal in the repository's folder.
     Terminal,
     RestartToUpdate,
+    /// From the profile switcher.
+    Profile(crate::ui::profiles::Pick),
 }
 
 /// A fetch, pull or push in progress.
@@ -75,6 +77,8 @@ pub fn show(
     ui: &mut egui::Ui,
     repo: Option<OpenRepo<'_>>,
     recent: &[RecentRepo],
+    // For the profile switcher.
+    settings: &crate::settings::Settings,
     opening: bool,
     now: i64,
     // A downloaded update's version, waiting for a restart.
@@ -258,6 +262,10 @@ pub fn show(
                 .clicked()
             {
                 action = Some(Action::Feedback);
+            }
+            // The profile in use, to switch.
+            if let Some(pick) = crate::ui::profiles::switcher(ui, settings, compact) {
+                action = Some(Action::Profile(pick));
             }
             // Agents connected now (see Settings › Agents).
             let agents: crate::app::AgentsStatus = ui

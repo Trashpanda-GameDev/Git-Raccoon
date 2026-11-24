@@ -147,7 +147,7 @@ When you have changes, a **`// WIP`** row sits at the top of the graph. Click it
 
 1. **Stage** what you want to commit: a file's button, or pick several (Ctrl+click, Shift+click) and right-click.
 2. Write a **summary** (it turns amber past 50 characters, red past 72) and, if you like, a description.
-3. **Commit**, or press Ctrl+Enter.
+3. **Commit**, or press Ctrl+Enter. It's committed as the [profile](#profiles) in use, shown above the button.
 
 You can also type the summary straight into the `// WIP` row.
 
@@ -277,6 +277,21 @@ When a fetch, pull or push fails over SSH, Git Raccoon tests the connection and 
 
 Windows has two SSH setups: Git for Windows' own `ssh`, and Windows' OpenSSH with its agent service. Git uses its own, which can't see keys loaded in Windows' agent (so it asks for the passphrase every time). When your keys are in Windows' agent, Git Raccoon's own Git uses Windows' `ssh`; Settings › SSH says so, and offers **Use it for Git everywhere too** (which sets `core.sshCommand`). When Windows' agent service is turned off, it shows the PowerShell line that turns it on (as an administrator).
 
+## Profiles
+
+A **profile** is who you commit as (a name and email) and which accounts push, pull and show requests: one for work and one for your own projects, say. One is in use at a time, for the whole app.
+
+- **Switch** from the chip at the top right (the profile's colour and initial), or the command palette (*Switch profile to…*).
+- **Commits** made in Git Raccoon use the profile's name and email; your Git config isn't changed. With either left empty, Git's own are used.
+- **Accounts:** pushing, pulling, pull/merge requests, issues and cloning use the profile's account for that forge. An account in no profile stays signed in, but isn't used.
+- **The commit box** says who you're committing as (click it to switch). When the repository is on the space of one of your accounts that only another profile has (`github.com/rockyraccoon/…` while *Work* is in use), it warns, with *Switch to Personal*.
+
+![Settings › Profiles](../site/screenshots/profiles.png)
+
+**Settings › Profiles** (or *Manage profiles…* in the switcher) lists them; pick one to change its name, colour, name and email, and accounts. A profile has at most one account per forge: ticking another swaps it in. One account can be in several profiles (one GitHub account for both, with a different email each). *Sign in to another account…* signs in and adds it to that profile. Changes are saved as you type; *Duplicate*, *Delete profile…* and *Use this profile* are at the bottom.
+
+The first time you run a version with profiles, a **Default** profile is made from your Git name and email, with every account you're signed in to, so nothing changes until you add a second one.
+
 ## Pull requests, merge requests and issues
 
 For a repository on **GitHub**, **GitLab.com** or a **self-managed GitLab**, the sidebar lists its open pull requests (merge requests on GitLab) and issues, newest first. When there are more than 50, **Load more** at the end of the list shows the next ones.
@@ -287,7 +302,7 @@ For a repository on **GitHub**, **GitLab.com** or a **self-managed GitLab**, the
 2. Pick GitHub, GitLab.com or Self-managed GitLab (with its address).
 3. Approve the code in your browser. Or choose **Use a token instead**, and **Make a token…** opens the page to create one.
 
-You can be signed in to several forges at once. Tokens are kept in your system's keychain, never in the settings file.
+You can be signed in to several forges at once, and to several accounts on one; the [profile](#profiles) in use says which is used. Settings › Accounts says which profiles use each account, and signing out says which lose it. Tokens are kept in your system's keychain, never in the settings file.
 
 > **Self-managed GitLab with the browser** needs Git Raccoon registered once on the server (GitLab 17.2 or later): choose *Use the browser instead* › **Make an app…**, untick *Confidential*, tick `api`, and paste its **Application ID** back in.
 

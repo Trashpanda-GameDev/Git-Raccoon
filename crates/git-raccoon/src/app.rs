@@ -86,6 +86,10 @@ pub struct App {
     feedback_capture: Option<u8>,
     /// The sign-in window, while it's open, and its work in the background.
     sign_in: Option<crate::ui::sign_in::SignIn>,
+    /// The profile a sign-in started from Settings › Profiles is for.
+    sign_in_for: Option<usize>,
+    /// A profile to switch to, asked for while drawing.
+    switch_to: Option<usize>,
     sign_in_work: Option<SignInWork>,
     /// Reports of earlier crashes, offered one at a time.
     crash_reports: Vec<crate::crash::Report>,
@@ -194,6 +198,9 @@ impl App {
     /// Creates the app with the given settings and no repo open.
     pub fn with_settings(ctx: &egui::Context, mut settings: Settings) -> Self {
         theme::apply(ctx);
+        // First run (or from before profiles): one profile, "Default", from
+        // Git's name and email and the accounts signed in.
+        settings.ensure_profile(crate::profiles::git_identity());
         // On Windows: when the keys are in Windows' agent, which Git's own
         // ssh can't see, the app's Git uses Windows' ssh (in the background:
         // it asks the agents).
@@ -260,6 +267,8 @@ impl App {
             feedback_post: None,
             feedback_capture: None,
             sign_in: None,
+            sign_in_for: None,
+            switch_to: None,
             sign_in_work: None,
         }
     }
@@ -294,6 +303,8 @@ impl App {
 
     /// The new-repository dialog: its templates, and making it.
     fn new_repo_dialog(&mut self, ctx: &egui::Context) {
+        // The profile in use's accounts.
+        let accounts = self.settings.accounts_in_use();
         let Some(form) = &mut self.new_repo else {
             self.new_repo_templates = None;
             return;
@@ -306,7 +317,7 @@ impl App {
             form.templates = None;
             form.gitignore = None;
             form.license = None;
-            let account = wanted.and_then(|i| self.settings.accounts.get(i)).cloned();
+            let account = wanted.and_then(|i| accounts.get(i)).cloned();
             self.new_repo_templates = Some((
                 wanted,
                 Task::spawn(ctx, move || {
@@ -340,7 +351,7 @@ impl App {
                     Ok(Made::There(path)) => {
                         let place = form
                             .account
-                            .and_then(|i| self.settings.accounts.get(i))
+                            .and_then(|i| accounts.get(i))
                             .map(|a| a.place())
                             .unwrap_or_default();
                         form.done = Some(format!("Made {path} on {place}."));
@@ -352,7 +363,7 @@ impl App {
                 form.progress = Some(doing.clone());
             }
         }
-        match new_repo::show(ctx, form, &self.settings.accounts) {
+        match new_repo::show(ctx, form, &accounts) {
             Some(new_repo::Action::Browse) => {
                 if let Some(dir) = rfd::FileDialog::new()
                     .set_title("Where to put the new repository")
@@ -367,10 +378,7 @@ impl App {
                 if form.here_too() {
                     self.settings.clone_dir = Some(form.parent.trim().to_string());
                 }
-                let account = form
-                    .account
-                    .and_then(|i| self.settings.accounts.get(i))
-                    .cloned();
+                let account = form.account.and_then(|i| accounts.get(i)).cloned();
                 self.making = Some(start_making(ctx, form, account));
             }
             Some(new_repo::Action::Stop) => {
@@ -433,6 +441,8 @@ impl App {
     }
 
     fn clone_dialog(&mut self, ctx: &egui::Context) {
+        // The profile in use's accounts.
+        let accounts = self.settings.accounts_in_use();
         let Some(form) = &mut self.clone_form else {
             self.clone_repos = None;
             return;
@@ -449,7 +459,7 @@ impl App {
         if let Some(i) = form.account
             && form.repos.is_none()
             && self.clone_repos.as_ref().is_none_or(|(j, _)| *j != i)
-            && let Some(account) = self.settings.accounts.get(i).cloned()
+            && let Some(account) = accounts.get(i).cloned()
         {
             self.clone_repos = Some((
                 i,
@@ -460,7 +470,7 @@ impl App {
             .cloning
             .as_ref()
             .map(|c| c.progress.lock().ok().and_then(|p| p.clone()));
-        match clone::show(ctx, form, progress, &self.settings.accounts) {
+        match clone::show(ctx, form, progress, &accounts) {
             Some(clone::Action::Clone) => self.start_clone(ctx),
             Some(clone::Action::Browse) => {
                 if let Some(dir) = rfd::FileDialog::new()
@@ -472,7 +482,7 @@ impl App {
             }
             Some(clone::Action::Cancel) => self.clone_form = None,
             Some(clone::Action::SetUpSsh) => {
-                if let Some(account) = form.account.and_then(|i| self.settings.accounts.get(i)) {
+                if let Some(account) = form.account.and_then(|i| accounts.get(i)) {
                     self.ssh_setup = Some(crate::ui::ssh_setup::Setup::new(account.clone(), None));
                 }
             }
@@ -549,9 +559,11 @@ impl App {
         if self.prompt.is_none()
             && let Some(request) = self.askpass.as_ref().and_then(|s| s.poll())
         {
-            // An account signed in here answers for its host, without asking.
+            // An account signed in here (and in the profile in use) answers
+            // for its host, without asking.
+            let in_use = self.settings.accounts_in_use();
             if let Some((account, asked)) =
-                crate::forge::accounts::for_git_prompt(&request.prompt, &self.settings.accounts)
+                crate::forge::accounts::for_git_prompt(&request.prompt, &in_use)
             {
                 let account = account.clone();
                 // Reading the keychain (or renewing a GitLab sign-in) can block.
@@ -950,6 +962,8 @@ impl App {
                     | Command::ZoomIn
                     | Command::ZoomOut
                     | Command::ZoomReset
+                    | Command::UseProfile(_)
+                    | Command::ManageProfiles
             );
         };
         let busy = repo.op_running();
@@ -981,6 +995,8 @@ impl App {
             | Command::ShowWorking
             | Command::WriteCommit
             | Command::AddRemote
+            | Command::UseProfile(_)
+            | Command::ManageProfiles
             | Command::GoTo { .. } => true,
             Command::FileHistory | Command::Blame => repo.diff_key().is_some(),
             Command::GoToHead => repo.history.head_row().is_some(),
@@ -1026,6 +1042,15 @@ impl App {
         add(Command::OpenRepo, "Open repository…".into());
         add(Command::CloneRepo, "Clone repository…".into());
         add(Command::NewRepo, "New repository…".into());
+        for (i, p) in self.settings.profiles.iter().enumerate() {
+            if i != self.settings.active_profile {
+                add(
+                    Command::UseProfile(i),
+                    format!("Switch profile to {} ({})", p.name, p.who()),
+                );
+            }
+        }
+        add(Command::ManageProfiles, "Manage profiles…".into());
         let Some(repo) = &self.repo else { return out };
         let head = repo.head_branch().unwrap_or("HEAD").to_string();
         let state = repo.status.as_ref().and_then(|s| s.in_progress.as_ref());
@@ -1138,6 +1163,11 @@ impl App {
         match command {
             Command::Palette => self.palette = Some(palette::State::default()),
             Command::Settings => self.settings_open = true,
+            Command::UseProfile(i) => self.use_profile(i),
+            Command::ManageProfiles => {
+                crate::ui::settings::open_on_profile(ctx, self.settings.active_profile);
+                self.settings_open = true;
+            }
             Command::NewTab => self.new_tab(ctx),
             Command::NextTab => {
                 let next = (self.active + 1) % self.tabs.len();
@@ -1291,7 +1321,8 @@ impl App {
             .collect();
         repo.web = crate::forge::Web::new(&remotes, &managed);
         if std::mem::take(&mut repo.forge_stale) {
-            let found = crate::forge_view::ForgeView::find(&remotes, &self.settings.accounts);
+            let found =
+                crate::forge_view::ForgeView::find(&remotes, &self.settings.accounts_in_use());
             if let (Some(images), Some(f)) = (&self.forge_images, &found)
                 && let Some(account) = f.account.clone()
             {
@@ -1599,10 +1630,8 @@ impl App {
                     self.sign_in_work = None;
                     match result {
                         Ok(account) => {
-                            self.settings
-                                .accounts
-                                .retain(|a| !(a.base == account.base && a.login == account.login));
-                            self.settings.accounts.push(account);
+                            let to = self.sign_in_for.take();
+                            self.settings.signed_in(account, to);
                             self.sign_in = None;
                             if let Some(repo) = &mut self.repo {
                                 repo.forge_stale = true;
@@ -1645,6 +1674,7 @@ impl App {
                 }
                 self.sign_in_work = None;
                 self.sign_in = None;
+                self.sign_in_for = None;
             }
             None => {}
         }
@@ -1910,6 +1940,7 @@ impl App {
                     ui,
                     open,
                     &self.settings.recent,
+                    &self.settings,
                     self.active_opening(),
                     now,
                     self.updater.ready_version(),
@@ -1927,6 +1958,7 @@ impl App {
             Some(toolbar::Action::Search) => self.run_command(&ctx, Command::Find),
             Some(toolbar::Action::Settings) => self.run_command(&ctx, Command::Settings),
             Some(toolbar::Action::Feedback) => self.run_command(&ctx, Command::Feedback),
+            Some(toolbar::Action::Profile(pick)) => self.profile_pick(&ctx, pick),
             Some(toolbar::Action::Terminal) => self.run_command(&ctx, Command::Terminal),
             Some(toolbar::Action::RestartToUpdate) => self.restart_to_update = true,
             Some(toolbar::Action::Fetch(from)) => {
@@ -2402,6 +2434,16 @@ impl App {
                         repo.is_staging(),
                         repo.is_committing(),
                     );
+                    // Who commits, and whether this repository belongs to
+                    // an account another profile has.
+                    let warning = repo.forge.as_ref().and_then(|f| {
+                        crate::profiles::owner_warning(
+                            &self.settings.profiles,
+                            self.settings.active_profile,
+                            &self.settings.accounts,
+                            &f.project,
+                        )
+                    });
                     working::show(
                         ui,
                         working::State {
@@ -2414,11 +2456,21 @@ impl App {
                             draft: &mut repo.draft,
                             tree: self.settings.file_tree,
                             selection: &mut repo.file_selection,
+                            commit_as: Some(working::CommitAs {
+                                profiles: &self.settings.profiles,
+                                active: self.settings.active_profile,
+                                warning: warning.as_ref(),
+                            }),
                         },
                     )
                 })
                 .inner;
             match action {
+                Some(working::Action::UseProfile(i)) => self.switch_to = Some(i),
+                Some(working::Action::ManageProfiles) => {
+                    crate::ui::settings::open_on_profile(&ctx, self.settings.active_profile);
+                    self.settings_open = true;
+                }
                 Some(working::Action::Open(side, f)) => repo.open_working_file(side, f),
                 Some(working::Action::OpenConflict(f)) => repo.open_conflict(f),
                 Some(working::Action::Stage(f)) => repo.run(&ctx, Op::StageFile(f)),
@@ -2826,7 +2878,7 @@ impl App {
         }
         // The guided SSH setup, asked for from a remote's menu.
         if let Some(remote) = repo.wants_ssh_setup.take() {
-            match ssh_setup_for(repo, &remote, &self.settings.accounts) {
+            match ssh_setup_for(repo, &remote, &self.settings.accounts_in_use()) {
                 Some(setup) => self.ssh_setup = Some(setup),
                 None => {
                     self.error = Some(format!(
@@ -2839,7 +2891,7 @@ impl App {
         let path = repo.path().to_string();
         if let Some(problem) = &mut repo.ssh_problem {
             use crate::ui::ssh_problem::{self, Fix};
-            match ssh_problem::show(&ctx, problem, &self.settings.accounts, &path) {
+            match ssh_problem::show(&ctx, problem, &self.settings.accounts_in_use(), &path) {
                 Some(Fix::Retry) => {
                     let op = problem.op.clone();
                     repo.ssh_problem = None;
@@ -2855,7 +2907,7 @@ impl App {
                     let remote = problem.remote.clone();
                     repo.ssh_problem = None;
                     // The guided setup when signed in to the host, else the page.
-                    match ssh_setup_for(repo, &remote, &self.settings.accounts) {
+                    match ssh_setup_for(repo, &remote, &self.settings.accounts_in_use()) {
                         Some(setup) => self.ssh_setup = Some(setup),
                         None => {
                             crate::ui::settings::open_on(&ctx, crate::ui::settings::Section::Ssh);
@@ -2876,6 +2928,15 @@ impl eframe::App for App {
         self.apply_look(ctx);
         self.updater.tick(ctx, !self.settings.no_update_checks);
         git_raccoon_core::conflict::set_remember(self.settings.remember_resolutions);
+        if let Some(i) = self.switch_to.take() {
+            self.use_profile(i);
+        }
+        // The app's Git commits as the profile in use.
+        git_raccoon_core::commit::set_identity(
+            self.settings
+                .profile()
+                .and_then(crate::profiles::Profile::identity),
+        );
         self.poll_opening(ctx);
         // A submodule or worktree to open in a tab.
         if let Some(path) = self.repo.as_mut().and_then(|r| r.open_request.take()) {
@@ -2924,6 +2985,45 @@ impl eframe::App for App {
 }
 
 impl App {
+    /// Uses profile `i` from now on: its name and email for commits, its
+    /// accounts for forge features, pushing and pulling.
+    pub fn use_profile(&mut self, i: usize) {
+        if i < self.settings.profiles.len() && i != self.settings.active_profile {
+            self.settings.active_profile = i;
+            self.profile_changed();
+        }
+    }
+
+    /// What the profile switcher asked for.
+    fn profile_pick(&mut self, ctx: &egui::Context, pick: crate::ui::profiles::Pick) {
+        use crate::ui::profiles::Pick;
+        match pick {
+            Pick::Use(i) => self.use_profile(i),
+            Pick::New => {
+                let i = crate::ui::profiles::new_profile(&mut self.settings, None);
+                crate::ui::settings::open_on_profile(ctx, i);
+                self.settings_open = true;
+            }
+            Pick::Manage => {
+                crate::ui::settings::open_on_profile(ctx, self.settings.active_profile);
+                self.settings_open = true;
+            }
+        }
+    }
+
+    /// The accounts in use changed: each repository's forge is found again
+    /// (with the account now in use).
+    fn profile_changed(&mut self) {
+        if let Some(repo) = &mut self.repo {
+            repo.forge_stale = true;
+        }
+        for tab in &mut self.tabs {
+            if let Some((Some(repo), _)) = &mut tab.parked {
+                repo.forge_stale = true;
+            }
+        }
+    }
+
     fn draw(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         // The title bar matches the tab bar beneath it.
         if std::mem::take(&mut self.title_bar_stale) {
@@ -2965,14 +3065,20 @@ impl App {
                 }
                 Some(crate::ui::settings::Action::Close) => self.settings_open = false,
                 Some(crate::ui::settings::Action::ClearRecent) => self.settings.recent.clear(),
+                Some(crate::ui::settings::Action::ProfilesChanged) => self.profile_changed(),
+                Some(crate::ui::settings::Action::SignInFor(i)) => {
+                    self.settings_open = false;
+                    self.sign_in_for = Some(i);
+                    self.sign_in = Some(crate::ui::sign_in::SignIn::default());
+                }
                 Some(crate::ui::settings::Action::AddAccount) => {
                     self.settings_open = false;
                     self.sign_in = Some(crate::ui::sign_in::SignIn::default());
                 }
                 Some(crate::ui::settings::Action::SignOut(i)) => {
-                    if i < self.settings.accounts.len() {
-                        let account = self.settings.accounts.remove(i);
+                    if let Some(account) = self.settings.sign_out(i) {
                         crate::forge::accounts::forget(&account);
+                        self.profile_changed();
                     }
                 }
                 Some(crate::ui::settings::Action::Licenses) => {

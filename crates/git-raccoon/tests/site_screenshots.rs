@@ -419,8 +419,62 @@ fn website_screenshots() {
     #[cfg(unix)]
     ssh(&demo);
 
+    // Profiles: the switcher, and Settings › Profiles.
+    profiles();
+
     // Resolving a merge's conflicts, as panes (last: it changes the repo).
     conflicts(&demo);
+}
+
+/// Two profiles (Work and Personal) and their accounts: the switcher at
+/// the top right, and the Settings page. No repository: nothing on the
+/// forges is asked for.
+fn profiles() {
+    use egui::accesskit::Role;
+    use git_raccoon::forge::{Account, Kind};
+    use git_raccoon::profiles::{AccountRef, Profile};
+    let account = |kind, base: &str, login: &str| Account {
+        kind,
+        base: base.into(),
+        login: login.into(),
+        client: None,
+    };
+    let acme_gitlab = account(Kind::GitLab, "https://gitlab.acme.example", "rocky.raccoon");
+    let acme = account(Kind::GitHub, "https://github.com", "rocky-acme");
+    let me = account(Kind::GitHub, "https://github.com", "rockyraccoon");
+    let mut h = harness_with(Settings {
+        theme: ThemeChoice::Raccoon,
+        theme_mode: ThemeMode::Dark,
+        no_update_checks: true,
+        accounts: vec![acme_gitlab.clone(), acme.clone(), me.clone()],
+        profiles: vec![
+            Profile {
+                name: "Work".into(),
+                colour: 0,
+                commit_name: "Rocky Raccoon".into(),
+                email: "rocky@acme.example".into(),
+                accounts: vec![AccountRef::of(&acme_gitlab), AccountRef::of(&acme)],
+            },
+            Profile {
+                name: "Personal".into(),
+                colour: 1,
+                commit_name: "Rocky".into(),
+                email: "rocky@raccoon.example".into(),
+                accounts: vec![AccountRef::of(&me)],
+            },
+        ],
+        ..Settings::default()
+    });
+    settle(&mut h);
+    h.get_by_label("Profile: Work").click();
+    settle(&mut h);
+    shot(&mut h, "profile-switcher");
+    h.key_press(Key::Escape);
+    settle(&mut h);
+    press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    h.get_by_role_and_label(Role::Button, "Profiles").click();
+    settle(&mut h);
+    shot(&mut h, "profiles");
 }
 
 /// Settings › SSH, and a push that failed over SSH, explained.

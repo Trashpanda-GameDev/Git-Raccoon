@@ -47,6 +47,31 @@ pub fn ssh_command() -> Option<String> {
     SSH_COMMAND.lock().ok().and_then(|s| s.clone())
 }
 
+/// The name and email the app's Git commits as (the profile in use), when
+/// set; otherwise Git's own config decides.
+static IDENTITY: std::sync::Mutex<Option<(String, String)>> = std::sync::Mutex::new(None);
+
+/// Sets (or clears) who the app's Git commits as. Only for its own
+/// commands: the user's Git config is left as it is.
+pub fn set_identity(who: Option<(String, String)>) {
+    if let Ok(mut i) = IDENTITY.lock() {
+        *i = who;
+    }
+}
+
+fn identity() -> Option<(String, String)> {
+    IDENTITY.lock().ok().and_then(|i| i.clone())
+}
+
+/// Git's own `user.name` and `user.email` (global), where set.
+pub fn global_identity() -> (String, String) {
+    let Ok(config) = git2::Config::open_default() else {
+        return Default::default();
+    };
+    let get = |key: &str| config.get_string(key).unwrap_or_default();
+    (get("user.name"), get("user.email"))
+}
+
 /// Turns remembering conflict resolutions on or off for the app's Git.
 pub fn set_remember(on: bool) {
     REMEMBER.store(on, Ordering::Relaxed);
@@ -61,6 +86,14 @@ fn git_asking(path: &str, ask: bool) -> Command {
     cmd.arg("-C").arg(path);
     if remembering() {
         cmd.args(["-c", "rerere.enabled=true"]);
+    }
+    // Commits (and tags, merges, stashes) are by the profile in use; a
+    // rebase or cherry-pick keeps each commit's author.
+    if let Some((name, email)) = identity() {
+        cmd.arg("-c")
+            .arg(format!("user.name={name}"))
+            .arg("-c")
+            .arg(format!("user.email={email}"));
     }
     cmd.env("GIT_EDITOR", "true")
         .env("GIT_TERMINAL_PROMPT", "0")

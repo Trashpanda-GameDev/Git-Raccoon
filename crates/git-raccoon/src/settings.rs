@@ -200,6 +200,11 @@ pub struct Settings {
     /// Sidebar sections and folders closed, by repository path, so they
     /// stay closed after a restart.
     pub sidebar_collapsed: std::collections::BTreeMap<String, Vec<String>>,
+    /// Who you commit as, and with which accounts (see `profiles`); made
+    /// on first run.
+    pub profiles: Vec<crate::profiles::Profile>,
+    /// Which of them is in use.
+    pub active_profile: usize,
     /// Review comments not sent yet, by request (see `ForgeView::drafts_key`).
     pub review_drafts: std::collections::BTreeMap<String, Vec<crate::forge::review::Draft>>,
     /// AI agents may connect (over MCP, through `git-raccoon mcp`). Off
@@ -386,6 +391,8 @@ impl Default for Settings {
             review_drafts: std::collections::BTreeMap::new(),
             pinned_branches: std::collections::BTreeMap::new(),
             sidebar_collapsed: std::collections::BTreeMap::new(),
+            profiles: Vec::new(),
+            active_profile: 0,
             agents: false,
             columns: Column::ALL.to_vec(),
             themes: Vec::new(),
@@ -472,6 +479,95 @@ impl Settings {
         }
         self.defaults = DEFAULTS;
         self
+    }
+
+    /// The profile in use, if there are any.
+    pub fn profile(&self) -> Option<&crate::profiles::Profile> {
+        self.profiles
+            .get(self.active_profile)
+            .or_else(|| self.profiles.first())
+    }
+
+    /// The signed-in accounts the profile in use has: the ones forge
+    /// features, pushing and pulling use. Every one, before there are
+    /// profiles.
+    pub fn accounts_in_use(&self) -> Vec<crate::forge::Account> {
+        match self.profile() {
+            None => self.accounts.clone(),
+            Some(p) => self
+                .accounts
+                .iter()
+                .filter(|a| p.uses(a))
+                .cloned()
+                .collect(),
+        }
+    }
+
+    /// Makes the first profile, "Default", when there's none yet: Git's
+    /// name and email, and the accounts signed in.
+    pub fn ensure_profile(&mut self, git: (String, String)) {
+        if self.profiles.is_empty() {
+            self.profiles
+                .push(crate::profiles::first(&self.accounts, &git.0, &git.1));
+            self.active_profile = 0;
+        }
+        if self.active_profile >= self.profiles.len() {
+            self.active_profile = 0;
+        }
+    }
+
+    /// A newly signed-in account: kept, and used by `profile` (that one's
+    /// account for its forge is swapped for it), or else by the profile in
+    /// use when it has none for that forge yet.
+    pub fn signed_in(&mut self, account: crate::forge::Account, profile: Option<usize>) {
+        self.accounts
+            .retain(|a| !(a.base == account.base && a.login == account.login));
+        match profile.and_then(|i| self.profiles.get_mut(i)) {
+            Some(p) => p.take_account(&account),
+            None => {
+                let i = self
+                    .active_profile
+                    .min(self.profiles.len().saturating_sub(1));
+                if let Some(p) = self.profiles.get_mut(i)
+                    && !p.has_forge(&account.base)
+                {
+                    p.take_account(&account);
+                }
+            }
+        }
+        self.accounts.push(account);
+    }
+
+    /// Signs out of account `i`: gone from every profile too.
+    pub fn sign_out(&mut self, i: usize) -> Option<crate::forge::Account> {
+        if i >= self.accounts.len() {
+            return None;
+        }
+        let account = self.accounts.remove(i);
+        for p in &mut self.profiles {
+            p.drop_account(&account);
+        }
+        Some(account)
+    }
+
+    /// The names of the profiles that use `account`.
+    pub fn profiles_using(&self, account: &crate::forge::Account) -> Vec<String> {
+        self.profiles
+            .iter()
+            .filter(|p| p.uses(account))
+            .map(|p| p.name.clone())
+            .collect()
+    }
+
+    /// Deletes profile `i` (not the last one), keeping the one in use.
+    pub fn delete_profile(&mut self, i: usize) {
+        if self.profiles.len() < 2 || i >= self.profiles.len() {
+            return;
+        }
+        self.profiles.remove(i);
+        if self.active_profile > i || self.active_profile >= self.profiles.len() {
+            self.active_profile = self.active_profile.saturating_sub(1);
+        }
     }
 
     /// Moves `path` to the front of the recent list, adding it if new.

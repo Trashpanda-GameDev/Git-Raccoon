@@ -48,6 +48,10 @@ pub enum Command {
     /// The open file's history or blame.
     FileHistory,
     Blame,
+    /// Use this profile (by its place in the list).
+    UseProfile(usize),
+    /// Settings › Profiles.
+    ManageProfiles,
     /// For one branch.
     Checkout(String),
     CheckoutRemote(String),

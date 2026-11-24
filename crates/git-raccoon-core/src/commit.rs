@@ -5,6 +5,9 @@ use git2::Repository;
 
 use crate::{Error, Result};
 
+/// Who the app's commits are by (the profile in use), and Git's own.
+pub use crate::cli::{global_identity, set_identity};
+
 /// What a successful commit produced.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Committed {
