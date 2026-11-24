@@ -148,6 +148,24 @@ Git's bisect, in plain words: "broken" and "works", not "bad" and "good" or "bis
 
 ## Designed (ready to build)
 
+### Merge tools, diff tools and an editor
+
+Mockups: [docs/design/external-tools](docs/design/external-tools). Asked for in [#18](https://github.com/Trashpanda-GameDev/Git-Raccoon/issues/18) (custom merge tools per file type, like Unity's UnityYAMLMerge).
+
+Built on Git's own ways of doing this, so what's set up here works from a terminal too, and the reverse: a *merge tool* opens on a conflict, and a *merge driver* (named for files in `.gitattributes`) runs during the merge itself, leaving only what it can't merge as a conflict. Choosing a tool is the app's own setting; rules for file types are written as Git's attributes and config, shown before anything is written.
+
+- [ ] **Settings › Tools** grows to four: *Merge tool*, *For some files*, *Diff tool*, *Editor*, and the *Terminal* setting already there.
+- [ ] **Merge tool:** *Git config default* (your `merge.tool`, named: "Git config default (KDiff3)"), *Built in only*, the tools found on this computer, or *Custom command…* with `$BASE $LOCAL $REMOTE $MERGED`. Kept in Git Raccoon's settings, not written to Git's config.
+- [ ] **Presets that find the tools** on Windows, macOS and Linux (where they're usually installed, and on the PATH): KDiff3, Meld, Beyond Compare, P4Merge, WinMerge, Visual Studio Code, JetBrains' IDEs, UnityYAMLMerge. Only the ones installed are listed.
+- [ ] **Open in the merge tool** from the conflict editor (and the conflicts overview): the three versions written out, the tool started, a "KDiff3 is open on src/store.rs" bar (*Bring it forward*, *Stop waiting*) while it runs, and the result brought back to check before it's marked resolved. A tool that exits without saving changes nothing.
+- [ ] **For some files:** rules of file names (`*.unity *.prefab *.asset *.meta`) → a tool, either *Automatically while merging* (a merge driver: the tool resolves what it can, the rest are conflicts) or *When I open the file* (that file's "Open in…"). *Just me* keeps the rule on this computer (`.git/info/attributes` and `.git/config`); *Everyone on this repository* adds the file names to `.gitattributes`, to commit (each person's own tool path stays on their computer). *Test on a sample* before saving.
+- [ ] **Unity:** UnityYAMLMerge found from the project's Unity version (`ProjectSettings/ProjectVersion.txt`, then Unity Hub's editors) each time it runs, through `git-raccoon merge-driver unity …`, so upgrading Unity doesn't break it, and merging from a terminal uses it too. When that version isn't installed, it says which is, and the files are left as conflicts, never half-merged.
+- [ ] **What the tools did:** after a merge, "UnityYAMLMerge merged 3 files on its own" (*Review them*) beside the conflicts left, each with *Open in UnityYAMLMerge*.
+- [ ] **Diff tool:** *Use the merge tool* (the default), *Built in only*, or one of the list; *Open in Beyond Compare* on any diff (a commit's file, the working changes, a request's file).
+- [ ] **Editor:** *None*, the editors found (VS Code, Sublime Text, JetBrains' IDEs, Notepad++, Zed…), or *Custom command…* with `$FILE` and `$LINE`; *Open in editor* on files in diffs, file lists and the conflict editor, at the line being looked at.
+- [ ] **Agents:** the merge driver's results in `get_conflicts`.
+- Later: a different merge tool per repository; a team's recommended tools in the repository.
+
 ### Merge requests without leaving the app
 
 Clickable prototype: [Git Raccoon merge requests](https://claude.ai/artifact/HZ9aRqi9yffGtvRmptrYW8). Build work: the [Merge requests milestone](https://github.com/Trashpanda-GameDev/Git-Raccoon/milestone/2).
