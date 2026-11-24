@@ -8074,6 +8074,69 @@ fn a_rule_merges_unitys_files_with_the_projects_unityyamlmerge() {
 }
 
 #[test]
+fn opens_files_in_the_diff_tool_and_the_editor() {
+    use git_raccoon::settings::ToolChoice;
+    let sample = Sample::build();
+    // Stand-in tools that note what they were given: Git, writing it into
+    // a config file of its own.
+    let out = sample.dir.with_extension("seen.cfg");
+    let note = |key: &str, what: &str| {
+        ToolChoice::Custom(format!(
+            "git config --file \"{}\" seen.{key} \"{what}\"",
+            out.display()
+        ))
+    };
+    let mut h = harness(Settings {
+        diff_tool: note("diff", "$LOCAL|$REMOTE"),
+        editor: note("edit", "$FILE:$LINE"),
+        ..Settings::default()
+    });
+    open(&mut h, sample.path());
+    let seen = |key: &str| {
+        git2::Config::open(&out)
+            .ok()
+            .and_then(|c| c.get_string(&format!("seen.{key}")).ok())
+    };
+    let wait = |h: &mut Harness<'_, App>, key: &str| {
+        let start = Instant::now();
+        while seen(key).is_none() {
+            assert!(
+                start.elapsed() < Duration::from_secs(20),
+                "the tool didn't run: {:?}",
+                h.state().error()
+            );
+            h.step();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        seen(key).unwrap()
+    };
+    h.get_by_label("Redraw icon and rename loader").click();
+    settle(&mut h);
+    h.get_by_label("src/repo_loader.rs").click();
+    settle(&mut h);
+    screenshot(&mut h, "106-open-in-tools");
+
+    // The editor: the file in the working tree, at the first change.
+    h.get_by_label("Open in editor").click();
+    h.run_ok();
+    let edit = wait(&mut h, "edit");
+    let file = sample.dir.join("src/repo_loader.rs").display().to_string();
+    assert!(edit.starts_with(&format!("{file}:")), "{edit}");
+    let line: usize = edit.rsplit(':').next().unwrap().parse().unwrap();
+    assert!(line >= 1, "{edit}");
+
+    // The diff tool: the two versions, written out and named for it.
+    h.get_by_label("Open in git").click();
+    h.run_ok();
+    let diff = wait(&mut h, "diff");
+    let (before, after) = diff.split_once('|').unwrap();
+    assert!(before.ends_with("repo_loader.before.rs"), "{diff}");
+    assert!(after.ends_with("repo_loader.after.rs"), "{diff}");
+    assert!(h.state().error().is_none());
+    let _ = std::fs::remove_file(&out);
+}
+
+#[test]
 fn resolves_conflicts_in_panes() {
     use egui::accesskit::Role;
     let sample = Sample::build();

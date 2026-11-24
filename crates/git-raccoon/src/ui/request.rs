@@ -25,6 +25,14 @@ use git_raccoon_core::file_history::Blame;
 
 pub enum Action {
     Close,
+    /// Open a file's two versions (before the request, and in it) in the
+    /// diff tool.
+    OpenInDiffTool {
+        path: String,
+        old_path: String,
+        base: String,
+        head: String,
+    },
     Open(String),
     Reload,
     /// Check out its branch; or into a new worktree.
@@ -73,6 +81,8 @@ pub struct Here<'a> {
     /// Uncommitted changes were put aside to check it out, on this branch:
     /// going back there brings them back.
     pub aside: Option<String>,
+    /// The diff tool chosen, by name.
+    pub diff_tool: Option<String>,
 }
 
 /// What a stash made to check out a request says, so going back can find it.
@@ -1821,6 +1831,29 @@ fn changes(
                     if chosen != state.whole {
                         state.whole = chosen;
                         state.picked.clear();
+                    }
+                    if let Some(name) = &here.diff_tool {
+                        let b = ui
+                            .add_enabled(
+                                why_not.is_none(),
+                                egui::Button::new(
+                                    RichText::new(format!("{}  {name}", icon::ARROW_SQUARE_OUT))
+                                        .size(12.0),
+                                ),
+                            )
+                            .on_hover_text(format!("Open both versions in {name}"))
+                            .on_disabled_hover_text(why_not.clone().unwrap_or_default());
+                        let label = format!("Open in {name}");
+                        ui.ctx()
+                            .accesskit_node_builder(b.id, |n| n.set_label(label));
+                        if b.clicked() {
+                            *action = Some(Action::OpenInDiffTool {
+                                path: f.path.clone(),
+                                old_path: f.old_path.clone().unwrap_or_else(|| f.path.clone()),
+                                base: o.refs.base.clone(),
+                                head: o.refs.head.clone(),
+                            });
+                        }
                     }
                     ui.add_space(8.0);
                     thread_nav(ui, o, state);

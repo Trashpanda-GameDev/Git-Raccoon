@@ -2544,6 +2544,31 @@ impl RepoView {
         tool
     }
 
+    /// The line of the open diff to open the file at: the first picked
+    /// line's, or the first change's (in the new version).
+    pub fn line_looked_at(&self, key: &DiffKey) -> usize {
+        let Some(Ok(d)) = self.diff.get(key) else {
+            return 1;
+        };
+        let hunks = &d.diff.hunks;
+        let picked = self
+            .picked
+            .iter()
+            .find_map(|&(h, l)| hunks.get(h)?.lines.get(l)?.new_line);
+        let first = || {
+            hunks
+                .iter()
+                .flat_map(|h| &h.lines)
+                .find(|l| l.kind != git_raccoon_core::details::LineKind::Context)
+                .and_then(|l| l.new_line.or(l.old_line))
+        };
+        picked
+            .or_else(first)
+            .and_then(|n| usize::try_from(n).ok())
+            .unwrap_or(1)
+            .max(1)
+    }
+
     /// Opens a conflicted file for resolving.
     pub fn open_conflict(&mut self, file: String) {
         self.active_file = None;

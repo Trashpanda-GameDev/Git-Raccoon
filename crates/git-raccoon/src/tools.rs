@@ -281,3 +281,127 @@ pub fn this_program() -> std::path::PathBuf {
         .or_else(|| std::env::current_exe().ok())
         .unwrap_or_else(|| "git-raccoon".into())
 }
+
+/// Starts a tool without waiting for it (a diff tool, an editor); `then`
+/// is removed once it closes (the files written for it).
+pub fn start(
+    name: &str,
+    run: &Run,
+    dir: &str,
+    then: Option<std::path::PathBuf>,
+) -> Result<(), String> {
+    let mut command = run.command();
+    command
+        .current_dir(dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    match command.spawn() {
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+                if let Some(t) = then {
+                    let _ = std::fs::remove_dir_all(t);
+                }
+            });
+            Ok(())
+        }
+        Err(e) => {
+            if let Some(t) = then {
+                let _ = std::fs::remove_dir_all(t);
+            }
+            Err(format!(
+                "{name} didn't start ({}: {e})",
+                run.program.display()
+            ))
+        }
+    }
+}
+
+/// A file's two versions written out for a diff tool: (folder, before,
+/// after), named so the tool shows which is which.
+pub fn write_pair(
+    file: &str,
+    blobs: &git_raccoon_core::details::FileBlobs,
+) -> Result<(std::path::PathBuf, std::path::PathBuf, std::path::PathBuf), String> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COUNT: AtomicUsize = AtomicUsize::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "git-raccoon-diff-{}-{}",
+        std::process::id(),
+        COUNT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let name = std::path::Path::new(file)
+        .file_name()
+        .map_or_else(|| "file".into(), |n| n.to_string_lossy().to_string());
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
+        _ => (name.clone(), String::new()),
+    };
+    let write = |which: &str, side: &Option<git_raccoon_core::details::BlobData>| {
+        let at = dir.join(format!("{stem}.{which}{ext}"));
+        let bytes = side
+            .as_ref()
+            .and_then(|b| b.bytes.clone())
+            .unwrap_or_default();
+        std::fs::write(&at, bytes)
+            .map(|()| at)
+            .map_err(|e| e.to_string())
+    };
+    let before = write("before", &blobs.old)?;
+    let after = write("after", &blobs.new)?;
+    Ok((dir, before, after))
+}
+
+/// Opens a file of the repository in the editor chosen in Settings, at
+/// `line`: its name, or why it can't be.
+pub fn open_in_editor(
+    settings: &Settings,
+    repo: &str,
+    file: &str,
+    line: usize,
+) -> Result<String, String> {
+    let full = std::path::Path::new(repo).join(file);
+    if !full.is_file() {
+        return Err(format!("{file} isn't in the working tree"));
+    }
+    let vars = Vars {
+        file: full.display().to_string(),
+        line,
+        ..Default::default()
+    };
+    let (name, run) = resolve(settings, Role::Editor, Some(repo), &vars)?
+        .ok_or("No editor is chosen: pick one in Settings › Tools")?;
+    start(&name, &run, repo, None).map(|()| name)
+}
+
+/// Opens a file's two versions in the diff tool: its name, or why not.
+pub fn open_in_diff_tool(
+    settings: &Settings,
+    repo: &str,
+    file: &str,
+    blobs: &git_raccoon_core::details::FileBlobs,
+) -> Result<String, String> {
+    let (dir, before, after) = write_pair(file, blobs)?;
+    let vars = Vars {
+        base: before.display().to_string(),
+        local: before.display().to_string(),
+        remote: after.display().to_string(),
+        merged: after.display().to_string(),
+        file: after.display().to_string(),
+        line: 1,
+    };
+    let resolved = match resolve(settings, Role::Diff, Some(repo), &vars) {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err("No diff tool is chosen: pick one in Settings › Tools".into());
+        }
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err(e);
+        }
+    };
+    start(&resolved.0, &resolved.1, repo, Some(dir)).map(|()| resolved.0)
+}

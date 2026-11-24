@@ -2568,9 +2568,36 @@ impl App {
                     return;
                 }
                 // A pull/merge request, in place of the graph.
-                if let Some(action) = request_view(ui, repo, &self.settings.review_drafts, now) {
+                let diff_tool = crate::tools::name_for(
+                    &self.settings,
+                    git_raccoon_core::tools::Role::Diff,
+                    Some(repo.path()),
+                );
+                if let Some(action) =
+                    request_view(ui, repo, &self.settings.review_drafts, now, diff_tool)
+                {
                     let pull = self.settings.pull;
-                    if let Err(e) =
+                    if let crate::ui::request::Action::OpenInDiffTool {
+                        path,
+                        old_path,
+                        base,
+                        head,
+                    } = &action
+                    {
+                        use git_raccoon_core::request;
+                        let root = repo.path().to_string();
+                        let opened = request::merge_base(&root, head, base)
+                            .and_then(|from| {
+                                request::blobs_between(&root, &from, head, old_path, path)
+                            })
+                            .map_err(|e| e.to_string())
+                            .and_then(|b| {
+                                crate::tools::open_in_diff_tool(&self.settings, &root, path, &b)
+                            });
+                        if let Err(e) = opened {
+                            self.error = Some(e);
+                        }
+                    } else if let Err(e) =
                         request_action(repo, &mut self.settings.review_drafts, &ctx, action, pull)
                     {
                         self.error = Some(e);
@@ -2665,6 +2692,11 @@ impl App {
                             .as_ref()
                             .map(|t| (t.name.as_str(), t.file.as_str())),
                         note: repo.tool_note.as_ref(),
+                        editor: crate::tools::name_for(
+                            &self.settings,
+                            git_raccoon_core::tools::Role::Editor,
+                            Some(&path),
+                        ),
                     };
                     let chosen = conflict::show(ui, open, &names, &agents, &tools, busy);
                     self.settings.conflict_panes = open.panes;
@@ -2752,6 +2784,29 @@ impl App {
                             }
                         }
                         Some(conflict::Action::StopWaitingForTool) => repo.tool_open = None,
+                        Some(conflict::Action::OpenInEditor) => {
+                            // The line of the conflict in focus (its marker).
+                            let line = open
+                                .text
+                                .as_deref()
+                                .ok()
+                                .and_then(|t| {
+                                    t.lines()
+                                        .enumerate()
+                                        .filter(|(_, l)| l.starts_with("<<<<<<<"))
+                                        .nth(open.current)
+                                        .map(|(i, _)| i + 1)
+                                })
+                                .unwrap_or(1);
+                            if let Err(e) = crate::tools::open_in_editor(
+                                &self.settings,
+                                &path,
+                                &open.file,
+                                line,
+                            ) {
+                                self.error = Some(e);
+                            }
+                        }
                         Some(conflict::Action::DismissToolNote) => repo.tool_note = None,
                         Some(conflict::Action::ToolSettings) => {
                             crate::ui::settings::open_on(&ctx, crate::ui::settings::Section::Tools);
@@ -2883,9 +2938,51 @@ impl App {
                         (self.settings.split_diff, self.settings.whole_file),
                         &lines,
                         Some(&past),
+                        (
+                            crate::tools::name_for(
+                                &self.settings,
+                                git_raccoon_core::tools::Role::Diff,
+                                Some(repo.path()),
+                            )
+                            .as_deref(),
+                            crate::tools::name_for(
+                                &self.settings,
+                                git_raccoon_core::tools::Role::Editor,
+                                Some(repo.path()),
+                            )
+                            .as_deref(),
+                        ),
                     );
                     match action {
                         Some(diff::Action::Close) => repo.active_file = None,
+                        Some(diff::Action::OpenInDiffTool) => {
+                            let path = repo.path().to_string();
+                            let blobs = match &key.0 {
+                                Source::Commit(id) => {
+                                    git_raccoon_core::details::file_blobs(&path, id, &file)
+                                }
+                                Source::Working(side) => {
+                                    git_raccoon_core::working::working_blobs(&path, *side, &file)
+                                }
+                            }
+                            .map_err(|e| e.to_string());
+                            if let Err(e) = blobs.and_then(|b| {
+                                crate::tools::open_in_diff_tool(&self.settings, &path, &file, &b)
+                            }) {
+                                self.error = Some(e);
+                            }
+                        }
+                        Some(diff::Action::OpenInEditor) => {
+                            let line = repo.line_looked_at(&key);
+                            if let Err(e) = crate::tools::open_in_editor(
+                                &self.settings,
+                                repo.path(),
+                                &file,
+                                line,
+                            ) {
+                                self.error = Some(e);
+                            }
+                        }
                         Some(diff::Action::ToggleHistory) => {
                             self.settings.diff_history = !self.settings.diff_history;
                         }
@@ -3886,6 +3983,7 @@ fn request_view(
     repo: &mut RepoView,
     drafts: &std::collections::BTreeMap<String, Vec<crate::forge::review::Draft>>,
     now: i64,
+    diff_tool: Option<String>,
 ) -> Option<crate::ui::request::Action> {
     let branch = repo.head_branch().map(str::to_string);
     let f = repo.forge.as_mut()?;
@@ -3905,6 +4003,7 @@ fn request_view(
         now,
         drafts: mine,
         aside,
+        diff_tool,
     };
     crate::ui::request::show(ui, f, &here)
 }
@@ -3932,6 +4031,8 @@ fn request_action(
     let viewed = f.viewed().cloned();
     match action {
         Action::Close => f.open = None,
+        // Handled by the app, which knows the tools chosen.
+        Action::OpenInDiffTool { .. } => {}
         Action::Open(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
         Action::Reload => f.reloading = true,
         Action::SaveDraft(mut draft, at) => {

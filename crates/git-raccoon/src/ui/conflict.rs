@@ -47,6 +47,8 @@ pub enum Action {
     StopWaitingForTool,
     DismissToolNote,
     ToolSettings,
+    /// Open the file in the editor, at the conflict in focus.
+    OpenInEditor,
 }
 
 /// The merge tools for the open file.
@@ -60,6 +62,8 @@ pub struct Tools<'a> {
     pub open: Option<(&'a str, &'a str)>,
     /// What came of the last one.
     pub note: Option<&'a crate::repo_view::ToolNote>,
+    /// The editor chosen, by name.
+    pub editor: Option<String>,
 }
 
 /// What agents have to do with the open file.
@@ -192,6 +196,16 @@ pub fn show(
                         }
                         if let Some(a) = open_in_tool(ui, tools, !tool_busy) {
                             action = Some(a);
+                        }
+                        if let Some(name) = &tools.editor {
+                            let b = ui
+                                .button(icon::NOTE_PENCIL)
+                                .on_hover_text(format!("Open the file in {name}, at this conflict"));
+                            ui.ctx()
+                                .accesskit_node_builder(b.id, |n| n.set_label("Open in editor"));
+                            if b.clicked() {
+                                action = Some(Action::OpenInEditor);
+                            }
                         }
                         if total > 0 && agents.connected && agents.proposal.is_none() {
                             let ask = ui

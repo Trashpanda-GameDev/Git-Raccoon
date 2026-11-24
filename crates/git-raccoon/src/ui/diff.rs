@@ -25,6 +25,10 @@ const IMAGE_BOX: f32 = 220.0;
 
 pub enum Action {
     Close,
+    /// Open the file's two versions in the diff tool, or the file in the
+    /// editor (at the line looked at).
+    OpenInDiffTool,
+    OpenInEditor,
     /// Show or hide the file's history beside the diff, or its blame.
     ToggleHistory,
     ToggleBlame,
@@ -101,6 +105,8 @@ pub fn show(
     lines: &Lines<'_>,
     // The file's history and blame, if offered.
     past: Option<&Past<'_>>,
+    // The diff tool and editor chosen, by name.
+    open_with: (Option<&str>, Option<&str>),
 ) -> Option<Action> {
     let mut action = None;
     let ready = diff.and_then(|d| d.as_ref().ok());
@@ -132,6 +138,9 @@ pub fn show(
                         action = Some(Action::Close);
                     }
                     ui.add_space(4.0);
+                    if let Some(a) = open_with_buttons(ui, open_with) {
+                        action = Some(a);
+                    }
                     if let Some(past) = past {
                         let buttons = [
                             (
@@ -731,6 +740,38 @@ pub(crate) fn split_share(ctx: &egui::Context) -> f32 {
 /// The line between the two sides, at `x` from `top` to `bottom`, as a
 /// handle: dragging it shares out `span` (where the two sides are) between
 /// them; a double-click gives them half each.
+/// "Open in Beyond Compare" and "Open in editor", for the tools chosen.
+pub(crate) fn open_with_buttons(
+    ui: &mut egui::Ui,
+    (diff_tool, editor): (Option<&str>, Option<&str>),
+) -> Option<Action> {
+    let mut action = None;
+    if let Some(name) = editor {
+        let b = ui
+            .button(RichText::new(format!("{}  Editor", icon::NOTE_PENCIL)).size(12.0))
+            .on_hover_text(format!(
+                "Open the file in {name}, at the line you're looking at"
+            ));
+        ui.ctx()
+            .accesskit_node_builder(b.id, |n| n.set_label("Open in editor"));
+        if b.clicked() {
+            action = Some(Action::OpenInEditor);
+        }
+    }
+    if let Some(name) = diff_tool {
+        let b = ui
+            .button(RichText::new(format!("{}  {name}", icon::ARROW_SQUARE_OUT)).size(12.0))
+            .on_hover_text(format!("Open both versions in {name}"));
+        let label = format!("Open in {name}");
+        ui.ctx()
+            .accesskit_node_builder(b.id, |n| n.set_label(label));
+        if b.clicked() {
+            action = Some(Action::OpenInDiffTool);
+        }
+    }
+    action
+}
+
 pub(crate) fn split_handle(ui: &mut egui::Ui, x: f32, ys: egui::Rangef, span: egui::Rangef) {
     let rect = Rect::from_x_y_ranges(x - 3.0..=x + 3.0, ys);
     let handle = ui.interact(rect, ui.id().with("split-handle"), Sense::click_and_drag());
