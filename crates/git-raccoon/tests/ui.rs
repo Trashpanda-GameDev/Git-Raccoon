@@ -7943,11 +7943,14 @@ fn unity_clash() -> (Sample, std::path::PathBuf) {
     sample.write("Assets/Main.unity", "%YAML 1.1\nname: Main\nscale: 1\n");
     git(&sample, &["add", "."]);
     git(&sample, &["commit", "-q", "-m", "A scene"]);
+    // The README conflicts too, so the merge stops to show what happened.
     git(&sample, &["switch", "-q", "-c", "clash"]);
     sample.write("Assets/Main.unity", "%YAML 1.1\nname: Main\nscale: 2\n");
+    sample.write("README.md", "# Sample\n\nclash version\n");
     git(&sample, &["commit", "-q", "-am", "Bigger"]);
     git(&sample, &["switch", "-q", "main"]);
     sample.write("Assets/Main.unity", "%YAML 1.1\nname: Main\nscale: 3\n");
+    sample.write("README.md", "# Sample\n\nmain version\n");
     git(&sample, &["commit", "-q", "-am", "Biggest"]);
     let home = std::env::temp_dir().join(format!("git-raccoon-ui-unity-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&home);
@@ -8015,24 +8018,28 @@ fn a_rule_merges_unitys_files_with_the_projects_unityyamlmerge() {
     h.get_by_label("Close settings").click();
     h.run_ok();
 
-    // Merging: UnityYAMLMerge merges the scene itself, so there's no
-    // conflict to resolve.
+    // Merging: UnityYAMLMerge merges the scene itself; only the README is
+    // left to resolve, and the overview says what the tool did.
     menu_item(&mut h, "clash", "Merge into main");
     h.get_by_role_and_label(Role::Button, "Merge").click();
-    wait_for(&mut h, "the merge", |app| {
-        head_summary(app).starts_with("Merge")
+    wait_for(&mut h, "the README's conflict", |app| conflicted(app) == 1);
+    wait_for(&mut h, "what the tool did", |app| {
+        !app.repo().unwrap().tool_results.is_empty()
     });
+    h.run_ok();
     assert_eq!(
         read(&sample, "Assets/Main.unity").unwrap(),
         "%YAML 1.1\nname: Main\nscale: 2\n"
     );
-    let done = git_raccoon_core::rules::driver_results(sample.path(), 0);
-    assert_eq!(done.len(), 1, "{done:?}");
-    assert!(done[0].merged && done[0].file == "Assets/Main.unity");
+    h.get_by_label("UnityYAMLMerge merged 1 file on its own");
+    screenshot(&mut h, "105-merged-by-a-tool");
+    h.get_by_label("Abort merge").click();
+    h.run_ok();
+    h.get_by_label("Yes, abort").click();
+    wait_for(&mut h, "aborted", |app| !in_progress(app));
 
-    // Another Unity than the project's: left as Git's usual conflict.
-    h.get_by_label("Undo").click();
-    wait_for(&mut h, "undone", |app| head_summary(app) == "Biggest");
+    // Another Unity than the project's: left as Git's usual conflict, and
+    // said why, with the tool a click away.
     sample.write(
         "ProjectSettings/ProjectVersion.txt",
         "m_EditorVersion: 6000.0.1f1\n",
@@ -8040,12 +8047,19 @@ fn a_rule_merges_unitys_files_with_the_projects_unityyamlmerge() {
     git(&sample, &["commit", "-q", "-am", "Upgrade Unity"]);
     menu_item(&mut h, "clash", "Merge into main");
     h.get_by_role_and_label(Role::Button, "Merge").click();
-    wait_for(&mut h, "the conflict", |app| conflicted(app) == 1);
+    wait_for(&mut h, "the conflicts", |app| conflicted(app) == 2);
+    wait_for(&mut h, "what the tool did", |app| {
+        app.repo().unwrap().tool_results.iter().any(|r| !r.merged)
+    });
+    h.run_ok();
     assert!(
         read(&sample, "Assets/Main.unity")
             .unwrap()
             .contains("<<<<<<<")
     );
+    h.get_by_label_contains("6000.0.1f1, isn't installed");
+    h.get_by_label("Open Assets/Main.unity in UnityYAMLMerge");
+    screenshot(&mut h, "105b-left-by-a-tool");
     let last = git_raccoon_core::rules::driver_results(sample.path(), 0)
         .pop()
         .unwrap();

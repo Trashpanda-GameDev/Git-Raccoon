@@ -795,6 +795,38 @@ pub enum OverviewAction {
     /// Forget a file's remembered resolution, to resolve it by hand.
     Forget(String),
     Continue,
+    /// See the files a tool merged on its own (the working changes).
+    ReviewMerged,
+    /// Open a file in its merge tool.
+    OpenInTool(String),
+}
+
+/// What merge tools did in what's in progress: the files they merged on
+/// their own, and why others are left (by file), with the tool's name for
+/// each file.
+#[derive(Default)]
+pub struct ToolsDid<'a> {
+    pub results: &'a [git_raccoon_core::rules::DriverResult],
+    /// The merge tool for files no rule names (by name).
+    pub merge_tool: Option<&'a str>,
+}
+
+impl ToolsDid<'_> {
+    fn tool_name(id: &str) -> String {
+        git_raccoon_core::tools::preset_by_id(id)
+            .map_or_else(|| id.to_string(), |p| p.name.to_string())
+    }
+
+    fn left(&self, file: &str) -> Option<&git_raccoon_core::rules::DriverResult> {
+        self.results.iter().find(|r| r.file == file && !r.merged)
+    }
+
+    /// The tool to open `file` in, by name.
+    fn for_file(&self, file: &str) -> Option<String> {
+        self.left(file)
+            .map(|r| Self::tool_name(&r.tool))
+            .or_else(|| self.merge_tool.map(str::to_string))
+    }
 }
 
 /// What's in progress, in words: "Rebasing feature/login onto main", and
@@ -867,6 +899,7 @@ pub fn overview(
     state: &merge::State,
     files: &[ConflictedFile],
     resolved: &[String],
+    tools: &ToolsDid<'_>,
     busy: bool,
 ) -> Option<OverviewAction> {
     let mut action = None;
@@ -907,13 +940,16 @@ pub fn overview(
                         });
                     });
                     ui.add_space(12.0);
+                    if let Some(a) = merged_by_tools(ui, tools, busy) {
+                        action = Some(a);
+                    }
                     egui::Frame::new()
                         .stroke(Stroke::new(1.0, theme::border()))
                         .corner_radius(8)
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             for f in files {
-                                if let Some(a) = file_row(ui, f, (ours, theirs), busy) {
+                                if let Some(a) = file_row(ui, f, (ours, theirs), tools, busy) {
                                     action = Some(a);
                                 }
                             }
@@ -924,6 +960,34 @@ pub fn overview(
                             }
                         });
                     ui.add_space(12.0);
+                    // Why rules' tools left files as conflicts.
+                    let tool_left: Vec<&git_raccoon_core::rules::DriverResult> = tools
+                        .results
+                        .iter()
+                        .filter(|r| !r.merged && files.iter().any(|f| f.path == r.file))
+                        .collect();
+                    if !tool_left.is_empty() {
+                        egui::Frame::new()
+                            .stroke(Stroke::new(1.0, theme::danger().gamma_multiply(0.5)))
+                            .fill(theme::danger().gamma_multiply(0.08))
+                            .corner_radius(8)
+                            .inner_margin(egui::Margin::symmetric(12, 10))
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                for r in tool_left {
+                                    ui.add(
+                                        egui::Label::new(format!(
+                                            "{}: {} couldn't merge it, so it's left as a conflict ({}).",
+                                            r.file,
+                                            ToolsDid::tool_name(&r.tool),
+                                            r.why
+                                        ))
+                                        .wrap(),
+                                    );
+                                }
+                            });
+                        ui.add_space(12.0);
+                    }
                     if files.is_empty() {
                         ui.horizontal(|ui| {
                             ui.label(
@@ -956,6 +1020,71 @@ pub fn overview(
                     });
                 });
         });
+    action
+}
+
+/// "UnityYAMLMerge merged 3 files on its own", with the files.
+fn merged_by_tools(ui: &mut egui::Ui, tools: &ToolsDid<'_>, busy: bool) -> Option<OverviewAction> {
+    let merged: Vec<&git_raccoon_core::rules::DriverResult> =
+        tools.results.iter().filter(|r| r.merged).collect();
+    if merged.is_empty() {
+        return None;
+    }
+    let mut action = None;
+    let mut names: Vec<String> = merged
+        .iter()
+        .map(|r| ToolsDid::tool_name(&r.tool))
+        .collect();
+    names.dedup();
+    let n = merged.len();
+    let s = if n == 1 { "" } else { "s" };
+    let title = format!(
+        "{} merged {n} file{s} on {}",
+        names.join(" and "),
+        if names.len() == 1 {
+            "its own"
+        } else {
+            "their own"
+        }
+    );
+    egui::Frame::new()
+        .stroke(Stroke::new(1.0, theme::border()))
+        .corner_radius(8)
+        .inner_margin(egui::Margin::symmetric(12, 10))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(icon::CHECK_CIRCLE)
+                        .color(theme::add())
+                        .size(16.0),
+                );
+                ui.vertical(|ui| {
+                    ui.label(RichText::new(&title).strong());
+                    let files: Vec<&str> = merged.iter().map(|r| r.file.as_str()).collect();
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(format!(
+                                "{}. Review them in the working changes before committing.",
+                                files.join(", ")
+                            ))
+                            .size(12.0)
+                            .color(theme::muted()),
+                        )
+                        .wrap(),
+                    );
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add_enabled(!busy, egui::Button::new("Review them"))
+                        .clicked()
+                    {
+                        action = Some(OverviewAction::ReviewMerged);
+                    }
+                });
+            });
+        });
+    ui.add_space(12.0);
     action
 }
 
@@ -996,6 +1125,7 @@ fn file_row(
     ui: &mut egui::Ui,
     f: &ConflictedFile,
     (ours, theirs): (&str, &str),
+    tools: &ToolsDid<'_>,
     busy: bool,
 ) -> Option<OverviewAction> {
     let mut action = None;
@@ -1040,6 +1170,12 @@ fn file_row(
             ),
         };
         chip(ui, &badge, colour);
+        // Why a rule's tool left it, if it did.
+        let note = match tools.left(&f.path) {
+            // Said below the list, with why; the row's buttons need the room.
+            Some(_) => String::new(),
+            None => note,
+        };
         ui.label(RichText::new(note).size(12.0).color(theme::muted()));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_enabled_ui(!busy, |ui| match f.kind {
@@ -1103,6 +1239,14 @@ fn file_row(
                         .accesskit_node_builder(open.id, |n| n.set_label(name));
                     if open.clicked() {
                         action = Some(OverviewAction::Open(path.clone()));
+                    }
+                    if let Some(tool) = tools.for_file(&f.path) {
+                        let b = ui.button(format!("Open in {tool}"));
+                        let name = format!("Open {} in {tool}", f.path);
+                        ui.ctx().accesskit_node_builder(b.id, |n| n.set_label(name));
+                        if b.clicked() {
+                            action = Some(OverviewAction::OpenInTool(path.clone()));
+                        }
                     }
                 }
             });

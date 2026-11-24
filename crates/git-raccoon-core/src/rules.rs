@@ -336,6 +336,26 @@ pub fn driver_results(path: &str, since: i64) -> Vec<DriverResult> {
         .collect()
 }
 
+/// What the merge driver did in what's in progress now (since it started:
+/// Git notes where it began in ORIG_HEAD), the latest for each file.
+pub fn driver_results_now(path: &str) -> Vec<DriverResult> {
+    let Ok(repo) = Repository::discover(path) else {
+        return Vec::new();
+    };
+    let started = std::fs::metadata(repo.path().join("ORIG_HEAD"))
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .and_then(|d| i64::try_from(d.as_secs()).ok())
+        .unwrap_or(0);
+    let mut out: Vec<DriverResult> = Vec::new();
+    for r in driver_results(path, started - 2) {
+        out.retain(|o| o.file != r.file);
+        out.push(r);
+    }
+    out
+}
+
 fn note(git_dir: &Path, r: &DriverResult) {
     use std::io::Write;
     let path = git_dir.join(LOG);

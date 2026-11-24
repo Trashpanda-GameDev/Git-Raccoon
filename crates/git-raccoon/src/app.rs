@@ -2738,25 +2738,9 @@ impl App {
                         Some(conflict::Action::Close) => repo.conflict = None,
                         Some(conflict::Action::OpenInTool(pick)) => {
                             let file = open.file.clone();
-                            let started = git_raccoon_core::conflict::write_versions(&path, &file)
-                                .map_err(|e| e.to_string())
-                                .and_then(|v| {
-                                    match crate::tools::merge_run(
-                                        &self.settings,
-                                        &path,
-                                        pick.as_deref(),
-                                        &v,
-                                    ) {
-                                        Ok((name, run)) => {
-                                            repo.open_in_tool(&ctx, file, name, run, v)
-                                        }
-                                        Err(e) => {
-                                            v.clean_up();
-                                            Err(e)
-                                        }
-                                    }
-                                });
-                            if let Err(e) = started {
+                            if let Err(e) =
+                                start_merge_tool(repo, &self.settings, &ctx, file, pick.as_deref())
+                            {
                                 self.error = Some(e);
                             }
                         }
@@ -2817,7 +2801,28 @@ impl App {
                 {
                     let resolved: Vec<String> = repo.resolved_here.iter().cloned().collect();
                     let files = repo.conflict_files.clone();
-                    match conflict::overview(ui, &state, &files, &resolved, busy) {
+                    let results = repo.tool_results.clone();
+                    let merge_tool = crate::tools::name_for(
+                        &self.settings,
+                        git_raccoon_core::tools::Role::Merge,
+                        Some(repo.path()),
+                    );
+                    let did = conflict::ToolsDid {
+                        results: &results,
+                        merge_tool: merge_tool.as_deref(),
+                    };
+                    match conflict::overview(ui, &state, &files, &resolved, &did, busy) {
+                        Some(conflict::OverviewAction::ReviewMerged) => {
+                            repo.history_over_conflicts = true;
+                            repo.select_working();
+                        }
+                        Some(conflict::OverviewAction::OpenInTool(file)) => {
+                            repo.open_conflict(file.clone());
+                            if let Err(e) = start_merge_tool(repo, &self.settings, &ctx, file, None)
+                            {
+                                self.error = Some(e);
+                            }
+                        }
                         Some(conflict::OverviewAction::Open(file)) => repo.open_conflict(file),
                         Some(conflict::OverviewAction::TakeSide { file, ours }) => {
                             repo.run(&ctx, Op::TakeSide { file, ours });
@@ -3744,6 +3749,26 @@ fn compare_form(repo: &RepoView, form: &mut crate::ui::forge::NewForm) {
         Some(u) => u.ahead,
         None => form.commits.len(),
     };
+}
+
+/// Starts the merge tool on a conflicted file: the one a rule names for
+/// it, or `pick`, or the one chosen in Settings.
+fn start_merge_tool(
+    repo: &mut RepoView,
+    settings: &crate::settings::Settings,
+    ctx: &egui::Context,
+    file: String,
+    pick: Option<&str>,
+) -> Result<(), String> {
+    let path = repo.path().to_string();
+    let v = git_raccoon_core::conflict::write_versions(&path, &file).map_err(|e| e.to_string())?;
+    match crate::tools::merge_run(settings, &path, pick, &v) {
+        Ok((name, run)) => repo.open_in_tool(ctx, file, name, run, v),
+        Err(e) => {
+            v.clean_up();
+            Err(e)
+        }
+    }
 }
 
 /// How to check out a pull/merge request: its branch here (brought up to

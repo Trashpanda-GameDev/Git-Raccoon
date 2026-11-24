@@ -1528,6 +1528,8 @@ fn conflicts_now(path: &str, only: Option<&str>) -> Result<String, String> {
     };
     let side =
         |s: &merge::Side| json!({ "name": s.name, "commit": s.commit, "summary": s.summary });
+    // What rules' merge tools did during it (merge drivers).
+    let tools_did = git_raccoon_core::rules::driver_results_now(path);
     let mut files = Vec::new();
     for f in conflict::files(path).map_err(|e| e.to_string())? {
         if only.is_some_and(|o| o != f.path) {
@@ -1541,6 +1543,9 @@ fn conflicts_now(path: &str, only: Option<&str>) -> Result<String, String> {
             conflict::Kind::Other => "other",
         };
         let mut entry = json!({ "path": f.path, "how": kind, "binary": f.binary });
+        if let Some(r) = tools_did.iter().find(|r| r.file == f.path && !r.merged) {
+            entry["tool_left_it"] = json!({ "tool": r.tool, "why": r.why });
+        }
         if !f.binary
             && let Ok(text) = conflict::read(path, &f.path)
             && let Some(mut chunks) = conflict::parse(&text)
@@ -1567,6 +1572,11 @@ fn conflicts_now(path: &str, only: Option<&str>) -> Result<String, String> {
         "theirs": side(&state.theirs),
         "step": state.step.map(|(n, of)| json!({ "step": n, "of": of })),
         "files": files,
+        "merged_by_tools": tools_did
+            .iter()
+            .filter(|r| r.merged)
+            .map(|r| json!({ "path": r.file, "tool": r.tool }))
+            .collect::<Vec<_>>(),
         "next": "propose_resolution shows the person a file's resolved text, with your reasoning.",
     }))))
 }

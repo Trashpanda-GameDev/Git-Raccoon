@@ -1628,6 +1628,8 @@ pub struct RepoView {
     pub tool_note: Option<ToolNote>,
     /// The tool a rule gives the conflicted file open (file, tool).
     rule_tool: Option<(String, Option<String>)>,
+    /// What rules' merge tools did in what's in progress.
+    pub tool_results: Vec<git_raccoon_core::rules::DriverResult>,
     /// While something's in progress: its conflicted files (how each
     /// conflicts), the files resolved since it started, and whether the
     /// history is shown in place of the conflicts' overview.
@@ -1755,6 +1757,7 @@ impl RepoView {
             tool_open: None,
             tool_note: None,
             rule_tool: None,
+            tool_results: Vec::new(),
             conflict_files: Vec::new(),
             resolved_here: std::collections::BTreeSet::new(),
             history_over_conflicts: false,
@@ -3715,6 +3718,12 @@ impl RepoView {
     /// closed if its file is no longer changed.
     fn set_status(&mut self, status: Option<WorkingStatus>) {
         self.bisect.status_changed();
+        self.rule_tool = None;
+        self.tool_results = if status.as_ref().is_some_and(|s| s.in_progress.is_some()) {
+            git_raccoon_core::rules::driver_results_now(self.path())
+        } else {
+            Vec::new()
+        };
         let had_conflicts = self
             .status
             .as_ref()
