@@ -8552,6 +8552,14 @@ fn is_broken_now(sample: &Sample) -> bool {
     std::fs::read_to_string(sample.dir.join("state")).unwrap_or_default() == "broken\n"
 }
 
+/// How many answers the search going on has.
+fn answered(h: &Harness<'_, App>) -> usize {
+    h.state()
+        .repo()
+        .and_then(|r| r.bisect.search.as_ref())
+        .map_or(0, |s| s.answers.len())
+}
+
 fn searching(app: &App) -> bool {
     app.repo()
         .is_some_and(|r| r.bisect.searching() && !r.bisect.is_busy())
@@ -8655,10 +8663,14 @@ fn finds_the_commit_that_broke_it_by_hand() {
         } else {
             "It works"
         };
+        let before = answered(&h);
         h.get_by_label_contains(button).click();
+        // Until it's recorded (and the next commit checked out), or found.
         wait_for(&mut h, "the answer", |app| {
             let b = &app.repo().unwrap().bisect;
             !b.is_busy()
+                && (b.found.is_some()
+                    || b.search.as_ref().is_some_and(|s| s.answers.len() > before))
         });
         settle(&mut h);
     }
@@ -8807,9 +8819,13 @@ fn picks_up_a_search_started_in_a_terminal_with_its_words() {
         } else {
             "It's fine"
         };
+        let before = answered(&h);
         h.get_by_label_contains(button).click();
         wait_for(&mut h, "the answer", |app| {
-            !app.repo().unwrap().bisect.is_busy()
+            let b = &app.repo().unwrap().bisect;
+            !b.is_busy()
+                && (b.found.is_some()
+                    || b.search.as_ref().is_some_and(|s| s.answers.len() > before))
         });
         settle(&mut h);
     }
@@ -8852,6 +8868,7 @@ fn an_agent_finds_the_commit_that_broke_it() {
         } else {
             "works"
         };
+        let before = answered(&h);
         let (said, error) = agent.call(
             &mut h,
             "bisect_answer",
@@ -8859,7 +8876,10 @@ fn an_agent_finds_the_commit_that_broke_it() {
         );
         assert!(!error, "{said}");
         wait_for(&mut h, "the answer", |app| {
-            !app.repo().unwrap().bisect.is_busy()
+            let b = &app.repo().unwrap().bisect;
+            !b.is_busy()
+                && (b.found.is_some()
+                    || b.search.as_ref().is_some_and(|s| s.answers.len() > before))
         });
         settle(&mut h);
     }
