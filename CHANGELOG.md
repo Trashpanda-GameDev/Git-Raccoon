@@ -3,6 +3,12 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.31
+
+- **Compare images three ways.** A changed image can be shown **Side by side**, with **Swipe** (one frame, and a line you drag across it: the old version on its left, the new on its right) or as an **Onion skin** (the new version laid over the old, with a slider for how much of each shows). Your choice is kept.
+- **Images in pull/merge requests.** A request's Changes tab shows its images (before and after) instead of saying the file is binary, and so does a new request's list of changes.
+- **Finding which commit broke something:** *Starting…* shows until the first step, the progress bar is easier to see, and short steps show tenths of a second.
+
 ## 0.5.30
 
 - **Find which commit broke something.** Right-click the commit where it's broken (or use the command palette) › *Find which commit broke something…*, and say where it last worked (the latest tag below it is suggested). Git Raccoon checks out commits in between, halving the range each time: answer **It works**, **It's broken** or **Skip this one**, until it's found. It's Git's own bisect, in plain words.
