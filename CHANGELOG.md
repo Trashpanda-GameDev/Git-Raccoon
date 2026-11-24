@@ -13,6 +13,7 @@ release page). Newest first; a version's heading is just its number.
   - **Not only for breakages:** look for when something changed, in your own words ("fast" and "slow"), used throughout.
   - **A search started in a terminal** (`git bisect`) shows here too, answers given there included, and can be finished here.
   - **Agents** can start a search (asking you first), answer, run a test command on each commit and read where it stands.
+- **The profile switcher** lists each profile's accounts one per line, and a profile with several no longer spills into the next.
 
 ## 0.5.29
 
