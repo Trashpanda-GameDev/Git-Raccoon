@@ -8584,6 +8584,22 @@ fn answers_so_far(sample: &Sample) -> String {
     format!("git bisect log:\n{log}")
 }
 
+/// The commit whose message is `summary` (from main, whatever is checked
+/// out now).
+fn commit_named(sample: &Sample, summary: &str) -> String {
+    let mut walk = sample.repo.revwalk().unwrap();
+    walk.push_ref("refs/heads/main").unwrap();
+    walk.flatten()
+        .find(|id| {
+            sample
+                .repo
+                .find_commit(*id)
+                .is_ok_and(|c| c.summary() == Some(summary))
+        })
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| panic!("no commit {summary}"))
+}
+
 /// How many answers the search going on has.
 fn answered(h: &Harness<'_, App>) -> usize {
     h.state()
@@ -8728,12 +8744,7 @@ fn finds_the_commit_that_broke_it_by_hand() {
         .found
         .as_ref()
         .map(|f| f.finished.outcome.clone());
-    let step5 = sample
-        .repo
-        .revparse_single("HEAD~2")
-        .unwrap()
-        .id()
-        .to_string();
+    let step5 = commit_named(&sample, "Step 5");
     let how = h
         .state()
         .repo()
@@ -8750,6 +8761,20 @@ fn finds_the_commit_that_broke_it_by_hand() {
     );
     h.get_by_label_contains("Found it in");
     h.get_by_label_contains("back on main, your changes restored");
+    // Really back on main, at its tip.
+    let head = sample.repo.head().unwrap();
+    assert_eq!(
+        head.shorthand(),
+        Some("main"),
+        "{}",
+        answers_so_far(&sample)
+    );
+    assert_eq!(
+        head.peel_to_commit().unwrap().summary(),
+        Some("Step 7"),
+        "{}",
+        answers_so_far(&sample)
+    );
     screenshot(&mut h, "97-bisect-answer");
     assert_eq!(
         std::fs::read_to_string(sample.dir.join("notes.txt")).unwrap(),
@@ -8813,12 +8838,7 @@ fn lets_a_command_test_each_commit() {
         app.repo().unwrap().bisect.found.is_some()
     });
     settle(&mut h);
-    let step5 = sample
-        .repo
-        .revparse_single("HEAD~2")
-        .unwrap()
-        .id()
-        .to_string();
+    let step5 = commit_named(&sample, "Step 5");
     let b = &h.state().repo().unwrap().bisect;
     assert_eq!(
         b.found.as_ref().map(|f| f.finished.outcome.clone()),
