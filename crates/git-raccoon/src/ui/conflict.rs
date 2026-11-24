@@ -667,6 +667,7 @@ pub fn describe(state: &merge::State) -> (String, Option<String>) {
                 None,
             )
         }
+        InProgress::Bisect => ("Finding the commit that broke it".to_string(), None),
         InProgress::Other => (
             "A Git operation is in progress".to_string(),
             state.detail.clone(),
@@ -681,7 +682,7 @@ fn side_words(state: &merge::State) -> (&'static str, &'static str) {
         InProgress::Merge => ("your branch", "the branch being merged in"),
         InProgress::CherryPick => ("your branch", "the commit being copied"),
         InProgress::Revert => ("your branch", "undoing that commit"),
-        InProgress::Other => ("what the files had", "what's coming in"),
+        InProgress::Bisect | InProgress::Other => ("what the files had", "what's coming in"),
     }
 }
 

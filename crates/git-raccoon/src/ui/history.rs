@@ -541,6 +541,11 @@ pub enum Click {
     Revert {
         id: String,
     },
+    /// Find which commit broke something, this one being broken.
+    FindBreak {
+        id: String,
+        label: String,
+    },
     Reset {
         id: String,
         label: String,
@@ -693,6 +698,27 @@ pub fn show(
     order: &mut Vec<Column>,
     widths: &mut Vec<(Column, f32)>,
     lines: BranchLines,
+) -> Option<Click> {
+    // While finding the commit that broke something: what to mark.
+    let marks = std::mem::take(&mut repo.bisect.marks);
+    let click = show_marked(ui, repo, scroll, now, order, widths, lines, &marks);
+    repo.bisect.marks = marks;
+    click
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the history's own, and the search's marks"
+)]
+fn show_marked(
+    ui: &mut egui::Ui,
+    repo: &mut RepoView,
+    scroll: &mut Scroll,
+    now: i64,
+    order: &mut Vec<Column>,
+    widths: &mut Vec<(Column, f32)>,
+    lines: BranchLines,
+    marks: &crate::bisect_view::Marks,
 ) -> Option<Click> {
     let total = repo.history.total();
     let width = ui.available_width();
@@ -848,6 +874,18 @@ pub fn show(
                     .as_ref()
                     .is_some_and(|(_, ids)| ids.contains(&c.id))
             });
+            // Finding the commit that broke something: the range still in
+            // question tinted, the one being tested more so.
+            let testing = commit.is_some_and(|c| marks.testing.as_deref() == Some(c.id.as_str()));
+            if marks.active && !is_selected {
+                if testing {
+                    ui.painter()
+                        .rect_filled(rect, 0, theme::accent().gamma_multiply(0.22));
+                } else if commit.is_some_and(|c| marks.range.contains(&c.id)) {
+                    ui.painter()
+                        .rect_filled(rect, 0, theme::accent().gamma_multiply(0.07));
+                }
+            }
             if marked && !is_selected {
                 ui.painter()
                     .rect_filled(rect, 0, theme::accent().gamma_multiply(0.12));
@@ -997,7 +1035,10 @@ pub fn show(
                 painter.rect_filled(bar, 4, theme::bg_hover());
                 continue;
             };
-            let dim = searching && !repo.search.matches.contains(&row);
+            // Outside the range still in question (and not answered): dimmed.
+            let outside =
+                marks.active && !marks.range.contains(&c.id) && !marks.answers.contains_key(&c.id);
+            let dim = (searching && !repo.search.matches.contains(&row)) || outside;
             let (text, muted) = if dim {
                 (
                     theme::muted().gamma_multiply(0.6),
@@ -1058,10 +1099,20 @@ pub fn show(
             {
                 clicked = Some(action);
             }
+            // An answer's mark (✓ ✗ –), or ▸ on the one being tested.
+            let summary = if !marks.active {
+                std::borrow::Cow::Borrowed(c.summary.as_str())
+            } else if marks.testing.as_deref() == Some(c.id.as_str()) {
+                std::borrow::Cow::Owned(format!("{} {}", crate::bisect_view::TESTING, c.summary))
+            } else if let Some(v) = marks.answers.get(&c.id) {
+                std::borrow::Cow::Owned(format!("{} {}", crate::bisect_view::mark(*v), c.summary))
+            } else {
+                std::borrow::Cow::Borrowed(c.summary.as_str())
+            };
             widgets::text_in(
                 painter,
                 cell(cols.x(Column::Message, full), cols.message(full)),
-                &c.summary,
+                &summary,
                 theme::body(theme::FONT_SIZE),
                 text,
             );
@@ -1530,6 +1581,26 @@ fn commit_menu(
         chosen = Some(Click::Branch(open));
     }
     copy_sha(ui, &c.id);
+    ui.separator();
+    let find = ui.button(format!(
+        "{}  Find which commit broke something…",
+        icon::MAGNIFYING_GLASS
+    ));
+    ui.ctx().accesskit_node_builder(find.id, |n| {
+        n.set_label("Find which commit broke something…");
+    });
+    if find
+        .on_hover_text(
+            "It's broken here: find the first commit where it broke, by testing commits in between",
+        )
+        .clicked()
+    {
+        chosen = Some(Click::FindBreak {
+            id: id.clone(),
+            label: commit_label(&c.id, &c.summary),
+        });
+        ui.close();
+    }
     ui.separator();
     let on_branch = head.is_some();
     let target = head.unwrap_or("HEAD");

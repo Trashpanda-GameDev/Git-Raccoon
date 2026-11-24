@@ -556,6 +556,55 @@ pub fn tools() -> Value {
             &["path", "text", "reasoning"],
             &read
         ),
+        tool(
+            "get_bisect",
+            "Where finding the commit that broke something stands",
+            "The search going on (Git's bisect): the words for the two sides (\"broken\"/\"works\", or others), the range still in question, the answers so far, the commit checked out to test, and the answer once found. Also the last answer found, after the search ended.",
+            json!({ "repository": repo }),
+            &[],
+            &read
+        ),
+        tool(
+            "start_bisect",
+            "Find which commit broke something",
+            "Starts finding the first commit where something broke (Git's bisect): `broken` (default: what's checked out) and `works` (where it last worked, older). Optionally only following the main line, your own words for the two sides (`new_word`, `old_word`, like \"fast\"/\"slow\"), and a `command` that tests each commit (exit 0 works, 125 can't be tested, anything else broken). Uncommitted changes are put aside and brought back at the end. Asks the person first; in a search they allowed, your answers and commands go ahead.",
+            json!({
+                "repository": repo,
+                "broken": { "type": "string" },
+                "works": { "type": "string" },
+                "first_parent": { "type": "boolean" },
+                "new_word": { "type": "string" },
+                "old_word": { "type": "string" },
+                "command": { "type": "string" },
+                "time_limit_seconds": { "type": "integer" },
+            }),
+            &["works"],
+            &change
+        ),
+        tool(
+            "bisect_answer",
+            "Answer for the commit being tested",
+            "Says whether the commit checked out is `broken` or `works` (or the search's own words), or `skip` when it can't be tested. get_bisect says what's next.",
+            json!({ "repository": repo, "answer": { "type": "string", "description": "broken, works or skip (or the search's own words)" } }),
+            &["answer"],
+            &change
+        ),
+        tool(
+            "bisect_run",
+            "Test each commit with a command",
+            "Runs `command` on each commit of the search going on, in the repository's folder, answering from its exit code (0 works, 125 can't be tested, anything else broken) until it's found. get_bisect says how it's going.",
+            json!({ "repository": repo, "command": { "type": "string" }, "time_limit_seconds": { "type": "integer" } }),
+            &["command"],
+            &change
+        ),
+        tool(
+            "stop_bisect",
+            "Stop finding the commit that broke something",
+            "Ends the search: back where it started, with anything put aside brought back. Asks the person first.",
+            json!({ "repository": repo }),
+            &[],
+            &change
+        ),
         // Changing (each asks the person first).
         tool(
             "stage",

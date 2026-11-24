@@ -367,6 +367,8 @@ pub enum Op {
     /// Continue or abort the merge, rebase, cherry-pick or revert in progress.
     Continue,
     Abort,
+    /// Stop finding the commit that broke something: back where it started.
+    BisectStop,
     /// Resolve a conflicted file with one side's whole version.
     TakeSide {
         file: String,
@@ -436,6 +438,30 @@ impl Op {
             from: None,
             mode: PullMode::FastForward,
             stash: true,
+        }
+    }
+
+    /// Whether it moves away from (or changes) the commit checked out, as
+    /// finding the commit that broke something needs it left.
+    fn gets_in_the_way_of_a_search(&self) -> bool {
+        match self {
+            Op::CreateBranch { checkout, .. } => *checkout,
+            Op::Checkout(_)
+            | Op::CheckoutRemote(_)
+            | Op::CheckoutDetached(_)
+            | Op::Pull { .. }
+            | Op::Merge { .. }
+            | Op::Rebase(_)
+            | Op::InteractiveRebase { .. }
+            | Op::CherryPick(_)
+            | Op::Revert(_)
+            | Op::Reset { .. }
+            | Op::ResetKeep { .. }
+            | Op::UndoCommit { .. }
+            | Op::UndoMixedReset { .. } => true,
+            Op::Then(ops) => ops.iter().any(Op::gets_in_the_way_of_a_search),
+            Op::StashThen(op) => op.gets_in_the_way_of_a_search(),
+            _ => false,
         }
     }
 
@@ -602,6 +628,8 @@ impl Op {
             Op::Merge { branch, mode } => merge::merge(path, &branch, mode).map(drop),
             Op::Continue => merge::continue_op(path),
             Op::Abort => merge::abort(path),
+            Op::BisectStop => git_raccoon_core::bisect::stop(path)
+                .and_then(|()| git_raccoon_core::bisect::bring_back(path).map(drop)),
             Op::TakeSide { file, ours } => conflict::take_side(path, &file, ours),
             Op::WriteConflict {
                 file,
@@ -680,6 +708,7 @@ impl Op {
             Op::Skip => "skip the commit",
             Op::Unresolve(_) | Op::Forget(_) => "bring the conflict back",
             Op::Abort => "abort",
+            Op::BisectStop => "stop the search",
             Op::TakeSide { .. } | Op::WriteConflict { .. } | Op::MarkResolved(_) => {
                 "resolve the conflict"
             }
@@ -1597,6 +1626,8 @@ pub struct RepoView {
     auto_fetch: Option<Task<Result<(), String>>>,
     /// Why the last background fetch failed, if it did.
     pub auto_fetch_error: Option<String>,
+    /// Finding the commit that broke something.
+    pub bisect: crate::bisect_view::Bisect,
     /// A fetch, pull or push that failed over SSH, being looked into.
     pub(crate) ssh_problem: Option<crate::ui::ssh_problem::SshProblem>,
     /// The guided SSH setup was asked for, for this remote.
@@ -1709,6 +1740,7 @@ impl RepoView {
             last_fetch: std::time::Instant::now(),
             auto_fetch: None,
             auto_fetch_error: None,
+            bisect: crate::bisect_view::Bisect::default(),
             ssh_problem: None,
             wants_ssh_setup: None,
             refresh_started: std::time::Instant::now(),
@@ -1770,6 +1802,10 @@ impl RepoView {
     /// Commits (or amends) with the draft message, through `git`.
     pub fn commit(&mut self, ctx: &egui::Context) {
         if self.committing.is_some() || self.draft.summary.trim().is_empty() {
+            return;
+        }
+        if self.bisect.searching() {
+            self.ask_to_stop_the_search();
             return;
         }
         let (path, message, amend) = (
@@ -2012,6 +2048,12 @@ impl RepoView {
     }
 
     fn start(&mut self, ctx: &egui::Context, op: Op, message: Option<String>) {
+        // While finding the commit that broke something, what would move
+        // away from the commit being tested waits: stop the search first.
+        if self.bisect.searching() && op.gets_in_the_way_of_a_search() {
+            self.ask_to_stop_the_search();
+            return;
+        }
         if matches!(op, Op::Fetch(_) | Op::FetchRemote(..)) {
             // A fetch by hand counts too: the next one is a while off.
             self.last_fetch = std::time::Instant::now();
@@ -2740,6 +2782,17 @@ impl RepoView {
         });
     }
 
+    /// Says a search is going on, with Stop first.
+    pub fn ask_to_stop_the_search(&mut self) {
+        self.dialog = Some(Dialog::Confirm {
+            title: "A search is going on".into(),
+            body: "Finding the commit that broke something has a commit checked out to test: checking out, committing, merging or rebasing now would get in its way. Stop the search first (it goes back to where it started, with anything put aside brought back), then try again.".into(),
+            button: "Stop the search".into(),
+            danger: false,
+            op: Op::BisectStop,
+        });
+    }
+
     pub fn confirm_abort(&mut self) {
         let what = self
             .status
@@ -3335,6 +3388,18 @@ impl RepoView {
 
     /// Polls background work; call once per frame.
     pub fn poll(&mut self, ctx: &egui::Context) {
+        // Finding the commit that broke something: Git's state, and the
+        // work going on.
+        let searching = self.status.as_ref().is_some_and(|s| {
+            s.in_progress
+                .as_ref()
+                .is_some_and(|p| p.what == merge::InProgress::Bisect)
+        });
+        let path = self.path().to_string();
+        self.bisect.poll(ctx, &path, searching);
+        if self.bisect.take_moved() {
+            self.refresh(ctx);
+        }
         self.load_file_past(ctx);
         // Picked lines belong to the diff they were picked in.
         if !self.picked.is_empty() && self.picked_in != self.diff_key() {
@@ -3505,6 +3570,7 @@ impl RepoView {
     /// Takes in a newly read status. An open working diff is reloaded, and
     /// closed if its file is no longer changed.
     fn set_status(&mut self, status: Option<WorkingStatus>) {
+        self.bisect.status_changed();
         let had_conflicts = self
             .status
             .as_ref()

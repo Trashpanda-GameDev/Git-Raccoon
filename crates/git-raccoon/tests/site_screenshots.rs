@@ -422,8 +422,65 @@ fn website_screenshots() {
     // Profiles: the switcher, and Settings › Profiles.
     profiles();
 
+    // Finding the commit that broke something, testing by hand.
+    bisect(&demo);
+
     // Resolving a merge's conflicts, as panes (last: it changes the repo).
     conflicts(&demo);
+}
+
+/// A search from main back to v0.1.0, one answer in: the bar, the marks
+/// in the graph and the answers so far. Stopped after.
+fn bisect(demo: &Demo) {
+    let path = demo.dir.to_string_lossy().to_string();
+    let mut h = harness(ThemeChoice::Raccoon, ThemeMode::Dark);
+    open(&mut h, &demo.dir);
+    settle(&mut h);
+    let ctx = h.ctx.clone();
+    if let Some(repo) = h.state_mut().repo_mut() {
+        repo.bisect.start_with(
+            &ctx,
+            &path,
+            git_raccoon::bisect_view::Begin {
+                broken: "main".into(),
+                works: vec!["v0.1.0".into()],
+                // The edit staged earlier is put aside, and back after.
+                dirty: true,
+                ..Default::default()
+            },
+        );
+    }
+    let searching = |h: &Harness<'_, App>| {
+        h.state()
+            .repo()
+            .is_some_and(|r| r.bisect.searching() && !r.bisect.is_busy())
+    };
+    let start = Instant::now();
+    while !searching(&h) {
+        assert!(
+            start.elapsed() < Duration::from_secs(20),
+            "no search: {:?}",
+            h.state().repo().and_then(|r| r.bisect.error.clone())
+        );
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    h.get_by_label_contains("It works").click();
+    let start = Instant::now();
+    while !searching(&h)
+        || h.state()
+            .repo()
+            .is_some_and(|r| r.bisect.search.as_ref().is_none_or(|s| s.answers.len() < 3))
+    {
+        assert!(start.elapsed() < Duration::from_secs(20), "no answer");
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    settle(&mut h);
+    shot(&mut h, "bisect");
+    drop(h);
+    git_raccoon_core::bisect::stop(&path).unwrap();
+    git_raccoon_core::bisect::bring_back(&path).unwrap();
 }
 
 /// Two profiles (Work and Personal) and their accounts: the switcher at

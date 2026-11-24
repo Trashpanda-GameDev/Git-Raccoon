@@ -13,7 +13,9 @@ pub enum InProgress {
     Rebase,
     CherryPick,
     Revert,
-    /// Something else (applying patches, bisecting): continued outside the app.
+    /// Finding the commit that broke something (Git's bisect): its own bar.
+    Bisect,
+    /// Something else (applying patches): continued outside the app.
     Other,
 }
 
@@ -24,6 +26,7 @@ impl InProgress {
             InProgress::Rebase => "rebase",
             InProgress::CherryPick => "cherry-pick",
             InProgress::Revert => "revert",
+            InProgress::Bisect => "search for the commit that broke it",
             InProgress::Other => "Git operation",
         }
     }
@@ -35,7 +38,7 @@ impl InProgress {
             InProgress::Rebase => Some("rebase"),
             InProgress::CherryPick => Some("cherry-pick"),
             InProgress::Revert => Some("revert"),
-            InProgress::Other => None,
+            InProgress::Bisect | InProgress::Other => None,
         }
     }
 }
@@ -86,6 +89,7 @@ pub fn in_progress(path: &str) -> Result<Option<State>> {
         | RepositoryState::RebaseMerge => InProgress::Rebase,
         RepositoryState::CherryPick | RepositoryState::CherryPickSequence => InProgress::CherryPick,
         RepositoryState::Revert | RepositoryState::RevertSequence => InProgress::Revert,
+        RepositoryState::Bisect => InProgress::Bisect,
         _ => InProgress::Other,
     };
     let detail = std::fs::read_to_string(repo.path().join("MERGE_MSG"))
@@ -211,7 +215,7 @@ fn sides(
             theirs.name = format!("reverting {}", theirs.name);
             (checked_out(repo), theirs, None)
         }
-        InProgress::Other => (checked_out(repo), Side::default(), None),
+        InProgress::Bisect | InProgress::Other => (checked_out(repo), Side::default(), None),
     }
 }
 

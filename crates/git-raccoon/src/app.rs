@@ -90,6 +90,8 @@ pub struct App {
     sign_in_for: Option<usize>,
     /// A profile to switch to, asked for while drawing.
     switch_to: Option<usize>,
+    /// A command asked for while drawing, run next frame.
+    pending_command: Option<Command>,
     sign_in_work: Option<SignInWork>,
     /// Reports of earlier crashes, offered one at a time.
     crash_reports: Vec<crate::crash::Report>,
@@ -269,6 +271,7 @@ impl App {
             sign_in: None,
             sign_in_for: None,
             switch_to: None,
+            pending_command: None,
             sign_in_work: None,
         }
     }
@@ -969,7 +972,12 @@ impl App {
         let busy = repo.op_running();
         let status = repo.status.as_ref();
         let on_branch = repo.head_branch().is_some();
-        let in_progress = status.is_some_and(|s| s.in_progress.is_some());
+        // A search isn't continued or aborted: it has its own bar.
+        let in_progress = status.is_some_and(|s| {
+            s.in_progress
+                .as_ref()
+                .is_some_and(|p| p.what != git_raccoon_core::merge::InProgress::Bisect)
+        });
         match command {
             Command::Palette
             | Command::Settings
@@ -995,6 +1003,7 @@ impl App {
             | Command::ShowWorking
             | Command::WriteCommit
             | Command::AddRemote
+            | Command::FindBreak
             | Command::UseProfile(_)
             | Command::ManageProfiles
             | Command::GoTo { .. } => true,
@@ -1053,7 +1062,11 @@ impl App {
         add(Command::ManageProfiles, "Manage profiles…".into());
         let Some(repo) = &self.repo else { return out };
         let head = repo.head_branch().unwrap_or("HEAD").to_string();
-        let state = repo.status.as_ref().and_then(|s| s.in_progress.as_ref());
+        let state = repo
+            .status
+            .as_ref()
+            .and_then(|s| s.in_progress.as_ref())
+            .filter(|p| p.what != git_raccoon_core::merge::InProgress::Bisect);
         if let Some(state) = state {
             let noun = state.what.noun();
             add(Command::Continue, format!("Continue the {noun}"));
@@ -1077,6 +1090,12 @@ impl App {
         add(Command::NewBranch, format!("Create branch at {head}…"));
         add(Command::NewTag, format!("Create tag at {head}…"));
         add(Command::AddRemote, "Add remote…".into());
+        if !repo.bisect.searching() {
+            add(
+                Command::FindBreak,
+                "Find which commit broke something…".into(),
+            );
+        }
         add(Command::FileHistory, "History of this file".into());
         add(Command::Blame, "Blame this file".into());
         add(Command::Find, "Search commits".into());
@@ -1230,6 +1249,23 @@ impl App {
                         repo.search.focus = true;
                     }
                     Command::Undo => repo.undo(ctx),
+                    Command::FindBreak => {
+                        let id = repo.selected.as_ref().map(|s| s.id.clone()).or_else(|| {
+                            let row = repo.history.head_row()?;
+                            repo.history.ids().get(row).map(ToString::to_string)
+                        });
+                        if let Some(id) = id {
+                            let summary =
+                                git_raccoon_core::details::commit_details(repo.path(), &id)
+                                    .map(|d| d.summary)
+                                    .unwrap_or_default();
+                            let label =
+                                format!("{} \u{201c}{summary}\u{201d}", &id[..7.min(id.len())]);
+                            let dirty = repo.status.as_ref().is_some_and(|s| !s.is_clean());
+                            let path = repo.path().to_string();
+                            repo.bisect.open_start(ctx, &path, &id, label, dirty);
+                        }
+                    }
                     Command::Fetch => repo.fetch(ctx, None, self.settings.fetch_options()),
                     Command::Pull => repo.pull(ctx, None, self.settings.pull),
                     Command::Push => repo.push(ctx),
@@ -2119,10 +2155,12 @@ impl App {
             }
         }
 
-        // A merge (rebase, ...) waiting to be finished.
+        // A merge (rebase, ...) waiting to be finished; a search has a bar
+        // of its own.
         if let Some(repo) = &mut self.repo
             && let Some(status) = &repo.status
             && let Some(state) = &status.in_progress
+            && state.what != git_raccoon_core::merge::InProgress::Bisect
         {
             let conflicts: usize = repo
                 .conflict_files
@@ -2708,6 +2746,8 @@ impl App {
                     .as_ref()
                     .and_then(|s| s.in_progress.clone())
                     .filter(|_| !repo.history_over_conflicts)
+                    // A search shows the history, with its own bar.
+                    .filter(|s| s.what != git_raccoon_core::merge::InProgress::Bisect)
                 {
                     let resolved: Vec<String> = repo.resolved_here.iter().cloned().collect();
                     let files = repo.conflict_files.clone();
@@ -2804,6 +2844,34 @@ impl App {
                     }
                     return;
                 }
+                // Finding the commit that broke something: its start window;
+                // its bar over the graph, or its steps or answer in its place.
+                let remembered = self
+                    .settings
+                    .bisect_commands
+                    .get(repo.path().trim_end_matches(['/', '\\']))
+                    .cloned();
+                let mut bisect_actions = Vec::new();
+                bisect_actions.extend(crate::ui::bisect::start_window(
+                    &ctx,
+                    repo,
+                    remembered.as_deref(),
+                ));
+                let (replaced, a) = crate::ui::bisect::show(ui, repo);
+                bisect_actions.extend(a);
+                let mut bisect_click = None;
+                for a in bisect_actions {
+                    match a {
+                        crate::ui::bisect::Action::Terminal => {
+                            self.pending_command = Some(Command::Terminal);
+                        }
+                        crate::ui::bisect::Action::Remember(command) => {
+                            let key = repo.path().trim_end_matches(['/', '\\']).to_string();
+                            self.settings.bisect_commands.insert(key, command);
+                        }
+                        crate::ui::bisect::Action::History(click) => bisect_click = Some(click),
+                    }
+                }
                 // The search box over the history, while searching (Ctrl+F).
                 if let Some(back) = highlight_bar(ui, repo) {
                     match back {
@@ -2831,15 +2899,20 @@ impl App {
                 if repo.search.open {
                     search_bar::show(&ctx, ui.max_rect(), repo);
                 }
-                match history::show(
-                    ui,
-                    repo,
-                    &mut self.scroll,
-                    now,
-                    &mut self.settings.columns,
-                    &mut self.settings.column_widths,
-                    self.settings.branch_lines,
-                ) {
+                let clicked = if replaced {
+                    bisect_click
+                } else {
+                    bisect_click.or(history::show(
+                        ui,
+                        repo,
+                        &mut self.scroll,
+                        now,
+                        &mut self.settings.columns,
+                        &mut self.settings.column_widths,
+                        self.settings.branch_lines,
+                    ))
+                };
+                match clicked {
                     Some(history::Click::Row(row)) => {
                         repo.select_index(row);
                         repo.scroll_to = None;
@@ -2856,6 +2929,11 @@ impl App {
                     }
                     Some(history::Click::CherryPick { id }) => repo.run(&ctx, Op::CherryPick(id)),
                     Some(history::Click::Revert { id }) => repo.run(&ctx, Op::Revert(id)),
+                    Some(history::Click::FindBreak { id, label }) => {
+                        let dirty = repo.status.as_ref().is_some_and(|s| !s.is_clean());
+                        let path = repo.path().to_string();
+                        repo.bisect.open_start(&ctx, &path, &id, label, dirty);
+                    }
                     Some(history::Click::Reset { id, label }) => repo.ask_reset(id, label),
                     Some(history::Click::InteractiveRebase { id, label }) => {
                         repo.plan_rebase(id, label);
@@ -2930,6 +3008,9 @@ impl eframe::App for App {
         git_raccoon_core::conflict::set_remember(self.settings.remember_resolutions);
         if let Some(i) = self.switch_to.take() {
             self.use_profile(i);
+        }
+        if let Some(command) = self.pending_command.take() {
+            self.run_command(ctx, command);
         }
         // The app's Git commits as the profile in use.
         git_raccoon_core::commit::set_identity(

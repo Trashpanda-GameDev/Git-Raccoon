@@ -8519,3 +8519,336 @@ fn makes_a_default_profile_on_first_run() {
         (name, email)
     );
 }
+
+/// Eight commits: "Step 5" breaks the app ("state" goes from ok to broken);
+/// a tag "v1" on the first, where it worked.
+fn breaking_sample() -> Sample {
+    let s = Sample::new();
+    for i in 0..8 {
+        s.write("state", if i < 5 { "ok\n" } else { "broken\n" });
+        s.write("step.txt", format!("{i}\n"));
+        s.commit(&format!("Step {i}"), 20 - i64::from(i));
+        if i == 0 {
+            git(&s, &["tag", "v1"]);
+        }
+    }
+    s
+}
+
+fn is_broken_now(sample: &Sample) -> bool {
+    std::fs::read_to_string(sample.dir.join("state")).unwrap_or_default() == "broken\n"
+}
+
+fn searching(app: &App) -> bool {
+    app.repo()
+        .is_some_and(|r| r.bisect.searching() && !r.bisect.is_busy())
+}
+
+#[test]
+fn finds_the_commit_that_broke_it_by_hand() {
+    use egui::accesskit::Role;
+    let sample = breaking_sample();
+    sample.write("notes.txt", "mine, uncommitted\n");
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    settle(&mut h);
+
+    // Right-click the newest (broken) commit.
+    h.get_by_label("Step 7").click_secondary();
+    h.run_ok();
+    h.get_by_label("Find which commit broke something…").click();
+    settle(&mut h);
+    // v1 is suggested; 6 in between, about 3 steps; changes put aside.
+    wait_for(&mut h, "the range", |app| {
+        app.repo()
+            .unwrap()
+            .bisect
+            .starting
+            .as_ref()
+            .is_some_and(|s| matches!(s.preview, Some((_, _, Ok(_)))))
+    });
+    h.run_ok();
+    h.get_by_label_contains("6 commits in between · about 3 steps");
+    h.get_by_label_contains("You have uncommitted changes");
+    screenshot(&mut h, "95-bisect-start");
+    h.get_by_label("Start, I'll test each one").click();
+    wait_for(&mut h, "the search", searching);
+    settle(&mut h);
+    assert!(!sample.dir.join("notes.txt").exists(), "put aside");
+    screenshot(&mut h, "96-bisect-by-hand");
+    h.get_by_label_contains("Finding the commit that broke it");
+
+    // Checking out now would get in the way: Stop first.
+    h.get_by_label("Step 2").click_secondary();
+    h.run_ok();
+    h.get_by_label_contains("Check out this commit only (detached)")
+        .click();
+    settle(&mut h);
+    h.get_by_label("Check out commit").click();
+    settle(&mut h);
+    h.get_by_label("A search is going on");
+    h.get_by_role_and_label(Role::Button, "Cancel").click();
+    settle(&mut h);
+
+    // One answer, taken back.
+    let first = h.state().repo().unwrap().bisect.search.clone().unwrap();
+    h.get_by_label("Skip this one").click();
+    wait_for(&mut h, "the skip", |app| {
+        searching(app)
+            && app
+                .repo()
+                .unwrap()
+                .bisect
+                .search
+                .as_ref()
+                .unwrap()
+                .answers
+                .len()
+                == 3
+    });
+    h.get_by_label("Undo last answer").click();
+    wait_for(&mut h, "the undo", |app| {
+        searching(app)
+            && app
+                .repo()
+                .unwrap()
+                .bisect
+                .search
+                .as_ref()
+                .unwrap()
+                .answers
+                .len()
+                == 2
+    });
+    assert_eq!(
+        h.state()
+            .repo()
+            .unwrap()
+            .bisect
+            .search
+            .as_ref()
+            .unwrap()
+            .testing,
+        first.testing
+    );
+
+    // Testing each one by hand, until it's found.
+    for _ in 0..8 {
+        if h.state().repo().unwrap().bisect.found.is_some() {
+            break;
+        }
+        let button = if is_broken_now(&sample) {
+            "It's broken"
+        } else {
+            "It works"
+        };
+        h.get_by_label_contains(button).click();
+        wait_for(&mut h, "the answer", |app| {
+            let b = &app.repo().unwrap().bisect;
+            !b.is_busy()
+        });
+        settle(&mut h);
+    }
+    let found = h
+        .state()
+        .repo()
+        .unwrap()
+        .bisect
+        .found
+        .as_ref()
+        .map(|f| f.finished.outcome.clone());
+    let step5 = sample
+        .repo
+        .revparse_single("HEAD~2")
+        .unwrap()
+        .id()
+        .to_string();
+    assert_eq!(found, Some(git_raccoon_core::bisect::Outcome::Found(step5)));
+    h.get_by_label_contains("Found it in");
+    h.get_by_label_contains("back on main, your changes restored");
+    screenshot(&mut h, "97-bisect-answer");
+    assert_eq!(
+        std::fs::read_to_string(sample.dir.join("notes.txt")).unwrap(),
+        "mine, uncommitted\n"
+    );
+    assert!(!git_raccoon_core::bisect::is_searching(sample.path()));
+    // Copy a summary, then show it in the history.
+    h.get_by_label("Copy a summary").click();
+    h.step();
+    let copied = h
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .find_map(|c| match c {
+            egui::OutputCommand::CopyText(t) => Some(t.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(
+        copied.contains("First broken commit") && copied.contains("Step 5"),
+        "{copied}"
+    );
+    h.run_ok();
+    h.get_by_label("Show it in the history").click();
+    settle(&mut h);
+    assert!(h.state().repo().unwrap().bisect.found.is_none());
+    assert_eq!(selected_summary(&h).as_deref(), Some("Step 5"));
+}
+
+#[test]
+fn lets_a_command_test_each_commit() {
+    let sample = breaking_sample();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    settle(&mut h);
+    press(&mut h, egui::Modifiers::COMMAND, Key::K);
+    h.run_ok();
+    h.get_by_label("Command").type_text("which commit broke");
+    h.run_ok();
+    press(&mut h, egui::Modifiers::NONE, Key::Enter);
+    settle(&mut h);
+    wait_for(&mut h, "the range", |app| {
+        app.repo()
+            .unwrap()
+            .bisect
+            .starting
+            .as_ref()
+            .is_some_and(|s| matches!(s.preview, Some((_, _, Ok(_)))))
+    });
+    let command = if cfg!(windows) {
+        "findstr /x ok state"
+    } else {
+        "grep -qx ok state"
+    };
+    type_into(&mut h, "Test command", command);
+    h.get_by_label("Test with this command").click();
+    h.run_ok();
+    screenshot(&mut h, "98-bisect-command");
+    wait_for(&mut h, "the answer", |app| {
+        app.repo().unwrap().bisect.found.is_some()
+    });
+    settle(&mut h);
+    let step5 = sample
+        .repo
+        .revparse_single("HEAD~2")
+        .unwrap()
+        .id()
+        .to_string();
+    let b = &h.state().repo().unwrap().bisect;
+    assert_eq!(
+        b.found.as_ref().map(|f| f.finished.outcome.clone()),
+        Some(git_raccoon_core::bisect::Outcome::Found(step5))
+    );
+    // Remembered for this repository.
+    let key = sample.path().trim_end_matches(['/', '\\']).to_string();
+    assert_eq!(
+        h.state()
+            .settings()
+            .bisect_commands
+            .get(&key)
+            .map(String::as_str),
+        Some(command)
+    );
+}
+
+#[test]
+fn picks_up_a_search_started_in_a_terminal_with_its_words() {
+    let sample = breaking_sample();
+    git(
+        &sample,
+        &[
+            "bisect",
+            "start",
+            "--term-new=broken-now",
+            "--term-old=fine",
+            "HEAD",
+            "v1",
+        ],
+    );
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    wait_for(&mut h, "the search", searching);
+    settle(&mut h);
+    h.get_by_label_contains("Finding the first broken-now commit");
+    // An answer given in the terminal meanwhile shows up.
+    git(&sample, &["bisect", "skip"]);
+    let ctx = h.ctx.clone();
+    h.state_mut().repo_mut().unwrap().refresh(&ctx);
+    wait_for(&mut h, "the terminal's answer", |app| {
+        searching(app)
+            && app
+                .repo()
+                .unwrap()
+                .bisect
+                .search
+                .as_ref()
+                .is_some_and(|s| s.skipped.len() == 1)
+    });
+    for _ in 0..8 {
+        if h.state().repo().unwrap().bisect.found.is_some() {
+            break;
+        }
+        let button = if is_broken_now(&sample) {
+            "It's broken-now"
+        } else {
+            "It's fine"
+        };
+        h.get_by_label_contains(button).click();
+        wait_for(&mut h, "the answer", |app| {
+            !app.repo().unwrap().bisect.is_busy()
+        });
+        settle(&mut h);
+    }
+    assert!(h.state().repo().unwrap().bisect.found.is_some());
+    h.get_by_label_contains("The first broken-now commit");
+}
+
+#[test]
+fn an_agent_finds_the_commit_that_broke_it() {
+    let sample = breaking_sample();
+    let mut h = harness(Settings {
+        agents: true,
+        ..Settings::default()
+    });
+    open(&mut h, sample.path());
+    settle(&mut h);
+    let mut agent = AgentLink::connect(&mut h);
+    // Starting asks the person.
+    let (said, error) = agent.call_asking(
+        &mut h,
+        "start_bisect",
+        serde_json::json!({ "works": "v1" }),
+        "Allow",
+    );
+    assert!(!error, "{said}");
+    wait_for(&mut h, "the search", searching);
+    settle(&mut h);
+    h.get_by_label_contains("test-agent is answering");
+    screenshot(&mut h, "99-bisect-agent");
+    // Its answers go ahead, until it's found.
+    for _ in 0..8 {
+        let (now, error) = agent.call(&mut h, "get_bisect", serde_json::json!({}));
+        assert!(!error, "{now}");
+        if now.contains("\"found\"") {
+            assert!(now.contains("Step 5"), "{now}");
+            return;
+        }
+        let answer = if is_broken_now(&sample) {
+            "broken"
+        } else {
+            "works"
+        };
+        let (said, error) = agent.call(
+            &mut h,
+            "bisect_answer",
+            serde_json::json!({ "answer": answer }),
+        );
+        assert!(!error, "{said}");
+        wait_for(&mut h, "the answer", |app| {
+            !app.repo().unwrap().bisect.is_busy()
+        });
+        settle(&mut h);
+    }
+    panic!("never found");
+}

@@ -3,6 +3,17 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.30
+
+- **Find which commit broke something.** Right-click the commit where it's broken (or use the command palette) › *Find which commit broke something…*, and say where it last worked (the latest tag below it is suggested). Git Raccoon checks out commits in between, halving the range each time: answer **It works**, **It's broken** or **Skip this one**, until it's found. It's Git's own bisect, in plain words.
+  - **A bar** above the graph says what's being tested and how many commits and steps are left; the graph marks the range still in question and each answer, and *So far* lists them, with *Undo last answer* and *Open a terminal here*.
+  - **Or let a command test each commit** (exit 0 works, 125 can't be tested, anything else broken): each step with its result, time and output, the one running live, and Stop. The command is remembered for the repository; a step can be given a time limit.
+  - **The answer:** the first broken commit with its message, author, files and the request it came with, how it was found, and *Show it in the history*, *Revert it…*, *Create a branch here…*, *Copy a summary* (for an issue) and, with an agent connected, *Ask an agent why*. When skipped commits leave it uncertain, the ones it could be.
+  - **Uncommitted changes** are put aside first and brought back at the end; *Stop* always goes back to where it started.
+  - **Not only for breakages:** look for when something changed, in your own words ("fast" and "slow"), used throughout.
+  - **A search started in a terminal** (`git bisect`) shows here too, answers given there included, and can be finished here.
+  - **Agents** can start a search (asking you first), answer, run a test command on each commit and read where it stands.
+
 ## 0.5.29
 
 - **Profiles: who you commit as, and with which accounts.** A profile has a name, a colour, the name and email to commit as, and the GitHub and GitLab accounts it uses (one per forge). Switch at the top right, or from the command palette; Git Raccoon's commits use the profile's name and email (your Git config is left alone), and pushing, pulling, pull/merge requests and cloning use its accounts.

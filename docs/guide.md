@@ -421,6 +421,28 @@ In any diff, turn on:
 
 They can be on together, and are remembered.
 
+## Finding which commit broke something
+
+When something worked before and doesn't now, Git Raccoon can find the commit that broke it (Git's bisect), by checking out commits in between and halving the range each time.
+
+1. **Right-click the commit where it's broken** (usually the newest; a branch's or tag's label too) › **Find which commit broke something…**, or use the command palette.
+2. **Say where it last worked:** the latest tag below it is suggested; type any tag, branch or commit instead. The window says how many commits are in between, and about how many steps it'll take, or why the commit chosen won't do (it has to be older, in the broken one's history).
+3. **Start, I'll test each one.** Uncommitted changes are put aside first, and brought back at the end.
+
+![Finding the commit that broke it](../site/screenshots/bisect.png)
+
+**Testing by hand:** a bar above the graph says which commit is checked out and what's left. Build and try it (*Open a terminal here* helps), then answer **It works** or **It's broken**, or **Skip this one** when it can't be tested (it doesn't build, say). The graph marks the commits still in question, each answer (✓ works, ✗ broken, – skipped) and the one being tested; *So far* lists the answers, and *Undo last answer* takes the last one back. While a search goes on, checking out, committing, merging or rebasing first offer to stop it.
+
+**Testing with a command:** give one in the start window (or *Test with a command…* in the bar), like `cargo test session::` or `npm test`. It runs in the repository's folder on each commit: exit 0 means it works, 125 that it can't be tested, anything else that it's broken (as `git bisect run` reads it). Each step shows its result, time and output, and *Stop* keeps the answers so far, to go on by hand. A step can be given a time limit; one that runs over is skipped. The command is remembered for the repository.
+
+**The answer:** "Found it in 4 steps", with the first broken commit (its message, author, files and the request it came with), how it was found, and *Show it in the history*, *Revert it…*, *Create a branch here…*, *Copy a summary* (for an issue) and, with an agent connected, *Ask an agent why*. You're back where you started, with your changes. When skipped commits leave it uncertain, the commits it could be are listed.
+
+**Other questions:** it's not only for breakages. Under *Looking for*, choose *When something changed* (old and new behaviour), or your own words ("fast" and "slow"): the buttons and answers use them.
+
+**Picking up:** a search started in a terminal (`git bisect start`, even with `--term-new`/`--term-old`), or before Git Raccoon was closed, shows in the same bar; answers given in the terminal show up too. **Stop** always goes back to where the search started.
+
+**Agents** (Settings › Agents) can start a search (asking you first), answer for the commit being tested, run a test command on each commit, and read where it stands; the bar says when an agent is answering.
+
 ## Undo
 
 After most actions, the toolbar shows exactly what **Undo** would do ("Undo commit 'Fix the thing'"). Press it, or **Ctrl+Z**.
@@ -445,7 +467,7 @@ What an agent can do:
 
 - **Read, freely:** the repositories open here, what you're looking at, status, history and search, commits and diffs, branches, tags and stashes, and pull/merge requests with their threads.
 - **Show you things:** select a commit, open a request or a repository, or start a new request filled in for you to check and open.
-- **Change things, once you allow it:** stage, commit, branches, checkout, stash, tags, merge, fetch, pull and push. Each change asks you: *Allow*, *Allow for this session*, or *Deny*. Discarding changes asks every time. Pushes never force, and pulls never throw changes away.
+- **Change things, once you allow it:** stage, commit, branches, checkout, stash, tags, merge, fetch, pull and push, and [finding which commit broke something](#finding-which-commit-broke-something). Each change asks you: *Allow*, *Allow for this session*, or *Deny*. Discarding changes asks every time. Pushes never force, and pulls never throw changes away.
 - **Propose conflict resolutions:** they read the conflicts in progress and propose a file's resolution with their reasoning; you choose whether to use it (see *Conflicts*).
 - **Comment on requests, as drafts:** comments and replies go into your drafts; you send them when you finish your review. Resolving a thread asks you first.
 

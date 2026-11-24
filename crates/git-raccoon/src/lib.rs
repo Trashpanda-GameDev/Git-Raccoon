@@ -2,6 +2,7 @@
 
 pub mod agent;
 mod app;
+pub mod bisect_view;
 pub mod changelog;
 pub mod commands;
 pub mod crash;

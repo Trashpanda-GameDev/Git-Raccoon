@@ -48,6 +48,8 @@ pub enum Command {
     /// The open file's history or blame.
     FileHistory,
     Blame,
+    /// Find which commit broke something (the selected one, or HEAD, broken).
+    FindBreak,
     /// Use this profile (by its place in the list).
     UseProfile(usize),
     /// Settings › Profiles.

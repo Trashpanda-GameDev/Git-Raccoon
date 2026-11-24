@@ -200,6 +200,9 @@ pub struct Settings {
     /// Sidebar sections and folders closed, by repository path, so they
     /// stay closed after a restart.
     pub sidebar_collapsed: std::collections::BTreeMap<String, Vec<String>>,
+    /// The command last used to test each commit when finding the commit
+    /// that broke something, by repository path.
+    pub bisect_commands: std::collections::BTreeMap<String, String>,
     /// Who you commit as, and with which accounts (see `profiles`); made
     /// on first run.
     pub profiles: Vec<crate::profiles::Profile>,
@@ -393,6 +396,7 @@ impl Default for Settings {
             sidebar_collapsed: std::collections::BTreeMap::new(),
             profiles: Vec::new(),
             active_profile: 0,
+            bisect_commands: std::collections::BTreeMap::new(),
             agents: false,
             columns: Column::ALL.to_vec(),
             themes: Vec::new(),

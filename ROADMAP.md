@@ -129,6 +129,23 @@ Mockup and clickable prototype: [Git Raccoon profiles](https://claude.ai/artifac
 - Later: remember a profile per repository, or rules by remote (`github.com/acme/*` → Work) or folder; commit signing per profile; an SSH key per profile.
 - [ ] Tried end to end with real GitHub and GitLab accounts: two profiles sharing one account, and one each.
 
+## Find which commit broke something (0.5.30)
+
+Mockups: [docs/design/bisect](docs/design/bisect). Built in the [Find which commit broke something milestone](https://github.com/Trashpanda-GameDev/Git-Raccoon/milestone/5).
+
+Git's bisect, in plain words: "broken" and "works", not "bad" and "good" or "bisect". It runs through the user's own `git bisect`, so a search started in a terminal and one started here are the same search.
+
+- [x] **Bisect underneath:** start (with a broken and a working commit, optionally `--first-parent`), answer, skip, undo the last answer (replaying Git's log), stop; read a search in progress from the repository (its range, answers and current commit); how many commits and steps are left; the result.
+- [x] **A. Starting:** right-click a commit › *Find which commit broke something…* (it's the broken one); *Last worked at* suggests the latest tag, or any commit; the range and steps ("13 commits, about 4 steps"); *Only follow main*; uncommitted changes put aside first and brought back at the end.
+- [x] **B. By hand:** a bar with what's being tested and what's left, and **It works**, **It's broken**, **Skip this one** (for a commit that can't be tested), **Stop**; the graph marks the range still in question, the answers, and the commit checked out; *Undo last answer* and *Open a terminal here*.
+- [x] **C. With a command:** *Test with a command…* runs it on each commit (read as `git bisect run` does: exit 0 works, 125 skip, anything else broken), with each step's result, time and output, progress, and Stop; the command remembered per repository.
+- [x] **D. The answer:** the first broken commit (message, author, files, the request it came with), how it was found, and *Show it in the history*, *Revert it…*, *Create a branch here…*, *Copy a summary*, *Ask an agent why*; back where the search started, with the changes put aside brought back. When skips leave it uncertain, the commits it could be.
+- [x] **Picking up:** a search in progress (started in a terminal, or before the app was closed) opens in the same view; *Stop* always goes back to where it started.
+- [x] **Other questions:** custom terms for "when did this change?" ("Old behaviour" / "New behaviour", or your own words).
+- [x] **Agents:** tools to start a search, answer for the commit being tested, run a command, and read where it stands, with the same approval as other changes.
+- [x] Also: an optional time limit per step (a step that runs over is skipped), and operations that would move away from the commit being tested (checkout, commit, merge, rebase…) say a search is going on, with *Stop* first.
+- [ ] Tried on Windows, macOS and Linux on a real project, by hand and with a test command.
+
 ## Designed (ready to build)
 
 ### Merge requests without leaving the app
@@ -161,21 +178,6 @@ Built in 0.5.18, with one set of words for GitHub and GitLab (what a forge doesn
   - [x] **Push and open in one step** ("Push 3 commits and open"), setting the upstream; draft or ready; then straight to the new request's view.
 - [x] Drafts kept on the forge (GitHub's pending review, GitLab's draft notes); editing and deleting your comments; a status line in the sidebar; outdated threads in Changes; GitLab fast-forward and bringing a request up to date; a new request as a view of its own.
 - Later: check logs and re-runs; editing the title, description, reviewers, assignees and labels; draft/ready, close/reopen; sidebar filters (*Mine*, *Review requested*), and a count of requests waiting on you.
-
-### Find which commit broke something (bisect)
-
-Mockups: [docs/design/bisect](docs/design/bisect). Build work: the [Find which commit broke something milestone](https://github.com/Trashpanda-GameDev/Git-Raccoon/milestone/5).
-
-Git's bisect, in plain words: "broken" and "works", not "bad" and "good" or "bisect". It runs through the user's own `git bisect`, so a search started in a terminal and one started here are the same search.
-
-- [ ] **Bisect underneath:** start (with a broken and a working commit, optionally `--first-parent`), answer, skip, undo the last answer (replaying Git's log), stop; read a search in progress from the repository (its range, answers and current commit); how many commits and steps are left; the result.
-- [ ] **A. Starting:** right-click a commit › *Find which commit broke something…* (it's the broken one); *Last worked at* suggests the latest tag, or any commit; the range and steps ("13 commits, about 4 steps"); *Only follow main*; uncommitted changes put aside first and brought back at the end.
-- [ ] **B. By hand:** a bar with what's being tested and what's left, and **It works**, **It's broken**, **Skip this one** (for a commit that can't be tested), **Stop**; the graph marks the range still in question, the answers, and the commit checked out; *Undo last answer* and *Open a terminal here*.
-- [ ] **C. With a command:** *Test with a command…* runs it on each commit (`git bisect run`; exit 0 works, 125 skip, anything else broken), with each step's result, time and output, progress, and Stop; the command remembered per repository.
-- [ ] **D. The answer:** the first broken commit (message, author, files, the request it came with), how it was found, and *Show it in the history*, *Revert it…*, *Create a branch here…*, *Copy a summary*, *Ask an agent why*; back where the search started, with the changes put aside brought back. When skips leave it uncertain, the commits it could be.
-- [ ] **Picking up:** a search in progress (started in a terminal, or before the app was closed) opens in the same view; *Stop* always goes back to where it started.
-- [ ] **Other questions:** custom terms for "when did this change?" ("Old behaviour" / "New behaviour", or your own words).
-- [ ] **Agents:** tools to start a search, answer for the commit being tested, run a command, and read where it stands, with the same approval as other changes.
 
 ## Later (ideas, not commitments)
 

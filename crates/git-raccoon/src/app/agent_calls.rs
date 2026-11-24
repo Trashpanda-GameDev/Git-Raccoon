@@ -36,9 +36,22 @@ pub(super) struct Asking {
 /// What an allowed change does.
 enum Act {
     Op(Op),
-    Commit { message: String, amend: bool },
+    /// Finding the commit that broke something.
+    Bisect(Bisect),
+    Commit {
+        message: String,
+        amend: bool,
+    },
     Draft(Draft),
     Resolve(String, bool),
+}
+
+/// What an agent asked of a search.
+enum Bisect {
+    Start(crate::bisect_view::Begin),
+    Answer(git_raccoon_core::bisect::Verdict),
+    Run(String, Option<std::time::Duration>),
+    Stop,
 }
 
 /// A change running, for an agent waiting to hear how it went.
@@ -260,6 +273,45 @@ impl App {
                 None => call.fail("Which folder? Give its `path`."),
             },
             "start_request" => self.start_request(ctx, call),
+            "get_bisect" => match self.agent_repo(&call) {
+                Ok(path) => {
+                    self.front(ctx, &path);
+                    let text = self.bisect_now();
+                    call.ok(text);
+                }
+                Err(e) => call.fail(e),
+            },
+            // In a search the person allowed this agent, answers and commands
+            // go ahead.
+            "bisect_answer" | "bisect_run"
+                if self.repo.as_ref().is_some_and(|r| {
+                    r.bisect.agent.as_deref() == Some(call.client.as_str()) && r.bisect.searching()
+                }) && self.agent_repo(&call).is_ok_and(|p| {
+                    self.repo.as_ref().is_some_and(|r| {
+                        r.path().trim_end_matches(['/', '\\']) == p.trim_end_matches(['/', '\\'])
+                    })
+                }) =>
+            {
+                let path = self
+                    .repo
+                    .as_ref()
+                    .map(|r| r.path().trim_end_matches(['/', '\\']).to_string())
+                    .unwrap_or_default();
+                match self.change(&call, &path) {
+                    Err(e) => call.fail(e),
+                    Ok((what, detail, risky, act)) => {
+                        let asking = Asking {
+                            call,
+                            what,
+                            detail,
+                            risky,
+                            repo: path,
+                            act,
+                        };
+                        self.agent_do(ctx, asking);
+                    }
+                }
+            }
             "propose_resolution" => self.propose_resolution(ctx, call),
             "get_status" | "get_log" | "search_commits" | "get_commit" | "get_diff"
             | "get_refs" | "get_conflicts" => match self.agent_repo(&call) {
@@ -294,6 +346,53 @@ impl App {
                 },
             },
         }
+    }
+
+    /// Where finding the commit that broke something stands.
+    fn bisect_now(&self) -> String {
+        use git_raccoon_core::bisect::{Outcome, Verdict};
+        let Some(repo) = &self.repo else {
+            return pretty(&json!({ "searching": false }));
+        };
+        let b = &repo.bisect;
+        let name = |v: Verdict, w: &crate::bisect_view::Words| w.verdict(v).to_string();
+        if let Some(found) = &b.found {
+            let w = found.words();
+            let outcome = match &found.finished.outcome {
+                Outcome::Found(id) => json!({ "first": id, "summary": found.summaries.get(id) }),
+                Outcome::OneOf(ids) => json!({ "one_of": ids }),
+            };
+            return pretty(&json!({
+                "searching": false,
+                "found": outcome,
+                "answers": found.finished.answers.iter().map(|a| json!({ "commit": a.id, "answer": name(a.verdict, &w) })).collect::<Vec<_>>(),
+                "back_on": found.finished.back_on,
+            }));
+        }
+        let Some(s) = &b.search else {
+            return pretty(&json!({ "searching": false, "error": b.error }));
+        };
+        let w = crate::bisect_view::Words::of(&s.terms);
+        let running = b.running.as_ref().and_then(|r| r.log.lock().ok()).map(|l| {
+            json!({
+                "command": l.command,
+                "steps": l.steps.iter().map(|st| json!({ "commit": st.id, "summary": st.summary, "exit": st.code, "answer": st.verdict.map(|v| name(v, &w)) })).collect::<Vec<_>>(),
+                "testing_now": l.current.as_ref().map(|c| c.0.clone()),
+            })
+        });
+        pretty(&json!({
+            "searching": true,
+            "words": { "new": w.new, "old": w.old },
+            "testing": s.testing,
+            "testing_summary": s.testing.as_ref().and_then(|t| b.summaries.get(t)),
+            "commits_left": s.left(),
+            "steps_left": s.steps,
+            "answers": s.answers.iter().map(|a| json!({ "commit": a.id, "answer": name(a.verdict, &w) })).collect::<Vec<_>>(),
+            "only_main_line": s.first_parent,
+            "command": running,
+            "busy": b.is_busy(),
+            "error": b.error,
+        }))
     }
 
     /// What the person is looking at.
@@ -611,6 +710,111 @@ impl App {
                         Act::Op(Op::Then(ops)),
                     )
                 }
+            }
+            "start_bisect" => {
+                let works = need("works")?;
+                plain("commit", &works)?;
+                let broken = call.str("broken").unwrap_or_else(|| "HEAD".into());
+                plain("commit", &broken)?;
+                if repo.bisect.searching() {
+                    return Err(
+                        "A search is going on already (get_bisect says where it stands).".into(),
+                    );
+                }
+                let terms = match (call.str("new_word"), call.str("old_word")) {
+                    (Some(new), Some(old)) => Some(git_raccoon_core::bisect::Terms { new, old }),
+                    _ => None,
+                };
+                let command = call.str("command").filter(|c| !c.trim().is_empty());
+                let limit = call
+                    .number("time_limit_seconds")
+                    .map(std::time::Duration::from_secs);
+                let dirty = repo.status.as_ref().is_some_and(|s| !s.is_clean());
+                let mut detail = vec![format!("  It's broken at {broken}, and worked at {works}.")];
+                if let Some(c) = &command {
+                    detail.push(format!("  Each commit is tested with: {c}"));
+                }
+                if dirty {
+                    detail.push(
+                        "  Uncommitted changes are put aside first, and back at the end.".into(),
+                    );
+                }
+                (
+                    "find which commit broke something (commits are checked out in turn)".into(),
+                    detail,
+                    false,
+                    Act::Bisect(Bisect::Start(crate::bisect_view::Begin {
+                        broken,
+                        works: vec![works],
+                        first_parent: call.bool("first_parent") == Some(true),
+                        terms,
+                        dirty,
+                        command,
+                        limit,
+                    })),
+                )
+            }
+            "bisect_answer" => {
+                let Some(search) = &repo.bisect.search else {
+                    return Err("No search is going on (start_bisect starts one).".into());
+                };
+                let said = need("answer")?.to_lowercase();
+                let words = crate::bisect_view::Words::of(&search.terms);
+                use git_raccoon_core::bisect::Verdict;
+                let verdict = if said == "skip" {
+                    Verdict::Skip
+                } else if said == words.new
+                    || said == search.terms.new
+                    || said == "broken"
+                    || said == "bad"
+                {
+                    Verdict::New
+                } else if said == words.old
+                    || said == search.terms.old
+                    || said == "works"
+                    || said == "good"
+                {
+                    Verdict::Old
+                } else {
+                    return Err(format!("Answer {}, {} or skip.", words.new, words.old));
+                };
+                let testing = search.testing.clone().unwrap_or_default();
+                (
+                    format!(
+                        "say {} is {}",
+                        &testing[..testing.len().min(7)],
+                        words.verdict(verdict)
+                    ),
+                    Vec::new(),
+                    false,
+                    Act::Bisect(Bisect::Answer(verdict)),
+                )
+            }
+            "bisect_run" => {
+                if repo.bisect.search.is_none() {
+                    return Err("No search is going on (start_bisect starts one).".into());
+                }
+                let command = need("command")?;
+                let limit = call
+                    .number("time_limit_seconds")
+                    .map(std::time::Duration::from_secs);
+                (
+                    "test each commit of the search with a command".into(),
+                    vec![format!("  {command}")],
+                    false,
+                    Act::Bisect(Bisect::Run(command, limit)),
+                )
+            }
+            "stop_bisect" => {
+                if repo.bisect.search.is_none() {
+                    return Err("No search is going on.".into());
+                }
+                (
+                    "stop finding the commit that broke something (back where it started)".into(),
+                    Vec::new(),
+                    false,
+                    Act::Bisect(Bisect::Stop),
+                )
             }
             "commit" => {
                 let message = need("message")?;
@@ -949,6 +1153,31 @@ impl App {
         };
         let busy = "Git Raccoon is busy with something else there; try again in a moment.";
         match act {
+            Act::Bisect(b) => {
+                if repo.bisect.is_busy() {
+                    return call.fail(busy);
+                }
+                let path = repo.path().to_string();
+                match b {
+                    Bisect::Start(begin) => {
+                        repo.bisect.start_with(ctx, &path, begin);
+                        repo.bisect.agent = Some(call.client.clone());
+                        call.ok("Started: Git Raccoon checks out the first commit to test. get_bisect says which, and what's left; answer with bisect_answer (or bisect_run with a command).");
+                    }
+                    Bisect::Answer(v) => {
+                        repo.bisect.answer(ctx, &path, v);
+                        call.ok("Answered. get_bisect says what's next (or what was found).");
+                    }
+                    Bisect::Run(command, limit) => {
+                        repo.bisect.run_command(ctx, &path, command, limit);
+                        call.ok("Running it on each commit. get_bisect says how it's going, and what was found.");
+                    }
+                    Bisect::Stop => {
+                        repo.bisect.stop(ctx, &path);
+                        call.ok("Stopping: back where it started.");
+                    }
+                }
+            }
             Act::Op(op) => {
                 let (report, until) = mpsc::channel();
                 if repo.run_reporting(ctx, op, report) {

@@ -1,6 +1,7 @@
 //! The views that make up the window.
 
 pub mod askpass;
+pub mod bisect;
 pub mod clone;
 pub mod conflict;
 pub mod conflict_panes;
