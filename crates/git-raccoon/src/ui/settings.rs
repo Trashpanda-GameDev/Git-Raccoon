@@ -7,11 +7,13 @@ use eframe::egui::{self, RichText};
 use egui_phosphor::regular as icon;
 
 use crate::settings::{
-    LineStyle, PullChanges, PullStrategy, Settings, ThemeChoice, ThemeMode, ZOOMS,
+    LineStyle, PullChanges, PullStrategy, Settings, ThemeChoice, ThemeMode, ToolChoice, ZOOMS,
 };
 use crate::theme;
 use crate::themes::{CustomTheme, Field, Hex};
+use crate::tools;
 use crate::ui::widgets;
+use git_raccoon_core::tools::Role;
 
 pub enum Action {
     Close,
@@ -151,6 +153,9 @@ impl Section {
             Section::Tools => {
                 settings.terminal = d.terminal;
                 settings.clone_dir = d.clone_dir;
+                settings.merge_tool = d.merge_tool;
+                settings.diff_tool = d.diff_tool;
+                settings.editor = d.editor;
             }
             Section::Agents => settings.agents = d.agents,
             Section::Updates => settings.no_update_checks = d.no_update_checks,
@@ -298,6 +303,24 @@ const ROWS: &[Row] = &[
         name: "Hosts",
         hint: "Trusted, from known_hosts.",
         words: "ssh hosts known_hosts trust fingerprint test connection",
+    },
+    Row {
+        section: Section::Tools,
+        name: "Merge tool",
+        hint: "For conflicts: \"Open in…\" in the conflict editor.",
+        words: "merge tool mergetool conflicts kdiff3 meld beyond compare p4merge winmerge vs code jetbrains rider unity yaml external",
+    },
+    Row {
+        section: Section::Tools,
+        name: "Diff tool",
+        hint: "\"Open in…\" on any diff.",
+        words: "diff tool difftool compare beyond compare kdiff3 meld external",
+    },
+    Row {
+        section: Section::Tools,
+        name: "Editor",
+        hint: "\"Open in editor\" on files, at the line.",
+        words: "editor open file vs code sublime notepad++ zed jetbrains rider idea line external",
     },
     Row {
         section: Section::Tools,
@@ -1341,6 +1364,154 @@ fn and_list(names: &[String]) -> String {
     }
 }
 
+/// The repository open, for reading its Git config (its merge.tool).
+pub fn repo_id() -> egui::Id {
+    egui::Id::new("settings-repo")
+}
+
+/// A merge tool, diff tool or editor: a list of the choices (Git's own, the
+/// built-in views, those found here, a command of your own).
+fn tool_picker(ui: &mut egui::Ui, settings: &mut Settings, role: Role) {
+    let repo = ui.ctx().data(|d| d.get_temp::<String>(repo_id()));
+    let repo = repo.as_deref();
+    let what = match role {
+        Role::Merge => "Merge tool",
+        Role::Diff => "Diff tool",
+        Role::Editor => "Editor",
+    };
+    let current = tools::choice(settings, role).clone();
+    let mut picked = None;
+    let found = tools::found_for(role);
+    let combo = egui::ComboBox::from_id_salt(("tool", what))
+        .selected_text(tools::label(&current, role, repo))
+        .width(300.0)
+        .height(420.0)
+        .show_ui(ui, |ui| {
+            let mut option = |ui: &mut egui::Ui, choice: ToolChoice, extra: Option<String>| {
+                let text = tools::label(&choice, role, repo);
+                let on = current == choice
+                    || matches!(
+                        (&current, &choice),
+                        (ToolChoice::Custom(_), ToolChoice::Custom(_))
+                    );
+                let r = ui.selectable_label(on, text.clone());
+                if let Some(extra) = extra {
+                    let at = r.rect.right_center() - egui::vec2(8.0, 0.0);
+                    ui.painter().text(
+                        at,
+                        egui::Align2::RIGHT_CENTER,
+                        extra,
+                        theme::body(11.0),
+                        theme::muted(),
+                    );
+                }
+                if r.clicked() {
+                    picked = Some(choice);
+                }
+            };
+            option(ui, ToolChoice::Default, None);
+            if role != Role::Editor {
+                option(ui, ToolChoice::BuiltIn, None);
+            }
+            ui.separator();
+            if found.is_empty() {
+                ui.label(
+                    RichText::new("None found on this computer")
+                        .size(12.0)
+                        .color(theme::muted()),
+                );
+            } else {
+                ui.label(
+                    RichText::new("Found on this computer")
+                        .size(12.0)
+                        .color(theme::muted()),
+                );
+            }
+            for f in &found {
+                let extra = f.version.as_ref().map(|v| format!("Unity {v}"));
+                option(ui, ToolChoice::Preset(f.preset.id.into()), extra);
+            }
+            ui.separator();
+            let line = match &current {
+                ToolChoice::Custom(line) => line.clone(),
+                _ => String::new(),
+            };
+            option(ui, ToolChoice::Custom(line), None);
+        });
+    ui.ctx()
+        .accesskit_node_builder(combo.response.id, |n| n.set_label(what));
+    if let Some(p) = picked {
+        *tools::choice_mut(settings, role) = p;
+    }
+    match tools::choice_mut(settings, role) {
+        ToolChoice::Custom(line) => {
+            let example = match role {
+                Role::Merge => "mytool \"$BASE\" \"$LOCAL\" \"$REMOTE\" -o \"$MERGED\"",
+                Role::Diff => "mytool \"$LOCAL\" \"$REMOTE\"",
+                Role::Editor => "myeditor \"$FILE\" --line $LINE",
+            };
+            let field = ui.add(
+                egui::TextEdit::singleline(line)
+                    .hint_text(example)
+                    .desired_width(420.0)
+                    .font(egui::TextStyle::Monospace),
+            );
+            let label = format!("{what} command");
+            ui.ctx()
+                .accesskit_node_builder(field.id, |n| n.set_label(label));
+            let missing = git_raccoon_core::tools::missing_placeholders(line, role);
+            if !line.trim().is_empty() && !missing.is_empty() {
+                ui.label(
+                    RichText::new(format!(
+                        "It needs {}.",
+                        and_list(&missing.iter().map(|m| m.to_string()).collect::<Vec<_>>())
+                    ))
+                    .size(12.0)
+                    .color(theme::modified()),
+                );
+            }
+            hint(
+                ui,
+                match role {
+                    Role::Merge => {
+                        "The program, then its arguments: $BASE, $LOCAL (ours) and $REMOTE (theirs) are the three versions, $MERGED the file to save the result in."
+                    }
+                    Role::Diff => {
+                        "The program, then its arguments: $LOCAL and $REMOTE are the two versions."
+                    }
+                    Role::Editor => {
+                        "The program, then its arguments: $FILE is the file, $LINE the line."
+                    }
+                },
+            );
+        }
+        ToolChoice::Default => hint(
+            ui,
+            match role {
+                Role::Merge => {
+                    "From your Git config's merge.tool. Or pick one found on this computer, or a command of your own."
+                }
+                Role::Diff => {
+                    "The merge tool, for diffs too (Git's diff.tool, when the merge tool is Git's)."
+                }
+                Role::Editor => "Pick an editor to open files in, at the line you're looking at.",
+            },
+        ),
+        ToolChoice::BuiltIn => hint(ui, "Only Git Raccoon's own views."),
+        ToolChoice::Preset(id) => {
+            if let Some(f) = tools::found().get(id.as_str()) {
+                let mut text = f.program.display().to_string();
+                if let Some(v) = &f.version {
+                    text = format!("From Unity {v}: {text}");
+                }
+                hint(ui, text);
+            } else {
+                hint(ui, "Not found on this computer: is it installed?");
+            }
+        }
+    }
+}
+
 fn hint(ui: &mut egui::Ui, text: impl Into<String>) {
     ui.add(egui::Label::new(RichText::new(text.into()).size(12.0).color(theme::muted())).wrap());
 }
@@ -1705,6 +1876,9 @@ fn control(
                 *action = Some(Action::AddAccount);
             }
         }
+        "Merge tool" => tool_picker(ui, settings, Role::Merge),
+        "Diff tool" => tool_picker(ui, settings, Role::Diff),
+        "Editor" => tool_picker(ui, settings, Role::Editor),
         "Terminal" => {
             let field = ui.add(
                 egui::TextEdit::singleline(&mut settings.terminal)
@@ -1921,6 +2095,16 @@ mod tests {
         assert_eq!(find("terminal command"), ["Terminal"]);
         assert!(find("no such thing").is_empty());
         // Searching a section's name finds its settings.
-        assert_eq!(find("tools"), ["Terminal", "Clone into"]);
+        assert_eq!(
+            find("tools"),
+            [
+                "Merge tool",
+                "Diff tool",
+                "Editor",
+                "Terminal",
+                "Clone into"
+            ]
+        );
+        assert_eq!(find("beyond compare"), ["Merge tool", "Diff tool"]);
     }
 }

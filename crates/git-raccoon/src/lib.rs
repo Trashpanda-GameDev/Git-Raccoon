@@ -22,6 +22,7 @@ pub mod terminal;
 mod theme;
 pub mod themes;
 mod title_bar;
+pub mod tools;
 mod ui;
 pub mod updates;
 

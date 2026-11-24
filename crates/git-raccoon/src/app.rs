@@ -3136,6 +3136,13 @@ impl App {
                 self.updater.ready_version().map(str::to_string),
             );
             ctx.data_mut(|d| d.insert_temp(crate::ui::settings::updates_id(), updates));
+            let repo_path = self.repo.as_ref().map(|r| r.path().to_string());
+            ctx.data_mut(|d| match repo_path {
+                Some(p) => {
+                    d.insert_temp(crate::ui::settings::repo_id(), p);
+                }
+                None => d.remove::<String>(crate::ui::settings::repo_id()),
+            });
             match crate::ui::settings::show(&ctx, &mut self.settings) {
                 Some(crate::ui::settings::Action::CheckForUpdates) => {
                     self.updater.check_now(&ctx);

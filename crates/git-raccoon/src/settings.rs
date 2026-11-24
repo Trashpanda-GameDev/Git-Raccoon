@@ -132,6 +132,21 @@ impl Column {
     }
 }
 
+/// Which program to use for merging, diffing or editing.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ToolChoice {
+    /// The merge tool: Git's own (`merge.tool`). A diff tool: the merge
+    /// tool. An editor: none.
+    #[default]
+    Default,
+    /// Only Git Raccoon's own views.
+    BuiltIn,
+    /// A tool Git Raccoon knows, by its id.
+    Preset(String),
+    /// A command line of one's own, with placeholders.
+    Custom(String),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -203,6 +218,10 @@ pub struct Settings {
     /// The command last used to test each commit when finding the commit
     /// that broke something, by repository path.
     pub bisect_commands: std::collections::BTreeMap<String, String>,
+    /// The programs to open conflicts, diffs and files in.
+    pub merge_tool: ToolChoice,
+    pub diff_tool: ToolChoice,
+    pub editor: ToolChoice,
     /// Who you commit as, and with which accounts (see `profiles`); made
     /// on first run.
     pub profiles: Vec<crate::profiles::Profile>,
@@ -397,6 +416,9 @@ impl Default for Settings {
             profiles: Vec::new(),
             active_profile: 0,
             bisect_commands: std::collections::BTreeMap::new(),
+            merge_tool: ToolChoice::default(),
+            diff_tool: ToolChoice::default(),
+            editor: ToolChoice::default(),
             agents: false,
             columns: Column::ALL.to_vec(),
             themes: Vec::new(),

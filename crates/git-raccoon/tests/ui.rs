@@ -6956,6 +6956,83 @@ fn offers_crash_reports_without_sending_them() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Tools "installed" in a folder of their own, for the lists in Settings.
+fn fake_tools(names: &[&str]) -> std::path::PathBuf {
+    use git_raccoon_core::tools::{Places, System};
+    let bin = std::env::temp_dir().join(format!("git-raccoon-ui-tools-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&bin);
+    std::fs::create_dir_all(&bin).unwrap();
+    for n in names {
+        std::fs::write(bin.join(n), "").unwrap();
+    }
+    git_raccoon::tools::look_in(Places {
+        system: Some(System::Linux),
+        path: vec![bin.clone()],
+        ..Default::default()
+    });
+    bin
+}
+
+#[test]
+fn picks_a_merge_tool_diff_tool_and_editor() {
+    use egui::accesskit::Role;
+    use git_raccoon::settings::ToolChoice;
+    use git_raccoon_core::tools::{Role as Tool, Vars};
+    let bin = fake_tools(&["meld", "code"]);
+    let mut h = harness(Settings::default());
+    h.run_ok();
+    press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    h.get_by_role_and_label(Role::Button, "Tools").click();
+    h.run_ok();
+    // The merge tool: Git's, until one is picked from those found here.
+    h.get_by_role_and_label(Role::ComboBox, "Merge tool")
+        .click();
+    h.run_ok();
+    h.get_by_label("Built in only");
+    h.get_by_label("Found on this computer");
+    screenshot(&mut h, "100-settings-merge-tools");
+    h.get_by_label("Meld").click();
+    h.run_ok();
+    assert_eq!(
+        h.state().settings().merge_tool,
+        ToolChoice::Preset("meld".into())
+    );
+    h.get_by_label_contains(&bin.join("meld").display().to_string());
+    // The diff tool follows it, unless another is picked.
+    assert_eq!(h.state().settings().diff_tool, ToolChoice::Default);
+    let s = h.state().settings().clone();
+    let (name, run) = git_raccoon::tools::resolve(&s, Tool::Diff, None, &Vars::default())
+        .unwrap()
+        .unwrap();
+    assert_eq!(name, "Meld");
+    assert_eq!(run.program, bin.join("meld"));
+
+    // An editor of one's own: what it still needs is said.
+    h.get_by_role_and_label(Role::ComboBox, "Editor").click();
+    h.run_ok();
+    h.get_by_label("Visual Studio Code");
+    h.get_by_label("Custom command…").click();
+    h.run_ok();
+    type_into(&mut h, "Editor command", "myed --line $LINE");
+    h.get_by_label_contains("It needs $FILE");
+    // Still focused: carries on at the end.
+    h.get_by_label("Editor command").type_text(" \"$FILE\"");
+    h.run_ok();
+    assert!(h.query_by_label_contains("It needs").is_none());
+    screenshot(&mut h, "101-settings-tools");
+    let s = h.state().settings().clone();
+    let vars = Vars {
+        file: "/r/a b.txt".into(),
+        line: 7,
+        ..Default::default()
+    };
+    let (_, run) = git_raccoon::tools::resolve(&s, Tool::Editor, None, &vars)
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.args, ["--line", "7", "/r/a b.txt"]);
+    let _ = std::fs::remove_dir_all(&bin);
+}
+
 #[test]
 fn settings_are_in_sections_and_can_be_searched() {
     use egui::accesskit::Role;
