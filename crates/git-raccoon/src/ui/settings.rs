@@ -312,6 +312,12 @@ const ROWS: &[Row] = &[
     },
     Row {
         section: Section::Tools,
+        name: "For some files",
+        hint: "A tool of their own, by file name.",
+        words: "rules file types patterns gitattributes merge driver unity yaml unityyamlmerge prefab scene smartmerge",
+    },
+    Row {
+        section: Section::Tools,
         name: "Diff tool",
         hint: "\"Open in…\" on any diff.",
         words: "diff tool difftool compare beyond compare kdiff3 meld external",
@@ -406,7 +412,37 @@ struct View {
     profile: crate::ui::profiles::Editing,
     /// The account whose sign-out is waiting to be confirmed.
     signing_out: Option<usize>,
+    /// A rule for some files being written (or changed), and what came of
+    /// the last thing done with rules.
+    rule: Option<RuleForm>,
+    rules_said: Option<Result<String, String>>,
 }
+
+/// The form for a rule: its fields as typed, and the rule it replaces.
+#[derive(Clone, Default)]
+struct RuleForm {
+    patterns: String,
+    tool: String,
+    automatic: bool,
+    everyone: bool,
+    replaces: Option<git_raccoon_core::rules::Rule>,
+    tested: Option<Result<String, String>>,
+}
+
+impl RuleForm {
+    fn rule(&self) -> git_raccoon_core::rules::Rule {
+        let can = git_raccoon_core::tools::preset_by_id(&self.tool).is_some_and(|p| p.can_drive());
+        git_raccoon_core::rules::Rule {
+            patterns: git_raccoon_core::rules::split_patterns(&self.patterns),
+            tool: self.tool.clone(),
+            automatic: self.automatic && can,
+            everyone: self.everyone,
+        }
+    }
+}
+
+/// Unity's text assets: merged by UnityYAMLMerge.
+const UNITY_FILES: &str = "*.unity *.prefab *.asset *.meta *.controller *.anim *.mat *.overrideController *.physicMaterial";
 
 const LABEL: f32 = 190.0;
 
@@ -1512,6 +1548,329 @@ fn tool_picker(ui: &mut egui::Ui, settings: &mut Settings, role: Role) {
     }
 }
 
+/// The open repository's rules for some files, and the form for one.
+fn file_rules(ui: &mut egui::Ui, view: &mut View) {
+    use git_raccoon_core::rules;
+    let Some(repo) = ui.ctx().data(|d| d.get_temp::<String>(repo_id())) else {
+        hint(
+            ui,
+            "Open a repository to give some of its files a tool of their own.",
+        );
+        return;
+    };
+    let list = rules::rules(&repo);
+    match &list {
+        Err(e) => {
+            ui.label(RichText::new(e.to_string()).color(theme::danger()));
+        }
+        Ok(list) => {
+            for rule in list {
+                egui::Frame::new()
+                    .inner_margin(egui::Margin::symmetric(10, 6))
+                    .corner_radius(6)
+                    .stroke(egui::Stroke::new(1.0, theme::border()))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width().min(560.0));
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(RichText::new(rule.patterns.join(" ")).monospace());
+                            ui.label(RichText::new(icon::ARROW_RIGHT).color(theme::muted()));
+                            ui.label(rule.tool_name());
+                            let (text, colour) = if rule.automatic {
+                                ("Automatically while merging", theme::add())
+                            } else {
+                                ("When I open the file", theme::muted())
+                            };
+                            ui.label(RichText::new(text).size(11.0).color(colour));
+                            ui.label(
+                                RichText::new(if rule.everyone {
+                                    "· Everyone"
+                                } else {
+                                    "· Just me"
+                                })
+                                .size(11.0)
+                                .color(theme::muted()),
+                            );
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    let remove =
+                                        widgets::icon_button(ui, icon::TRASH, "Remove this rule");
+                                    let label =
+                                        format!("Remove the rule for {}", rule.patterns.join(" "));
+                                    ui.ctx()
+                                        .accesskit_node_builder(remove.id, |n| n.set_label(label));
+                                    if remove.clicked() {
+                                        view.rules_said = Some(
+                                            rules::remove(&repo, rule)
+                                                .map(|()| {
+                                                    format!(
+                                                        "Removed the rule for {}.",
+                                                        rule.patterns.join(" ")
+                                                    )
+                                                })
+                                                .map_err(|e| e.to_string()),
+                                        );
+                                    }
+                                    let edit = widgets::icon_button(
+                                        ui,
+                                        icon::PENCIL_SIMPLE,
+                                        "Change this rule",
+                                    );
+                                    let label =
+                                        format!("Change the rule for {}", rule.patterns.join(" "));
+                                    ui.ctx()
+                                        .accesskit_node_builder(edit.id, |n| n.set_label(label));
+                                    if edit.clicked() {
+                                        view.rule = Some(RuleForm {
+                                            patterns: rule.patterns.join(" "),
+                                            tool: rule.tool.clone(),
+                                            automatic: rule.automatic,
+                                            everyone: rule.everyone,
+                                            replaces: Some(rule.clone()),
+                                            tested: None,
+                                        });
+                                    }
+                                },
+                            );
+                        });
+                    });
+                ui.add_space(4.0);
+            }
+        }
+    }
+    if let Some(said) = &view.rules_said {
+        let (text, colour) = match said {
+            Ok(t) => (t.as_str(), theme::muted()),
+            Err(e) => (e.as_str(), theme::danger()),
+        };
+        ui.label(RichText::new(text).size(12.0).color(colour));
+    }
+    let Some(mut form) = view.rule.take() else {
+        ui.horizontal(|ui| {
+            if ui.button(format!("{}  Add a rule…", icon::PLUS)).clicked() {
+                view.rules_said = None;
+                view.rule = Some(RuleForm {
+                    tool: tools::found_for(Role::Merge)
+                        .first()
+                        .map(|f| f.preset.id.to_string())
+                        .unwrap_or_default(),
+                    ..Default::default()
+                });
+            }
+            let unity = ui
+                .button("Unity's files…")
+                .on_hover_text("Scenes, prefabs and other assets, merged by UnityYAMLMerge from the project's own Unity");
+            if unity.clicked() {
+                view.rules_said = None;
+                view.rule = Some(RuleForm {
+                    patterns: UNITY_FILES.into(),
+                    tool: git_raccoon_core::tools::UNITY.into(),
+                    automatic: true,
+                    ..Default::default()
+                });
+            }
+        });
+        if list.as_ref().is_ok_and(Vec::is_empty) {
+            hint(
+                ui,
+                "Say which program merges some files: Unity's scenes and prefabs with UnityYAMLMerge, say.",
+            );
+        }
+        return;
+    };
+    let mut keep = true;
+    egui::Frame::new()
+        .inner_margin(egui::Margin::same(12))
+        .corner_radius(6)
+        .fill(theme::bg_raised())
+        .stroke(egui::Stroke::new(1.0, theme::border()))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width().min(560.0));
+            ui.label(RichText::new("A tool for some files").strong());
+            hint(ui, "Files whose names match use this tool instead of the usual one.");
+            ui.add_space(6.0);
+            egui::Grid::new("rule-form").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+                ui.label("Files");
+                let field = ui.add(
+                    egui::TextEdit::singleline(&mut form.patterns)
+                        .hint_text("*.unity *.prefab")
+                        .font(egui::TextStyle::Monospace)
+                        .desired_width(440.0),
+                );
+                ui.ctx().accesskit_node_builder(field.id, |n| n.set_label("Files the rule is for"));
+                ui.end_row();
+
+                ui.label("Tool");
+                let mut choices: Vec<(&'static str, String)> = tools::found_for(Role::Merge)
+                    .iter()
+                    .filter(|f| f.preset.id != git_raccoon_core::tools::UNITY)
+                    .map(|f| (f.preset.id, f.preset.name.to_string()))
+                    .collect();
+                // Found each time it runs, from the project's Unity.
+                choices.insert(
+                    0,
+                    (git_raccoon_core::tools::UNITY, "UnityYAMLMerge (from the project's Unity)".into()),
+                );
+                let current = choices
+                    .iter()
+                    .find(|(id, _)| *id == form.tool)
+                    .map_or_else(|| "Pick a tool".to_string(), |(_, n)| n.clone());
+                let combo = egui::ComboBox::from_id_salt("rule-tool")
+                    .selected_text(current)
+                    .width(320.0)
+                    .show_ui(ui, |ui| {
+                        for (id, name) in &choices {
+                            if ui.selectable_label(form.tool == *id, name).clicked() {
+                                form.tool = (*id).to_string();
+                            }
+                        }
+                    });
+                ui.ctx().accesskit_node_builder(combo.response.id, |n| n.set_label("The rule's tool"));
+                ui.end_row();
+
+                let can = git_raccoon_core::tools::preset_by_id(&form.tool).is_some_and(|p| p.can_drive());
+                ui.label("When");
+                ui.vertical(|ui| {
+                    ui.add_enabled_ui(can, |ui| {
+                        ui.radio_value(&mut form.automatic, true, "Automatically while merging")
+                            .on_hover_text("It resolves what it can; only what it can't becomes a conflict")
+                            .on_disabled_hover_text("Only tools that can merge on their own, like UnityYAMLMerge");
+                    });
+                    ui.radio_value(&mut form.automatic, false, "When I open the file")
+                        .on_hover_text("\"Open in…\" in the conflict editor uses it for these files");
+                    hint(
+                        ui,
+                        if form.automatic {
+                            "It resolves what it can while merging; only what it can't becomes a conflict."
+                        } else {
+                            "\"Open in…\" in the conflict editor uses it for these files."
+                        },
+                    );
+                });
+                if !can {
+                    form.automatic = false;
+                }
+                ui.end_row();
+
+                ui.label("For");
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.radio_value(&mut form.everyone, false, "Just me");
+                        ui.radio_value(&mut form.everyone, true, "Everyone on this repository");
+                    });
+                    hint(
+                        ui,
+                        if form.everyone {
+                            "Adds the file names to .gitattributes, to commit; each person's own tool stays on their computer."
+                        } else {
+                            "Kept on this computer (.git/info/attributes)."
+                        },
+                    );
+                });
+                ui.end_row();
+            });
+            let rule = form.rule();
+            ui.add_space(8.0);
+            egui::Frame::new()
+                .inner_margin(egui::Margin::same(8))
+                .corner_radius(4)
+                .fill(theme::bg())
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(
+                        RichText::new("What this writes (nothing is changed until you save)")
+                            .size(12.0)
+                            .color(theme::muted()),
+                    );
+                    if rule.patterns.is_empty() {
+                        hint(ui, "Name some files first.");
+                    }
+                    for change in rules::preview(&rule, &tools::this_program()) {
+                        if rule.patterns.is_empty() && change.file != ".git/config" {
+                            continue;
+                        }
+                        ui.label(RichText::new(&change.file).monospace().size(12.0));
+                        // Attributes: the first line and how many more; the
+                        // config's driver in full.
+                        let shown = if change.file == ".git/config" { change.lines.len() } else { 1 };
+                        for line in change.lines.iter().take(shown) {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(format!("+ {line}"))
+                                        .monospace()
+                                        .size(12.0)
+                                        .color(theme::add()),
+                                )
+                                .wrap(),
+                            );
+                        }
+                        let more = change.lines.len().saturating_sub(shown);
+                        if more > 0 {
+                            let s = if more == 1 { "" } else { "s" };
+                            ui.label(
+                                RichText::new(format!("  …and {more} more line{s} like it"))
+                                    .size(12.0)
+                                    .color(theme::muted()),
+                            );
+                        }
+                    }
+                });
+            if let Some(t) = &form.tested {
+                let (text, colour) = match t {
+                    Ok(t) => (t.as_str(), theme::add()),
+                    Err(e) => (e.as_str(), theme::danger()),
+                };
+                ui.add(egui::Label::new(RichText::new(text).size(12.0).color(colour)).wrap());
+            }
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let sample = rules::matching(&repo, &rule.patterns, 1).into_iter().next();
+                let test = ui
+                    .add_enabled(sample.is_some() && !form.tool.is_empty(), egui::Button::new("Test on a sample"))
+                    .on_disabled_hover_text("No file here has one of those names")
+                    .on_hover_text(match &sample {
+                        Some(s) => format!("Merge {s} with itself, to see the tool works here"),
+                        None => String::new(),
+                    });
+                if test.clicked()
+                    && let Some(sample) = sample
+                {
+                    form.tested = Some(rules::test_on(&repo, &rule, &sample));
+                }
+                if ui.button("Cancel").clicked() {
+                    keep = false;
+                }
+                let ok = !rule.patterns.is_empty() && !rule.tool.is_empty();
+                let save = ui.add_enabled(
+                    ok,
+                    egui::Button::new(RichText::new("Save rule").color(theme::on_accent()).strong())
+                        .fill(theme::accent_fill()),
+                );
+                if save.clicked() {
+                    let saved = form
+                        .replaces
+                        .as_ref()
+                        .map_or(Ok(()), |old| rules::remove(&repo, old))
+                        .and_then(|()| rules::add(&repo, &rule, &tools::this_program()));
+                    match saved {
+                        Ok(()) => {
+                            keep = false;
+                            let mut text = format!("Saved: {} use {}.", rule.patterns.join(" "), rule.tool_name());
+                            if rule.everyone {
+                                text.push_str(" Commit .gitattributes to share it.");
+                            }
+                            view.rules_said = Some(Ok(text));
+                        }
+                        Err(e) => form.tested = Some(Err(e.to_string())),
+                    }
+                }
+            });
+        });
+    if keep {
+        view.rule = Some(form);
+    }
+}
+
 fn hint(ui: &mut egui::Ui, text: impl Into<String>) {
     ui.add(egui::Label::new(RichText::new(text.into()).size(12.0).color(theme::muted())).wrap());
 }
@@ -1877,6 +2236,7 @@ fn control(
             }
         }
         "Merge tool" => tool_picker(ui, settings, Role::Merge),
+        "For some files" => file_rules(ui, view),
         "Diff tool" => tool_picker(ui, settings, Role::Diff),
         "Editor" => tool_picker(ui, settings, Role::Editor),
         "Terminal" => {

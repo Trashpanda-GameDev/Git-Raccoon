@@ -13,6 +13,15 @@ fn main() -> eframe::Result {
     if std::env::args_os().nth(1).is_some_and(|a| a == "mcp") {
         std::process::exit(git_raccoon::agent::run_bridge());
     }
+    // `git-raccoon merge-driver <tool> %O %A %B %P`: started by Git during a
+    // merge, for files a rule gives a tool (see Settings › Tools).
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|a| a == "merge-driver")
+    {
+        let args: Vec<String> = std::env::args().skip(2).collect();
+        std::process::exit(git_raccoon_core::rules::run_driver(&args));
+    }
     // Velopack's install, update and uninstall steps run here (and exit).
     velopack::VelopackApp::build().run();
     // Git, not libgit2, decides which folders are safe to open.

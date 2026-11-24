@@ -1626,6 +1626,8 @@ pub struct RepoView {
     /// A merge tool open on a conflicted file, and what came of the last.
     pub tool_open: Option<ToolOpen>,
     pub tool_note: Option<ToolNote>,
+    /// The tool a rule gives the conflicted file open (file, tool).
+    rule_tool: Option<(String, Option<String>)>,
     /// While something's in progress: its conflicted files (how each
     /// conflicts), the files resolved since it started, and whether the
     /// history is shown in place of the conflicts' overview.
@@ -1752,6 +1754,7 @@ impl RepoView {
             conflict: None,
             tool_open: None,
             tool_note: None,
+            rule_tool: None,
             conflict_files: Vec::new(),
             resolved_here: std::collections::BTreeSet::new(),
             history_over_conflicts: false,
@@ -2523,6 +2526,19 @@ impl RepoView {
             }
             self.refresh_status(ctx);
         }
+    }
+
+    /// The tool a rule for some files gives `file` (remembered per file,
+    /// as it reads Git's attributes).
+    pub fn file_rule_tool(&mut self, file: &str) -> Option<String> {
+        if let Some((f, tool)) = &self.rule_tool
+            && f == file
+        {
+            return tool.clone();
+        }
+        let tool = git_raccoon_core::rules::tool_for(self.path(), file);
+        self.rule_tool = Some((file.to_string(), tool.clone()));
+        tool
     }
 
     /// Opens a conflicted file for resolving.

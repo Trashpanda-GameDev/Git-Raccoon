@@ -50,6 +50,9 @@ pub struct Preset {
     pub merge: Option<&'static [&'static str]>,
     pub diff: Option<&'static [&'static str]>,
     pub edit: Option<&'static [&'static str]>,
+    /// Its arguments as Git's merge driver, merging without anyone there:
+    /// the result goes into `$LOCAL`. Only tools that can.
+    pub driver: Option<&'static [&'static str]>,
     /// Its program's names on the PATH (".exe" is added on Windows).
     commands: &'static [&'static str],
     /// Where it's usually installed: relative to Program Files (both),
@@ -75,6 +78,11 @@ impl Preset {
         }
     }
 
+    /// Whether it can merge on its own, as Git's merge driver.
+    pub fn can_drive(&self) -> bool {
+        self.driver.is_some()
+    }
+
     /// Whether this is the one Git calls `name`.
     pub fn is_called(&self, name: &str) -> bool {
         self.id == name || self.git_names.contains(&name)
@@ -88,6 +96,7 @@ const fn preset(id: &'static str, name: &'static str) -> Preset {
         merge: None,
         diff: None,
         edit: None,
+        driver: None,
         commands: &[],
         windows: &[],
         windows_local: &[],
@@ -251,6 +260,19 @@ pub static PRESETS: &[Preset] = &[
     Preset {
         // Unity's own: merges scenes, prefabs and other YAML assets.
         merge: Some(&["merge", "-p", "$BASE", "$REMOTE", "$LOCAL", "$MERGED"]),
+        // Unity's own advice for Git: no window, and no fallback tool.
+        driver: Some(&[
+            "merge",
+            "-h",
+            "-p",
+            "--force",
+            "--fallback",
+            "none",
+            "$BASE",
+            "$REMOTE",
+            "$LOCAL",
+            "$LOCAL",
+        ]),
         ..preset(UNITY, "UnityYAMLMerge")
     },
     Preset {
@@ -306,8 +328,20 @@ pub struct Places {
     pub applications: Vec<PathBuf>,
 }
 
+static LOOK_IN: std::sync::Mutex<Option<Places>> = std::sync::Mutex::new(None);
+
+/// Where to look instead of this computer's usual places (tests).
+pub fn look_in(places: Option<Places>) {
+    if let Ok(mut p) = LOOK_IN.lock() {
+        *p = places;
+    }
+}
+
 impl Places {
     pub fn here() -> Places {
+        if let Some(p) = LOOK_IN.lock().ok().and_then(|p| p.clone()) {
+            return p;
+        }
         let var = |k: &str| std::env::var_os(k).map(PathBuf::from);
         let system = System::this();
         let home = var("HOME").or_else(|| var("USERPROFILE"));
@@ -523,6 +557,65 @@ pub fn unity_editors(places: &Places) -> Vec<UnityEditor> {
     out
 }
 
+/// The Unity version a project uses, from its
+/// `ProjectSettings/ProjectVersion.txt` ("m_EditorVersion: 2022.3.10f1").
+pub fn unity_version(project: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(project.join("ProjectSettings/ProjectVersion.txt")).ok()?;
+    text.lines().find_map(|l| {
+        l.strip_prefix("m_EditorVersion:")
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    })
+}
+
+/// The Unity project `file` (relative to `root`) is in: the nearest folder
+/// above it with `ProjectSettings/ProjectVersion.txt`, up to `root`.
+pub fn unity_project(root: &Path, file: &str) -> Option<PathBuf> {
+    let mut at = root.join(file);
+    while at.pop() {
+        if at.join("ProjectSettings/ProjectVersion.txt").is_file() {
+            return Some(at);
+        }
+        if at == root || !at.starts_with(root) {
+            break;
+        }
+    }
+    root.join("ProjectSettings/ProjectVersion.txt")
+        .is_file()
+        .then(|| root.to_path_buf())
+}
+
+/// UnityYAMLMerge from the Unity a project uses. `Err` says which version
+/// it needs and which are installed.
+pub fn unity_for(project: &Path, places: &Places) -> std::result::Result<UnityEditor, String> {
+    let editors = unity_editors(places);
+    let installed = || {
+        if editors.is_empty() {
+            "no Unity editors were found".to_string()
+        } else {
+            let v: Vec<&str> = editors.iter().map(|e| e.version.as_str()).collect();
+            format!("installed: {}", v.join(", "))
+        }
+    };
+    let Some(version) = unity_version(project) else {
+        // Not a Unity project: the newest there is.
+        return editors
+            .first()
+            .cloned()
+            .ok_or_else(|| format!("UnityYAMLMerge wasn't found ({})", installed()));
+    };
+    editors
+        .iter()
+        .find(|e| e.version == version)
+        .cloned()
+        .ok_or_else(|| {
+            format!(
+                "the project's Unity, {version}, isn't installed ({})",
+                installed()
+            )
+        })
+}
+
 /// Orders Unity versions ("2022.3.10f1", "6000.0.23f1") by their numbers.
 pub fn unity_order(a: &str, b: &str) -> std::cmp::Ordering {
     let parts = |v: &str| -> Vec<u64> {
@@ -558,7 +651,7 @@ impl Vars {
     }
 
     /// `word` with its placeholders filled in.
-    fn fill(&self, word: &str) -> String {
+    pub(crate) fn fill(&self, word: &str) -> String {
         let mut out = word.to_string();
         for (name, value) in self.pairs() {
             out = out.replace(&format!("${{{name}}}"), &value);

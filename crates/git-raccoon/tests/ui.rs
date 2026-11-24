@@ -7930,6 +7930,135 @@ fn opens_a_conflict_in_the_merge_tool() {
     h.get_by_role_and_label(Role::ComboBox, "Merge tool");
 }
 
+/// A Unity project whose scene both sides changed, a pretend Unity 2022.3
+/// install whose UnityYAMLMerge takes theirs, and the folder it's in.
+#[cfg(unix)]
+fn unity_clash() -> (Sample, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let sample = Sample::build();
+    sample.write(
+        "ProjectSettings/ProjectVersion.txt",
+        "m_EditorVersion: 2022.3.1f1\n",
+    );
+    sample.write("Assets/Main.unity", "%YAML 1.1\nname: Main\nscale: 1\n");
+    git(&sample, &["add", "."]);
+    git(&sample, &["commit", "-q", "-m", "A scene"]);
+    git(&sample, &["switch", "-q", "-c", "clash"]);
+    sample.write("Assets/Main.unity", "%YAML 1.1\nname: Main\nscale: 2\n");
+    git(&sample, &["commit", "-q", "-am", "Bigger"]);
+    git(&sample, &["switch", "-q", "main"]);
+    sample.write("Assets/Main.unity", "%YAML 1.1\nname: Main\nscale: 3\n");
+    git(&sample, &["commit", "-q", "-am", "Biggest"]);
+    let home = std::env::temp_dir().join(format!("git-raccoon-ui-unity-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    let tool = home.join("Unity/Hub/Editor/2022.3.1f1/Editor/Data/Tools/UnityYAMLMerge");
+    std::fs::create_dir_all(tool.parent().unwrap()).unwrap();
+    // merge -h -p --force --fallback none BASE THEIRS OURS OUT: takes theirs.
+    std::fs::write(&tool, "#!/bin/sh\ncp \"$8\" \"${10}\"\n").unwrap();
+    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+    (sample, home)
+}
+
+#[cfg(unix)]
+#[test]
+fn a_rule_merges_unitys_files_with_the_projects_unityyamlmerge() {
+    use egui::accesskit::Role;
+    use git_raccoon_core::tools::{Places, System};
+    let (sample, home) = unity_clash();
+    // The driver Git starts is this build of the app, told to look in the
+    // pretend home for Unity.
+    let places = Places {
+        system: Some(System::Linux),
+        home: Some(home.clone()),
+        ..Default::default()
+    };
+    git_raccoon::tools::look_in(places);
+    let driver = home.join("driver.sh");
+    std::fs::write(
+        &driver,
+        format!(
+            "#!/bin/sh\nHOME='{}' exec '{}' \"$@\"\n",
+            home.display(),
+            env!("CARGO_BIN_EXE_git-raccoon")
+        ),
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&driver, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    git_raccoon::tools::run_as_driver(driver);
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    press(&mut h, egui::Modifiers::COMMAND, Key::Comma);
+    h.get_by_role_and_label(Role::Button, "Tools").click();
+    h.run_ok();
+    h.get_by_label("Unity's files…").click();
+    h.run_ok();
+    h.get_by_label("Test on a sample").scroll_to_me();
+    h.run_ok();
+    h.get_by_label("Test on a sample").click();
+    h.run_ok();
+    h.get_by_label_contains("merged Assets/Main.unity with itself");
+    h.get_by_label_contains("merge-driver unityyamlmerge %O %A %B %P");
+    screenshot(&mut h, "103-a-rule-for-unity");
+    h.get_by_label("Save rule").scroll_to_me();
+    h.run_ok();
+    h.get_by_label("Save rule").click();
+    h.run_ok();
+    let rules = git_raccoon_core::rules::rules(sample.path()).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert!(rules[0].automatic && !rules[0].everyone);
+    h.get_by_label_contains("Saved: *.unity");
+    h.get_by_label("Remove the rule for *.unity *.prefab *.asset *.meta *.controller *.anim *.mat *.overrideController *.physicMaterial");
+    screenshot(&mut h, "103b-rules");
+    h.get_by_label("Close settings").click();
+    h.run_ok();
+
+    // Merging: UnityYAMLMerge merges the scene itself, so there's no
+    // conflict to resolve.
+    menu_item(&mut h, "clash", "Merge into main");
+    h.get_by_role_and_label(Role::Button, "Merge").click();
+    wait_for(&mut h, "the merge", |app| {
+        head_summary(app).starts_with("Merge")
+    });
+    assert_eq!(
+        read(&sample, "Assets/Main.unity").unwrap(),
+        "%YAML 1.1\nname: Main\nscale: 2\n"
+    );
+    let done = git_raccoon_core::rules::driver_results(sample.path(), 0);
+    assert_eq!(done.len(), 1, "{done:?}");
+    assert!(done[0].merged && done[0].file == "Assets/Main.unity");
+
+    // Another Unity than the project's: left as Git's usual conflict.
+    h.get_by_label("Undo").click();
+    wait_for(&mut h, "undone", |app| head_summary(app) == "Biggest");
+    sample.write(
+        "ProjectSettings/ProjectVersion.txt",
+        "m_EditorVersion: 6000.0.1f1\n",
+    );
+    git(&sample, &["commit", "-q", "-am", "Upgrade Unity"]);
+    menu_item(&mut h, "clash", "Merge into main");
+    h.get_by_role_and_label(Role::Button, "Merge").click();
+    wait_for(&mut h, "the conflict", |app| conflicted(app) == 1);
+    assert!(
+        read(&sample, "Assets/Main.unity")
+            .unwrap()
+            .contains("<<<<<<<")
+    );
+    let last = git_raccoon_core::rules::driver_results(sample.path(), 0)
+        .pop()
+        .unwrap();
+    assert!(!last.merged);
+    assert!(
+        last.why.contains("6000.0.1f1, isn't installed"),
+        "{}",
+        last.why
+    );
+    git_raccoon_core::tools::look_in(None);
+    let _ = std::fs::remove_dir_all(&home);
+}
+
 #[test]
 fn resolves_conflicts_in_panes() {
     use egui::accesskit::Role;

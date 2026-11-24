@@ -2593,6 +2593,12 @@ impl App {
                     return;
                 }
                 let path = repo.path().to_string();
+                // The tool a rule for some files gives the open file.
+                let rule_tool = repo
+                    .conflict
+                    .as_ref()
+                    .map(|c| c.file.clone())
+                    .and_then(|f| repo.file_rule_tool(&f));
                 if let Some(open) = &mut repo.conflict {
                     // The sides by name (from what's in progress).
                     let state = repo.status.as_ref().and_then(|s| s.in_progress.clone());
@@ -2638,11 +2644,18 @@ impl App {
                     };
                     open.panes = self.settings.conflict_panes;
                     let tools = conflict::Tools {
-                        chosen: crate::tools::name_for(
-                            &self.settings,
-                            git_raccoon_core::tools::Role::Merge,
-                            Some(&path),
-                        ),
+                        // A rule for the file names its own tool.
+                        chosen: rule_tool
+                            .as_deref()
+                            .and_then(git_raccoon_core::tools::preset_by_id)
+                            .map(|p| p.name.to_string())
+                            .or_else(|| {
+                                crate::tools::name_for(
+                                    &self.settings,
+                                    git_raccoon_core::tools::Role::Merge,
+                                    Some(&path),
+                                )
+                            }),
                         found: crate::tools::found_for(git_raccoon_core::tools::Role::Merge)
                             .iter()
                             .map(|f| (f.preset.id, f.preset.name))

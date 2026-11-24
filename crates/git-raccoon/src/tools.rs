@@ -9,22 +9,23 @@ use git_raccoon_core::tools::{self, Found, Places, Role, Run, Vars};
 use crate::settings::{Settings, ToolChoice};
 
 static FOUND: Mutex<Option<Arc<BTreeMap<&'static str, Found>>>> = Mutex::new(None);
-static PLACES: Mutex<Option<Places>> = Mutex::new(None);
+static THIS_PROGRAM: Mutex<Option<std::path::PathBuf>> = Mutex::new(None);
 
-/// Where to look for tools instead of this computer's usual places (tests).
+/// Where to look for tools instead of this computer's usual places, and
+/// the program Git is to run as a merge driver (tests).
 pub fn look_in(places: Places) {
-    if let Ok(mut p) = PLACES.lock() {
-        *p = Some(places);
-    }
+    tools::look_in(Some(places));
     forget();
 }
 
+pub fn run_as_driver(program: std::path::PathBuf) {
+    if let Ok(mut p) = THIS_PROGRAM.lock() {
+        *p = Some(program);
+    }
+}
+
 fn places() -> Places {
-    PLACES
-        .lock()
-        .ok()
-        .and_then(|p| p.clone())
-        .unwrap_or_else(Places::here)
+    Places::here()
 }
 
 /// The tools found here, by id (looked for the first time it's asked).
@@ -192,12 +193,34 @@ pub fn merge_run(
         file: v.merged.display().to_string(),
         line: 1,
     };
-    match pick {
+    // A rule for this file names its tool, unless another was picked.
+    let file = v
+        .merged
+        .strip_prefix(repo)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_default();
+    let ruled = git_raccoon_core::rules::tool_for(repo, &file);
+    let pick = pick.map(str::to_string).or(ruled);
+    match pick.as_deref() {
         Some(id) => {
-            let found = found()
-                .get(id)
-                .cloned()
-                .ok_or_else(|| format!("{id} wasn't found on this computer"))?;
+            let found = if id == tools::UNITY {
+                // UnityYAMLMerge from the project's own Unity.
+                let root = std::path::Path::new(repo);
+                let project =
+                    tools::unity_project(root, &file).unwrap_or_else(|| root.to_path_buf());
+                let editor = tools::unity_for(&project, &places())?;
+                Found {
+                    preset: tools::preset_by_id(tools::UNITY)
+                        .ok_or("UnityYAMLMerge isn't known")?,
+                    program: editor.yaml_merge,
+                    version: Some(editor.version),
+                }
+            } else {
+                found()
+                    .get(id)
+                    .cloned()
+                    .ok_or_else(|| format!("{id} wasn't found on this computer"))?
+            };
             let run = found
                 .run(Role::Merge, &vars)
                 .ok_or_else(|| format!("{} can't merge", found.preset.name))?;
@@ -245,4 +268,16 @@ pub fn bring_forward(pid: u32) -> Result<(), String> {
         .spawn()
         .map(drop)
         .map_err(|e| format!("couldn't bring it forward ({e})"))
+}
+
+/// This program, for Git to run as a merge driver: the AppImage when run
+/// from one (its own path changes each run), or this executable.
+pub fn this_program() -> std::path::PathBuf {
+    if let Some(p) = THIS_PROGRAM.lock().ok().and_then(|p| p.clone()) {
+        return p;
+    }
+    std::env::var_os("APPIMAGE")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::current_exe().ok())
+        .unwrap_or_else(|| "git-raccoon".into())
 }
