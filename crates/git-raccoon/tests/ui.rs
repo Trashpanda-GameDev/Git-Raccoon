@@ -8427,10 +8427,23 @@ fn profiles_choose_who_commits_and_which_accounts() {
         "not written to Git's config"
     );
 
-    // The switcher at the top right.
+    // The switcher at the top right: each profile's row as tall as its
+    // text, accounts and all (nothing spilling into the next).
     h.get_by_label("Profile: Personal").click();
     h.run_ok();
     screenshot(&mut h, "91-profile-switcher");
+    let row = |h: &Harness<'_, App>, name: &str| {
+        h.get_all_by_role_and_label(Role::Button, name)
+            .last()
+            .unwrap()
+            .rect()
+    };
+    let (work_row, personal_row) = (row(&h, "Work"), row(&h, "Personal"));
+    assert!(
+        work_row.bottom() <= personal_row.top() + 0.5,
+        "{work_row:?} {personal_row:?}"
+    );
+    assert!(work_row.height() >= 3.0 * 15.0, "name, who and its account");
     h.get_by_role_and_label(Role::Button, "Work").click();
     settle(&mut h);
     assert_eq!(active(&h), 0);

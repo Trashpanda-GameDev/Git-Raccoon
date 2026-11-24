@@ -175,9 +175,26 @@ fn profile_row(
         .filter(|a| p.uses(a))
         .map(account_name)
         .collect();
-    let lines = if accounts.is_empty() { 2.0 } else { 3.0 };
+    // Laid out first, so the row is as tall as its text (an account per
+    // line, a long one wrapped).
+    let width = (ui.available_width() - 38.0 - 26.0).max(80.0);
+    let layout = |text: String, size: f32, colour: Color32| {
+        ui.painter()
+            .layout(text, egui::FontId::proportional(size), colour, width)
+    };
+    let mut galleys = vec![
+        layout(p.name.clone(), 13.5, theme::text()),
+        layout(p.who(), 11.5, theme::muted()),
+    ];
+    galleys.extend(
+        accounts
+            .into_iter()
+            .map(|a| layout(a, 11.5, theme::muted())),
+    );
+    const GAP: f32 = 2.0;
+    let text_height: f32 = galleys.iter().map(|g| g.size().y + GAP).sum();
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), 10.0 + lines * 17.0),
+        egui::vec2(ui.available_width(), (text_height + 12.0).max(36.0)),
         Sense::click(),
     );
     response.widget_info(|| {
@@ -197,17 +214,10 @@ fn profile_row(
     );
     let x = rect.left() + 38.0;
     let mut y = rect.top() + 6.0;
-    let mut line = |text: String, size: f32, colour: Color32| {
-        let font = egui::FontId::proportional(size);
-        let width = rect.right() - x - 26.0;
-        let galley = painter.layout(text, font, colour, width);
-        painter.galley(egui::pos2(x, y), galley, colour);
-        y += 17.0;
-    };
-    line(p.name.clone(), 13.5, theme::text());
-    line(p.who(), 11.5, theme::muted());
-    if !accounts.is_empty() {
-        line(accounts.join(", "), 11.5, theme::muted());
+    for g in galleys {
+        let h = g.size().y;
+        painter.galley(egui::pos2(x, y), g, theme::text());
+        y += h + GAP;
     }
     if active {
         painter.text(
