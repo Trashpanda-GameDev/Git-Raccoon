@@ -8549,7 +8549,39 @@ fn breaking_sample() -> Sample {
 }
 
 fn is_broken_now(sample: &Sample) -> bool {
-    std::fs::read_to_string(sample.dir.join("state")).unwrap_or_default() == "broken\n"
+    let on_disk = std::fs::read_to_string(sample.dir.join("state")).unwrap_or_default();
+    // What the checked-out commit has: the disk should agree.
+    let head = sample.repo.head().unwrap().peel_to_commit().unwrap();
+    let in_commit = head
+        .tree()
+        .unwrap()
+        .get_path(Path::new("state"))
+        .ok()
+        .and_then(|e| e.to_object(&sample.repo).ok())
+        .and_then(|o| {
+            o.as_blob()
+                .map(|b| String::from_utf8_lossy(b.content()).into_owned())
+        })
+        .unwrap_or_default();
+    assert_eq!(
+        on_disk,
+        in_commit,
+        "the files on disk aren't the checked-out commit's ({} \u{201c}{}\u{201d})",
+        head.id(),
+        head.summary().unwrap_or_default()
+    );
+    on_disk == "broken\n"
+}
+
+/// The answers given so far, for a failure's message.
+fn answers_so_far(sample: &Sample) -> String {
+    let log = std::process::Command::new("git")
+        .args(["bisect", "log"])
+        .current_dir(sample.path())
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    format!("git bisect log:\n{log}")
 }
 
 /// How many answers the search going on has.
@@ -8654,6 +8686,7 @@ fn finds_the_commit_that_broke_it_by_hand() {
     );
 
     // Testing each one by hand, until it's found.
+    let mut trail = String::new();
     for _ in 0..8 {
         if h.state().repo().unwrap().bisect.found.is_some() {
             break;
@@ -8663,6 +8696,19 @@ fn finds_the_commit_that_broke_it_by_hand() {
         } else {
             "It works"
         };
+        trail.push_str(&format!(
+            "{} at {}\n{}\n",
+            button,
+            sample
+                .repo
+                .head()
+                .unwrap()
+                .peel_to_commit()
+                .unwrap()
+                .summary()
+                .unwrap_or_default(),
+            answers_so_far(&sample)
+        ));
         let before = answered(&h);
         h.get_by_label_contains(button).click();
         // Until it's recorded (and the next commit checked out), or found.
@@ -8688,7 +8734,20 @@ fn finds_the_commit_that_broke_it_by_hand() {
         .unwrap()
         .id()
         .to_string();
-    assert_eq!(found, Some(git_raccoon_core::bisect::Outcome::Found(step5)));
+    let how = h
+        .state()
+        .repo()
+        .unwrap()
+        .bisect
+        .found
+        .as_ref()
+        .map(|f| f.summary())
+        .unwrap_or_default();
+    assert_eq!(
+        found,
+        Some(git_raccoon_core::bisect::Outcome::Found(step5)),
+        "{how}\n{trail}"
+    );
     h.get_by_label_contains("Found it in");
     h.get_by_label_contains("back on main, your changes restored");
     screenshot(&mut h, "97-bisect-answer");
