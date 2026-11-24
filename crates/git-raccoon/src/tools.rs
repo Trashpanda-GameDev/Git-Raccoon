@@ -149,3 +149,100 @@ pub fn resolve(
 pub fn has(settings: &Settings, role: Role, repo: Option<&str>) -> bool {
     matches!(resolve(settings, role, repo, &Vars::default()), Ok(Some(_)))
 }
+
+/// The name of the tool `role` would use (`None`: the built-in view, or
+/// one that can't be started). Remembered, as it reads Git's config.
+pub fn name_for(settings: &Settings, role: Role, repo: Option<&str>) -> Option<String> {
+    type Key = (Role, ToolChoice, ToolChoice, Option<String>);
+    static NAMES: Mutex<Vec<(Key, Option<String>)>> = Mutex::new(Vec::new());
+    let key: Key = (
+        role,
+        choice(settings, role).clone(),
+        settings.merge_tool.clone(),
+        repo.map(str::to_string),
+    );
+    let mut names = NAMES.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, name)) = names.iter().find(|(k, _)| *k == key) {
+        return name.clone();
+    }
+    let name = resolve(settings, role, repo, &Vars::default())
+        .ok()
+        .flatten()
+        .map(|(n, _)| n);
+    if names.len() > 32 {
+        names.clear();
+    }
+    names.push((key, name.clone()));
+    name
+}
+
+/// The merge tool's command for a conflict's versions: the one chosen in
+/// Settings, or `pick` (a tool found here, by id) instead.
+pub fn merge_run(
+    settings: &Settings,
+    repo: &str,
+    pick: Option<&str>,
+    v: &git_raccoon_core::conflict::Versions,
+) -> Result<(String, Run), String> {
+    let vars = Vars {
+        base: v.base.display().to_string(),
+        local: v.ours.display().to_string(),
+        remote: v.theirs.display().to_string(),
+        merged: v.merged.display().to_string(),
+        file: v.merged.display().to_string(),
+        line: 1,
+    };
+    match pick {
+        Some(id) => {
+            let found = found()
+                .get(id)
+                .cloned()
+                .ok_or_else(|| format!("{id} wasn't found on this computer"))?;
+            let run = found
+                .run(Role::Merge, &vars)
+                .ok_or_else(|| format!("{} can't merge", found.preset.name))?;
+            Ok((found.preset.name.to_string(), run))
+        }
+        None => resolve(settings, Role::Merge, Some(repo), &vars)?
+            .ok_or_else(|| "No merge tool is chosen: pick one in Settings › Tools".to_string()),
+    }
+}
+
+/// Brings a program's window to the front, as far as the system allows.
+pub fn bring_forward(pid: u32) -> Result<(), String> {
+    use std::process::{Command, Stdio};
+    let mut c = if cfg!(windows) {
+        let mut c = Command::new("powershell");
+        c.args([
+            "-NoProfile",
+            "-Command",
+            &format!("(New-Object -ComObject WScript.Shell).AppActivate({pid}) | Out-Null"),
+        ]);
+        c
+    } else if cfg!(target_os = "macos") {
+        let mut c = Command::new("osascript");
+        c.args([
+            "-e",
+            &format!(
+                "tell application \"System Events\" to set frontmost of (first process whose unix id is {pid}) to true"
+            ),
+        ]);
+        c
+    } else {
+        let mut c = Command::new("xdotool");
+        c.args([
+            "search",
+            "--pid",
+            &pid.to_string(),
+            "--onlyvisible",
+            "windowactivate",
+        ]);
+        c
+    };
+    c.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(drop)
+        .map_err(|e| format!("couldn't bring it forward ({e})"))
+}

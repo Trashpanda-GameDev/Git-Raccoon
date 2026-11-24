@@ -39,6 +39,27 @@ pub enum Action {
     EditProposal,
     DiscardProposal,
     UndoProposal,
+    /// Open the file in the merge tool chosen in Settings (`None`), or in
+    /// one found here (its id).
+    OpenInTool(Option<String>),
+    /// The merge tool that's open: to the front, or stop waiting for it.
+    BringToolForward,
+    StopWaitingForTool,
+    DismissToolNote,
+    ToolSettings,
+}
+
+/// The merge tools for the open file.
+#[derive(Default)]
+pub struct Tools<'a> {
+    /// The one chosen in Settings, by name (none: only the built-in view).
+    pub chosen: Option<String>,
+    /// Those found on this computer (id, name).
+    pub found: Vec<(&'static str, &'static str)>,
+    /// One open on a file now (its name and the file).
+    pub open: Option<(&'a str, &'a str)>,
+    /// What came of the last one.
+    pub note: Option<&'a crate::repo_view::ToolNote>,
 }
 
 /// What agents have to do with the open file.
@@ -68,9 +89,11 @@ pub fn show(
     open: &mut ConflictFile,
     names: &Names<'_>,
     agents: &Agents<'_>,
+    tools: &Tools<'_>,
     busy: bool,
 ) -> Option<Action> {
     let mut action = None;
+    let tool_busy = tools.open.is_some();
     let total = open
         .chunks
         .as_ref()
@@ -167,6 +190,9 @@ pub fn show(
                         if resolved.clicked() {
                             action = Some(Action::MarkResolved);
                         }
+                        if let Some(a) = open_in_tool(ui, tools, !tool_busy) {
+                            action = Some(a);
+                        }
                         if total > 0 && agents.connected && agents.proposal.is_none() {
                             let ask = ui
                                 .menu_button(icon::ROBOT, |ui| {
@@ -252,6 +278,9 @@ pub fn show(
         ui.cursor().top(),
         Stroke::new(1.0, theme::border()),
     );
+    if let Some(a) = tool_bar(ui, tools, &open.file) {
+        action = Some(a);
+    }
 
     if open.panes
         && open.edit.is_none()
@@ -603,6 +632,139 @@ pub(super) fn ticked_result(open: &mut ConflictFile, index: usize, c: &conflict:
 }
 
 /// A primary button, greyed out unless `enabled`.
+/// "Open in KDiff3 ▾": the chosen merge tool, and the others found here.
+fn open_in_tool(ui: &mut egui::Ui, tools: &Tools<'_>, enabled: bool) -> Option<Action> {
+    let mut action = None;
+    let menu = ui.add_enabled_ui(enabled, |ui| {
+        ui.menu_button(icon::CARET_DOWN, |ui| {
+            ui.label(
+                RichText::new("Open this file in")
+                    .size(12.0)
+                    .color(theme::muted()),
+            );
+            for (id, name) in &tools.found {
+                let mine = tools.chosen.as_deref() == Some(*name);
+                let b = ui.button(if mine {
+                    format!("{name}  (your merge tool)")
+                } else {
+                    (*name).to_string()
+                });
+                let label = format!("Open in {name}");
+                ui.ctx()
+                    .accesskit_node_builder(b.id, |n| n.set_label(label));
+                if b.clicked() {
+                    action = Some(Action::OpenInTool(Some((*id).to_string())));
+                    ui.close();
+                }
+            }
+            if tools.found.is_empty() {
+                ui.label(
+                    RichText::new("No merge tools were found on this computer.")
+                        .size(12.0)
+                        .color(theme::muted()),
+                );
+            }
+            ui.separator();
+            if ui.button("Choose in Settings › Tools…").clicked() {
+                action = Some(Action::ToolSettings);
+                ui.close();
+            }
+        })
+        .response
+    });
+    let menu = menu
+        .inner
+        .on_hover_text("Open this file in another program");
+    ui.ctx()
+        .accesskit_node_builder(menu.id, |n| n.set_label("Open in another tool"));
+    if let Some(name) = &tools.chosen {
+        let b = ui
+            .add_enabled(enabled, egui::Button::new(format!("{}  Open in {name}", icon::ARROW_SQUARE_OUT)))
+            .on_hover_text(format!(
+                "Merge it in {name}: save and close it there, and the result comes back here to check"
+            ));
+        let label = format!("Open in {name}");
+        ui.ctx()
+            .accesskit_node_builder(b.id, |n| n.set_label(label));
+        if b.clicked() {
+            action = Some(Action::OpenInTool(None));
+        }
+    }
+    action
+}
+
+/// "KDiff3 is open on src/store.rs" while it is, or what came of it.
+fn tool_bar(ui: &mut egui::Ui, tools: &Tools<'_>, file: &str) -> Option<Action> {
+    let mut action = None;
+    let frame = |ui: &mut egui::Ui, colour: Color32, add: &mut dyn FnMut(&mut egui::Ui)| {
+        egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(12, 8))
+            .outer_margin(egui::Margin::symmetric(12, 8))
+            .corner_radius(6)
+            .fill(colour.gamma_multiply(0.12))
+            .stroke(Stroke::new(1.0, colour.gamma_multiply(0.5)))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| add(ui));
+            });
+    };
+    if let Some((name, on)) = tools.open {
+        frame(ui, theme::modified(), &mut |ui| {
+            ui.label(
+                RichText::new(icon::CLOCK)
+                    .color(theme::modified())
+                    .size(18.0),
+            );
+            ui.vertical(|ui| {
+                let title = if on == file {
+                    format!("{name} is open on {on}")
+                } else {
+                    format!("{name} is open on another file, {on}")
+                };
+                ui.label(RichText::new(title).strong());
+                ui.label(
+                    RichText::new("Save and close it there; the result comes back here to check before it's marked resolved.")
+                        .size(12.0)
+                        .color(theme::muted()),
+                );
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .button("Stop waiting")
+                    .on_hover_text("Leave it open, and carry on here")
+                    .clicked()
+                {
+                    action = Some(Action::StopWaitingForTool);
+                }
+                if ui.button(format!("Bring {name} forward")).clicked() {
+                    action = Some(Action::BringToolForward);
+                }
+            });
+        });
+    } else if let Some(note) = tools.note.filter(|n| n.file == file) {
+        let colour = if note.changed {
+            theme::add()
+        } else {
+            theme::muted()
+        };
+        frame(ui, colour, &mut |ui| {
+            let glyph = if note.changed {
+                icon::CHECK_CIRCLE
+            } else {
+                icon::INFO
+            };
+            ui.label(RichText::new(glyph).color(colour));
+            ui.add(egui::Label::new(&note.text).wrap());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if widgets::icon_button(ui, icon::X, "Dismiss").clicked() {
+                    action = Some(Action::DismissToolNote);
+                }
+            });
+        });
+    }
+    action
+}
+
 fn primary_if(label: &str, enabled: bool) -> egui::Button<'_> {
     if enabled {
         primary(label)

@@ -326,6 +326,74 @@ fn merged_with_bases(path: &str, file: &str) -> Option<Vec<Chunk>> {
     parse(std::str::from_utf8(merged.content()).ok()?)
 }
 
+/// A conflicted file's three versions written out for a merge tool, beside
+/// the file itself (which the tool saves its result into).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Versions {
+    /// The folder they're in (removed by `clean_up`).
+    pub dir: std::path::PathBuf,
+    pub base: std::path::PathBuf,
+    pub ours: std::path::PathBuf,
+    pub theirs: std::path::PathBuf,
+    /// The file in the repository.
+    pub merged: std::path::PathBuf,
+}
+
+impl Versions {
+    pub fn clean_up(&self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// Writes `file`'s base, ours and theirs (from Git's copies of the
+/// conflict) to a folder of their own, named so a tool knows which is
+/// which ("store.BASE.rs"). A side that doesn't have the file is empty.
+pub fn write_versions(path: &str, file: &str) -> Result<Versions> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COUNT: AtomicUsize = AtomicUsize::new(0);
+    let repo = Repository::discover(path)?;
+    let index = repo.index()?;
+    let c = index
+        .conflicts()?
+        .flatten()
+        .find(|c| {
+            let e = c.our.as_ref().or(c.their.as_ref()).or(c.ancestor.as_ref());
+            e.is_some_and(|e| e.path == file.as_bytes())
+        })
+        .ok_or_else(|| Error::Stale(format!("{file} isn't conflicted")))?;
+    let dir = std::env::temp_dir().join(format!(
+        "git-raccoon-merge-{}-{}",
+        std::process::id(),
+        COUNT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| Error::Unsupported(format!("can't make a folder for the versions: {e}")))?;
+    let name = std::path::Path::new(file)
+        .file_name()
+        .map_or_else(|| "file".into(), |n| n.to_string_lossy().to_string());
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
+        _ => (name.clone(), String::new()),
+    };
+    let write = |which: &str, entry: &Option<git2::IndexEntry>| -> Result<std::path::PathBuf> {
+        let at = dir.join(format!("{stem}.{which}{ext}"));
+        let bytes = match entry {
+            Some(e) => repo.find_blob(e.id)?.content().to_vec(),
+            None => Vec::new(),
+        };
+        std::fs::write(&at, bytes)
+            .map_err(|e| Error::Unsupported(format!("can't write {}: {e}", at.display())))?;
+        Ok(at)
+    };
+    Ok(Versions {
+        base: write("BASE", &c.ancestor)?,
+        ours: write("LOCAL", &c.our)?,
+        theirs: write("REMOTE", &c.their)?,
+        merged: full_path(path, file)?,
+        dir,
+    })
+}
+
 /// Brings a resolved file's conflict back (its markers, and unresolved in
 /// the index), from what Git kept when it was resolved.
 pub fn unresolve(path: &str, file: &str) -> Result<()> {
@@ -394,6 +462,23 @@ mod tests {
     use crate::merge::{MergeMode, has_conflicts, merge};
 
     const SAMPLE: &str = "a\n<<<<<<< HEAD\nours 1\nours 2\n=======\ntheirs\n>>>>>>> feature\nb\n<<<<<<< HEAD\nx\n||||||| base\nbase\n=======\ny\n>>>>>>> feature\n";
+
+    #[test]
+    fn writes_the_three_versions_for_a_merge_tool() {
+        let (t, _) = conflicting();
+        merge(t.path(), "feature", MergeMode::Default).unwrap();
+        let v = write_versions(t.path(), "f.txt").unwrap();
+        let read = |p: &std::path::Path| std::fs::read_to_string(p).unwrap();
+        assert_eq!(read(&v.base), "one\ntwo\nthree\n");
+        assert_eq!(read(&v.ours), "one\ntwo (main)\nthree\n");
+        assert_eq!(read(&v.theirs), "one\nTWO (feature)\nthree\n");
+        assert_eq!(v.ours.file_name().unwrap(), "f.LOCAL.txt");
+        assert_eq!(v.merged, t.dir.join("f.txt"));
+        assert!(read(&v.merged).contains("<<<<<<<"));
+        v.clean_up();
+        assert!(!v.dir.exists());
+        assert!(write_versions(t.path(), "g.txt").is_err(), "not conflicted");
+    }
 
     #[test]
     fn parses_conflicts_including_diff3() {

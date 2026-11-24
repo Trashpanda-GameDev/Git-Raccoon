@@ -2637,7 +2637,23 @@ impl App {
                         }),
                     };
                     open.panes = self.settings.conflict_panes;
-                    let chosen = conflict::show(ui, open, &names, &agents, busy);
+                    let tools = conflict::Tools {
+                        chosen: crate::tools::name_for(
+                            &self.settings,
+                            git_raccoon_core::tools::Role::Merge,
+                            Some(&path),
+                        ),
+                        found: crate::tools::found_for(git_raccoon_core::tools::Role::Merge)
+                            .iter()
+                            .map(|f| (f.preset.id, f.preset.name))
+                            .collect(),
+                        open: repo
+                            .tool_open
+                            .as_ref()
+                            .map(|t| (t.name.as_str(), t.file.as_str())),
+                        note: repo.tool_note.as_ref(),
+                    };
+                    let chosen = conflict::show(ui, open, &names, &agents, &tools, busy);
                     self.settings.conflict_panes = open.panes;
                     // Writing an agent's proposal (or undoing that), once
                     // the file is let go of.
@@ -2707,6 +2723,43 @@ impl App {
                         Some(conflict::Action::SaveEdit) => repo.save_conflict_edit(&ctx),
                         Some(conflict::Action::CancelEdit) => open.edit = None,
                         Some(conflict::Action::Close) => repo.conflict = None,
+                        Some(conflict::Action::OpenInTool(pick)) => {
+                            let file = open.file.clone();
+                            let started = git_raccoon_core::conflict::write_versions(&path, &file)
+                                .map_err(|e| e.to_string())
+                                .and_then(|v| {
+                                    match crate::tools::merge_run(
+                                        &self.settings,
+                                        &path,
+                                        pick.as_deref(),
+                                        &v,
+                                    ) {
+                                        Ok((name, run)) => {
+                                            repo.open_in_tool(&ctx, file, name, run, v)
+                                        }
+                                        Err(e) => {
+                                            v.clean_up();
+                                            Err(e)
+                                        }
+                                    }
+                                });
+                            if let Err(e) = started {
+                                self.error = Some(e);
+                            }
+                        }
+                        Some(conflict::Action::BringToolForward) => {
+                            if let Some(t) = &repo.tool_open
+                                && let Err(e) = crate::tools::bring_forward(t.pid)
+                            {
+                                self.error = Some(e);
+                            }
+                        }
+                        Some(conflict::Action::StopWaitingForTool) => repo.tool_open = None,
+                        Some(conflict::Action::DismissToolNote) => repo.tool_note = None,
+                        Some(conflict::Action::ToolSettings) => {
+                            crate::ui::settings::open_on(&ctx, crate::ui::settings::Section::Tools);
+                            self.settings_open = true;
+                        }
                         Some(conflict::Action::ShowCommits { ids, side }) => {
                             let file = open.file.clone();
                             let newest = ids.first().cloned();

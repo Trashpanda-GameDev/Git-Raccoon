@@ -1369,6 +1369,26 @@ impl Ticks {
     }
 }
 
+/// A merge tool open on a conflicted file: waited for, then its result
+/// brought back to check.
+pub struct ToolOpen {
+    pub name: String,
+    pub file: String,
+    pub pid: u32,
+    /// The file as it was when the tool started.
+    before: Option<Vec<u8>>,
+    done: Task<Result<(), String>>,
+}
+
+/// What came of a merge tool, shown above the file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolNote {
+    pub file: String,
+    pub text: String,
+    /// The tool changed the file (its result is to be checked).
+    pub changed: bool,
+}
+
 impl ConflictFile {
     /// Reads `file` and finds its conflicts (with their bases).
     pub fn load(path: &str, file: String) -> Self {
@@ -1603,6 +1623,9 @@ pub struct RepoView {
     pub undo: Option<Undoable>,
     /// The conflicted file being resolved, if one is open.
     pub conflict: Option<ConflictFile>,
+    /// A merge tool open on a conflicted file, and what came of the last.
+    pub tool_open: Option<ToolOpen>,
+    pub tool_note: Option<ToolNote>,
     /// While something's in progress: its conflicted files (how each
     /// conflicts), the files resolved since it started, and whether the
     /// history is shown in place of the conflicts' overview.
@@ -1727,6 +1750,8 @@ impl RepoView {
             commit_for_agent: false,
             undo: None,
             conflict: None,
+            tool_open: None,
+            tool_note: None,
             conflict_files: Vec::new(),
             resolved_here: std::collections::BTreeSet::new(),
             history_over_conflicts: false,
@@ -2400,6 +2425,104 @@ impl RepoView {
             .take(files.len())
             .find(|f| Some(f.path.as_str()) != after)
             .map(|f| f.path.clone())
+    }
+
+    /// Starts a merge tool on `file`'s conflict (its versions written out
+    /// already), and waits for it in the background.
+    pub fn open_in_tool(
+        &mut self,
+        ctx: &egui::Context,
+        file: String,
+        name: String,
+        run: git_raccoon_core::tools::Run,
+        versions: conflict::Versions,
+    ) -> Result<(), String> {
+        let before = std::fs::read(&versions.merged).ok();
+        let mut command = run.command();
+        command
+            .current_dir(self.path())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped());
+        let child = match command.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                versions.clean_up();
+                return Err(format!(
+                    "{name} didn't start ({}: {e})",
+                    run.program.display()
+                ));
+            }
+        };
+        let pid = child.id();
+        let who = name.clone();
+        let done = Task::spawn(ctx, move || {
+            let out = child.wait_with_output();
+            // Whether or not it's still waited for here.
+            versions.clean_up();
+            match out {
+                Ok(o) if o.status.success() => Ok(()),
+                Ok(o) => {
+                    let said = String::from_utf8_lossy(&o.stderr).trim().to_string();
+                    let code = o
+                        .status
+                        .code()
+                        .map_or("stopped".into(), |c| format!("exit {c}"));
+                    Err(if said.is_empty() {
+                        format!("{who} ended with {code}")
+                    } else {
+                        format!("{who} ended with {code}: {said}")
+                    })
+                }
+                Err(e) => Err(format!("{who}: {e}")),
+            }
+        });
+        self.tool_note = None;
+        self.tool_open = Some(ToolOpen {
+            name,
+            file,
+            pid,
+            before,
+            done,
+        });
+        Ok(())
+    }
+
+    /// The merge tool has closed: what it did to the file.
+    fn tool_closed(&mut self, ctx: &egui::Context, open: ToolOpen, result: Result<(), String>) {
+        let full = std::path::Path::new(self.path()).join(&open.file);
+        let now = std::fs::read(&full).ok();
+        let changed = now != open.before;
+        let ToolOpen { name, file, .. } = open;
+        let text = match (&result, changed) {
+            (_, true) => {
+                let markers = now
+                    .as_deref()
+                    .and_then(|b| std::str::from_utf8(b).ok())
+                    .is_some_and(|t| conflict::parse(t).is_some());
+                if markers {
+                    format!(
+                        "{name} saved {file}, with conflicts still in it: resolve the rest here."
+                    )
+                } else {
+                    format!("{name} saved {file}. Check the result, then mark it resolved.")
+                }
+            }
+            (Err(e), false) => format!("{e}. {file} wasn't changed."),
+            (Ok(()), false) => format!("{name} closed without saving: {file} wasn't changed."),
+        };
+        self.tool_note = Some(ToolNote {
+            file: file.clone(),
+            text,
+            changed,
+        });
+        if changed {
+            let path = self.path().to_string();
+            if let Some(c) = self.conflict.as_mut().filter(|c| c.file == file) {
+                c.reload(&path);
+            }
+            self.refresh_status(ctx);
+        }
     }
 
     /// Opens a conflicted file for resolving.
@@ -3401,6 +3524,11 @@ impl RepoView {
             self.refresh(ctx);
         }
         self.load_file_past(ctx);
+        if let Some(result) = self.tool_open.as_ref().and_then(|t| t.done.poll())
+            && let Some(open) = self.tool_open.take()
+        {
+            self.tool_closed(ctx, open, result);
+        }
         // Picked lines belong to the diff they were picked in.
         if !self.picked.is_empty() && self.picked_in != self.diff_key() {
             self.picked.clear();

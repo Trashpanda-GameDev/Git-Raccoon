@@ -7854,6 +7854,83 @@ fn remembers_how_a_conflict_was_resolved() {
 }
 
 #[test]
+fn opens_a_conflict_in_the_merge_tool() {
+    use egui::accesskit::Role;
+    use git_raccoon::settings::ToolChoice;
+    let sample = Sample::build();
+    git(&sample, &["switch", "-q", "-c", "clash"]);
+    sample.write("README.md", "# Sample\n\nclash version\n");
+    git(&sample, &["commit", "-q", "-am", "README from clash"]);
+    git(&sample, &["switch", "-q", "main"]);
+    sample.write("README.md", "# Sample\n\nmain version\n");
+    git(&sample, &["commit", "-q", "-am", "README from main"]);
+    // A stand-in tool that closes without saving: Git, saying its version.
+    let mut h = harness(Settings {
+        merge_tool: ToolChoice::Custom("git --version".into()),
+        ..Settings::default()
+    });
+    open(&mut h, sample.path());
+    menu_item(&mut h, "clash", "Merge into main");
+    h.get_by_role_and_label(Role::Button, "Merge").click();
+    wait_for(&mut h, "the conflict", |app| conflicted(app) == 1);
+    h.get_by_label("Resolve README.md").click();
+    wait_for(&mut h, "the file", |app| {
+        app.repo().unwrap().conflict.is_some()
+    });
+    let note = |app: &App| app.repo().unwrap().tool_note.clone();
+    let before = read(&sample, "README.md").unwrap();
+    h.get_by_label("Open in git").click();
+    wait_for(&mut h, "it to close", |app| note(app).is_some());
+    h.run_ok();
+    let n = note(h.state()).unwrap();
+    assert!(!n.changed);
+    h.get_by_label_contains("closed without saving");
+    assert_eq!(
+        read(&sample, "README.md").unwrap(),
+        before,
+        "nothing changed"
+    );
+
+    // One that saves a result (here, Git writing a diff into the file):
+    // brought back to check, the conflict editor showing it.
+    h.state_mut().settings_mut().merge_tool =
+        ToolChoice::Custom("git diff --no-index --output=$MERGED $LOCAL $REMOTE".into());
+    h.run_ok();
+    h.get_by_label("Open in git").click();
+    h.run_ok();
+    wait_for(&mut h, "its result", |app| {
+        note(app).is_some_and(|n| n.changed)
+    });
+    h.run_ok();
+    h.get_by_label_contains("git saved README.md");
+    let now = read(&sample, "README.md").unwrap();
+    assert!(
+        !now.contains("<<<<<<<") && now.contains("+clash version"),
+        "{now}"
+    );
+    assert!(
+        h.state()
+            .repo()
+            .unwrap()
+            .conflict
+            .as_ref()
+            .is_some_and(|c| c.text.as_deref() == Ok(now.as_str())),
+        "the editor shows what it saved"
+    );
+    screenshot(&mut h, "102-merge-tool-saved");
+    h.get_by_label("Dismiss").click();
+    h.run_ok();
+    assert!(note(h.state()).is_none());
+
+    // The others found here, and the way to Settings.
+    h.get_by_label("Open in another tool").click();
+    h.run_ok();
+    h.get_by_label("Choose in Settings › Tools…").click();
+    h.run_ok();
+    h.get_by_role_and_label(Role::ComboBox, "Merge tool");
+}
+
+#[test]
 fn resolves_conflicts_in_panes() {
     use egui::accesskit::Role;
     let sample = Sample::build();
