@@ -177,12 +177,24 @@ pub fn undo(path: &str) -> Result<Search> {
     };
     // Answers given at the start (with `start`) are in its line: those stay.
     lines.truncate(from);
-    let file = git_dir(path)?.join("GIT_RACCOON_BISECT_REPLAY");
+    let dir = git_dir(path)?;
+    // Where the search started, to go back to at the end. Some versions of
+    // Git replay from where they are (the commit being tested) and would
+    // take that as the start: it's put back after.
+    let started_on = read(&dir, "BISECT_START");
+    let file = dir.join("GIT_RACCOON_BISECT_REPLAY");
     std::fs::write(&file, format!("{}\n", lines.join("\n")))
         .map_err(|e| Error::Command(format!("Couldn't write the search's log: {e}")))?;
     let replayed = cli::run(path, &["bisect", "replay", &file.to_string_lossy()], None);
     let _ = std::fs::remove_file(&file);
     replayed?;
+    if let Some(start) = started_on
+        && dir.join("BISECT_START").exists()
+        && read(&dir, "BISECT_START").as_deref() != Some(start.as_str())
+    {
+        std::fs::write(dir.join("BISECT_START"), format!("{start}\n"))
+            .map_err(|e| Error::Command(format!("Couldn't keep where the search started: {e}")))?;
+    }
     read_search(path)?.ok_or_else(|| Error::Command("The search ended".into()))
 }
 
@@ -696,6 +708,10 @@ mod tests {
         assert_eq!(after.skipped.len(), 1);
         let undone = undo(t.path()).unwrap();
         assert_eq!(undone.answers, before.answers);
+        assert_eq!(
+            undone.started_on, before.started_on,
+            "still back to the branch at the end"
+        );
         assert!(undone.skipped.is_empty());
         assert_eq!(undone.testing, before.testing, "the same commit to test");
         // Nothing to take back past the start.
@@ -703,6 +719,10 @@ mod tests {
         assert_eq!(again.answers.len(), 2);
         assert_eq!(answer_all(&t).outcome, Some(Outcome::Found(ids[4].clone())));
         stop(t.path()).unwrap();
+        assert!(
+            t.repo.head().unwrap().is_branch(),
+            "back on the branch, undo or not"
+        );
     }
 
     #[test]
