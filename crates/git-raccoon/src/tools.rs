@@ -194,11 +194,7 @@ pub fn merge_run(
         line: 1,
     };
     // A rule for this file names its tool, unless another was picked.
-    let file = v
-        .merged
-        .strip_prefix(repo)
-        .map(|p| p.to_string_lossy().replace('\\', "/"))
-        .unwrap_or_default();
+    let file = v.file.clone();
     let ruled = git_raccoon_core::rules::tool_for(repo, &file);
     let pick = pick.map(str::to_string).or(ruled);
     match pick.as_deref() {

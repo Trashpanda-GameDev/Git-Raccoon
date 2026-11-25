@@ -335,8 +335,9 @@ pub struct Versions {
     pub base: std::path::PathBuf,
     pub ours: std::path::PathBuf,
     pub theirs: std::path::PathBuf,
-    /// The file in the repository.
+    /// The file in the repository, on disk, and its path in it ("src/a.rs").
     pub merged: std::path::PathBuf,
+    pub file: String,
 }
 
 impl Versions {
@@ -390,6 +391,7 @@ pub fn write_versions(path: &str, file: &str) -> Result<Versions> {
         ours: write("LOCAL", &c.our)?,
         theirs: write("REMOTE", &c.their)?,
         merged: full_path(path, file)?,
+        file: file.to_string(),
         dir,
     })
 }
@@ -473,7 +475,13 @@ mod tests {
         assert_eq!(read(&v.ours), "one\ntwo (main)\nthree\n");
         assert_eq!(read(&v.theirs), "one\nTWO (feature)\nthree\n");
         assert_eq!(v.ours.file_name().unwrap(), "f.LOCAL.txt");
-        assert_eq!(v.merged, t.dir.join("f.txt"));
+        // (The same file, however the system spells its folder: macOS's
+        // /var is /private/var, Windows' short and long names.)
+        assert_eq!(v.file, "f.txt");
+        assert_eq!(
+            v.merged.canonicalize().unwrap(),
+            t.dir.join("f.txt").canonicalize().unwrap()
+        );
         assert!(read(&v.merged).contains("<<<<<<<"));
         v.clean_up();
         assert!(!v.dir.exists());
