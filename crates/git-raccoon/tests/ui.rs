@@ -6619,9 +6619,11 @@ fn lists_merge_requests_once_the_vpn_is_on() {
     assert!(h.query_by_label_contains("sign in again").is_none());
     screenshot(&mut h, "109-off-the-vpn");
 
-    // On it: Try again lists them (as it would on its own, a little later).
+    h.get_all_by_label("Try again").next().unwrap();
+
+    // The VPN connects: the network changes, and they're listed again.
     on.store(true, Ordering::SeqCst);
-    h.get_all_by_label("Try again").next().unwrap().click();
+    h.state().network_changed();
     wait_for(&mut h, "the merge requests", |app| {
         app.repo()
             .unwrap()
@@ -6630,6 +6632,17 @@ fn lists_merge_requests_once_the_vpn_is_on() {
             .is_some_and(|f| matches!(&f.requests, Some(Ok(list)) if !list.is_empty()))
     });
     h.run_ok();
+    h.get_by_label("!5 Behind the VPN");
+    screenshot(&mut h, "109b-on-the-vpn");
+
+    // Listed again by hand, from the section's heading.
+    let asked = |h: &Harness<'_, App>| h.state().repo().unwrap().forge.as_ref().unwrap().listing();
+    h.get_by_label("Reload the merge requests").click();
+    h.run_ok();
+    assert!(asked(&h) || h.query_by_label("!5 Behind the VPN").is_some());
+    wait_for(&mut h, "listed again", |app| {
+        !app.repo().unwrap().forge.as_ref().unwrap().listing()
+    });
     h.get_by_label("!5 Behind the VPN");
 }
 

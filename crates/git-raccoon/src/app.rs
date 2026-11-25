@@ -31,6 +31,9 @@ pub struct App {
     /// The active tab's history scroll position.
     scroll: history::Scroll,
     tabs: Vec<Tab>,
+    /// Notices the network changing (a VPN connecting), to try again what
+    /// failed to load.
+    network: crate::network::Watch,
     /// Which tab is showing.
     active: usize,
     next_tab: u64,
@@ -227,6 +230,7 @@ impl App {
             opening: Vec::new(),
             error: None,
             scroll: history::Scroll::default(),
+            network: crate::network::Watch::start(ctx),
             tabs: vec![Tab {
                 id: 0,
                 path: None,
@@ -806,6 +810,24 @@ impl App {
     fn active_opening(&self) -> bool {
         let id = self.tabs[self.active].id;
         self.opening.iter().any(|o| o.2 == id)
+    }
+
+    /// Each tab's forge whose lists failed tries again soon.
+    fn retry_forges_soon(&mut self) {
+        let parked = self
+            .tabs
+            .iter_mut()
+            .filter_map(|t| t.parked.as_mut().and_then(|(r, _)| r.as_mut()));
+        for repo in self.repo.iter_mut().chain(parked) {
+            if let Some(f) = &mut repo.forge {
+                f.retry_soon();
+            }
+        }
+    }
+
+    /// As if the network had just changed (tests).
+    pub fn network_changed(&self) {
+        self.network.changed_now();
     }
 
     pub fn repo(&self) -> Option<&RepoView> {
@@ -3280,6 +3302,16 @@ impl App {
     }
 
     fn draw(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        // The network changed (a VPN connected), or the window came back:
+        // what failed to list from a forge tries again.
+        let refocused = ui.ctx().input(|i| {
+            i.events
+                .iter()
+                .any(|e| matches!(e, egui::Event::WindowFocused(true)))
+        });
+        if self.network.settled_change(ui.ctx()) || refocused {
+            self.retry_forges_soon();
+        }
         // The title bar matches the tab bar beneath it.
         if std::mem::take(&mut self.title_bar_stale) {
             crate::title_bar::colour(frame, theme::bg(), theme::text(), theme::border());

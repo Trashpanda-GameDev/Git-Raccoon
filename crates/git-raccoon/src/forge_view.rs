@@ -305,6 +305,15 @@ impl ForgeView {
         }
     }
 
+    /// Lists again soon (the network changed, or the window came back),
+    /// if listing failed: from the shortest wait again.
+    pub fn retry_soon(&mut self) {
+        if self.retry_at.is_some() {
+            self.retry_wait = std::time::Duration::ZERO;
+            self.retry_at = Some(std::time::Instant::now());
+        }
+    }
+
     /// Lists again now (the person asked).
     pub fn try_again(&mut self, ctx: &egui::Context) {
         self.retry_wait = std::time::Duration::ZERO;

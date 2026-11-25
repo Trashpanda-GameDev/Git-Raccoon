@@ -13,6 +13,7 @@ pub mod forge_view;
 pub mod format;
 mod highlight;
 mod images;
+pub mod network;
 pub mod profiles;
 pub mod repo_view;
 mod search;

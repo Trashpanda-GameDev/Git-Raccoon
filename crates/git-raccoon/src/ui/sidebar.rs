@@ -240,12 +240,14 @@ fn section_header(
     open: bool,
     add: Option<&str>,
 ) -> (bool, bool) {
+    c.last_header = None;
     // Drawn in its turn: open ones first, collapsed ones at the bottom.
     if !c.now(key) {
         return (false, false);
     }
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), HEADER), Sense::click());
+    c.last_header = Some(rect);
     // Its top edge, so the sections read as separate (right after a
     // handle, the handle's line is it).
     let after_handle = std::mem::take(&mut c.after_handle);
@@ -527,6 +529,8 @@ struct Ctx<'s> {
     hidden: &'s [String],
     /// The last thing drawn was a handle (its line is the next heading's).
     after_handle: bool,
+    /// Where the last section heading was drawn (for a button of its own).
+    last_header: Option<Rect>,
     collapsed: &'s mut HashSet<String>,
     filtering: bool,
     selected: Option<&'s str>,
@@ -743,6 +747,27 @@ fn forge_sections(
             crate::forge::Kind::GitLab => "New merge request",
         }),
     );
+    // Listing them again, by hand (beside the +).
+    if signed_in && let Some(rect) = c.last_header.take() {
+        let at = Rect::from_center_size(
+            Pos2::new(rect.right() - 64.0, rect.center().y + 2.0),
+            egui::vec2(20.0, 20.0),
+        );
+        if forge.listing() {
+            ui.put(at, egui::Spinner::new().size(12.0));
+        } else {
+            let name = format!("Reload the {}", title.to_lowercase());
+            let button = ui.place(
+                at,
+                egui::Button::new(RichText::new(icon::ARROWS_CLOCKWISE).size(12.0)).frame(false),
+            );
+            ui.ctx()
+                .accesskit_node_builder(button.id, |n| n.set_label(name.clone()));
+            if button.on_hover_text(name).clicked() {
+                c.action = Some(Action::TryForgeAgain);
+            }
+        }
+    }
     if toggled {
         c.toggle("requests");
     }
@@ -1494,6 +1519,7 @@ pub fn show(
         all_sections,
         hidden,
         after_handle: false,
+        last_header: None,
         collapsed,
         filtering: !f.is_empty(),
         selected,
