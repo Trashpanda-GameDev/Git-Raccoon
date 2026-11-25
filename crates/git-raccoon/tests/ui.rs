@@ -6644,6 +6644,14 @@ fn lists_merge_requests_once_the_vpn_is_on() {
         !app.repo().unwrap().forge.as_ref().unwrap().listing()
     });
     h.get_by_label("!5 Behind the VPN");
+    // And from the issues' heading.
+    h.get_by_label("Reload the issues").click();
+    h.run_ok();
+    wait_for(&mut h, "listed again", |app| {
+        !app.repo().unwrap().forge.as_ref().unwrap().listing()
+    });
+    h.get_by_label("No open issues");
+    screenshot(&mut h, "109c-reload-buttons");
 }
 
 #[test]

@@ -324,6 +324,39 @@ fn section_header(
     (response.clicked(), added)
 }
 
+/// ↻ on a forge section's heading (just drawn), `from_right` of its edge:
+/// lists the requests and issues again (both come from the same call), or
+/// spins while they load.
+fn reload_button(
+    ui: &mut egui::Ui,
+    c: &mut Ctx<'_>,
+    forge: &crate::forge_view::ForgeView,
+    what: &str,
+    from_right: f32,
+) {
+    let Some(rect) = c.last_header.take() else {
+        return;
+    };
+    let at = Rect::from_center_size(
+        Pos2::new(rect.right() - from_right, rect.center().y + 2.0),
+        egui::vec2(20.0, 20.0),
+    );
+    if forge.listing() {
+        ui.put(at, egui::Spinner::new().size(12.0));
+        return;
+    }
+    let name = format!("Reload the {}", what.to_lowercase());
+    let button = ui.place(
+        at,
+        egui::Button::new(RichText::new(icon::ARROWS_CLOCKWISE).size(12.0)).frame(false),
+    );
+    ui.ctx()
+        .accesskit_node_builder(button.id, |n| n.set_label(name.clone()));
+    if button.on_hover_text(name).clicked() {
+        c.action = Some(Action::TryForgeAgain);
+    }
+}
+
 /// Every section the sidebar can have (key, name), in order; some only
 /// show when there's something for them (a forge, submodules).
 pub const SECTIONS: &[(&str, &str)] = &[
@@ -748,25 +781,8 @@ fn forge_sections(
         }),
     );
     // Listing them again, by hand (beside the +).
-    if signed_in && let Some(rect) = c.last_header.take() {
-        let at = Rect::from_center_size(
-            Pos2::new(rect.right() - 64.0, rect.center().y + 2.0),
-            egui::vec2(20.0, 20.0),
-        );
-        if forge.listing() {
-            ui.put(at, egui::Spinner::new().size(12.0));
-        } else {
-            let name = format!("Reload the {}", title.to_lowercase());
-            let button = ui.place(
-                at,
-                egui::Button::new(RichText::new(icon::ARROWS_CLOCKWISE).size(12.0)).frame(false),
-            );
-            ui.ctx()
-                .accesskit_node_builder(button.id, |n| n.set_label(name.clone()));
-            if button.on_hover_text(name).clicked() {
-                c.action = Some(Action::TryForgeAgain);
-            }
-        }
+    if signed_in {
+        reload_button(ui, c, forge, &title, 64.0);
     }
     if toggled {
         c.toggle("requests");
@@ -848,7 +864,12 @@ fn forge_sections(
         .filter(|i| matches(&i.title) || matches(&format!("#{}", i.number)))
         .collect();
     let open = c.is_open("issues");
-    if section_header(ui, c, "issues", "Issues", issues.len(), open, None).0 {
+    let toggled = section_header(ui, c, "issues", "Issues", issues.len(), open, None).0;
+    // (Where the + is on requests: issues have none.)
+    if signed_in {
+        reload_button(ui, c, forge, "Issues", 40.0);
+    }
+    if toggled {
         c.toggle("issues");
     }
     if open {
