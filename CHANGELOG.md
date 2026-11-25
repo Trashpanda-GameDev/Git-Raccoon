@@ -11,6 +11,7 @@ release page). Newest first; a version's heading is just its number.
 - **A tool for some files.** Rules by file name (`*.unity *.prefab *.asset`…): a tool merges them *automatically while merging*, leaving only what it can't as conflicts, or opens them from the conflict editor. For just you, or for everyone through `.gitattributes`. What's written is shown first, and *Test on a sample* tries it. Merging from a terminal uses the rules too.
   - **Unity:** UnityYAMLMerge from the project's own Unity version, found each time, so upgrading Unity doesn't break it; when that version isn't installed, the files are left as conflicts and the overview says why. *Unity's files…* fills in the rule.
   - **After a merge:** "UnityYAMLMerge merged 3 files on its own", to review, beside the conflicts that are left.
+- **Merge requests behind a VPN** (#109): when the requests and issues can't be listed (off the VPN, say), Git Raccoon tries again on its own every little while, and there's *Try again* beside the error, so they show once you're connected. And a refusal from something other than GitLab or GitHub (a VPN's or company's sign-in page) says so, instead of telling you to sign in again.
 
 ## 0.5.31
 

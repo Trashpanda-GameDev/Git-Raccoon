@@ -189,6 +189,10 @@ pub struct ForgeView {
     pub load_more_error: Option<String>,
     /// Something was sent: reload the view (and the list) next.
     pub reloading: bool,
+    /// Listing failed (off the VPN, say): when to try again, and how long
+    /// it waited last (longer each time, up to five minutes).
+    retry_at: Option<std::time::Instant>,
+    retry_wait: std::time::Duration,
 }
 
 impl ForgeView {
@@ -225,6 +229,8 @@ impl ForgeView {
             state: RequestState::default(),
             load_more_error: None,
             reloading: false,
+            retry_at: None,
+            retry_wait: std::time::Duration::ZERO,
         })
     }
 
@@ -281,6 +287,34 @@ impl ForgeView {
     /// Whether the next page of requests (`true`) or issues is loading.
     pub fn loading_more(&self, requests: bool) -> bool {
         self.more.as_ref().is_some_and(|(r, _)| *r == requests)
+    }
+
+    /// Listing failed a while ago: tries again once it's time (and wakes
+    /// the app for it).
+    pub fn retry_when_due(&mut self, ctx: &egui::Context) {
+        let Some(at) = self.retry_at else { return };
+        if self.loading.is_some() {
+            return;
+        }
+        let now = std::time::Instant::now();
+        if at <= now {
+            self.retry_at = None;
+            self.load(ctx);
+        } else {
+            ctx.request_repaint_after(at - now);
+        }
+    }
+
+    /// Lists again now (the person asked).
+    pub fn try_again(&mut self, ctx: &egui::Context) {
+        self.retry_wait = std::time::Duration::ZERO;
+        self.retry_at = None;
+        self.load(ctx);
+    }
+
+    /// Whether the requests and issues are being listed.
+    pub fn listing(&self) -> bool {
+        self.loading.is_some()
     }
 
     /// Whether it's loading.
@@ -604,8 +638,19 @@ impl ForgeView {
             self.more_issues = issues.as_ref().is_ok_and(|(_, more)| *more);
             self.pages = (1, 1);
             self.more = None;
+            let failed = requests.is_err() || issues.is_err();
             self.requests = Some(requests.map(|(list, _)| list));
             self.issues = Some(issues.map(|(list, _)| list));
+            if failed {
+                self.retry_wait = (self.retry_wait * 2).clamp(
+                    std::time::Duration::from_secs(15),
+                    std::time::Duration::from_secs(300),
+                );
+                self.retry_at = Some(std::time::Instant::now() + self.retry_wait);
+            } else {
+                self.retry_wait = std::time::Duration::ZERO;
+                self.retry_at = None;
+            }
         }
         if let Some((requests, task)) = &self.more
             && let Some(result) = task.poll()

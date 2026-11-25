@@ -6526,6 +6526,113 @@ fn shows_whats_new_after_an_update_and_takes_feedback() {
     assert!(h.query_by_label("Feedback title").is_none(), "closed");
 }
 
+/// A self-managed GitLab that's only there on its VPN: off it, a company
+/// sign-in page refuses everything (401, as a web page).
+fn vpn_gitlab(on: std::sync::Arc<std::sync::atomic::AtomicBool>) -> String {
+    use std::io::{BufRead as _, BufReader, Write as _};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut first = String::new();
+            let _ = reader.read_line(&mut first);
+            let mut line = String::new();
+            while reader.read_line(&mut line).unwrap_or(0) > 0 && line != "\r\n" {
+                line.clear();
+            }
+            let (status, kind, body) = if !on.load(std::sync::atomic::Ordering::SeqCst) {
+                (401, "text/html", "<html>Sign in to Corp</html>".to_string())
+            } else if first.contains("/merge_requests") {
+                (
+                    200,
+                    "application/json",
+                    r#"[{"iid": 5, "title": "Behind the VPN", "author": {"username": "ada"},
+                    "source_branch": "vpn", "target_branch": "main", "source_project_id": 1,
+                    "target_project_id": 1, "draft": false, "web_url": "u", "description": "",
+                    "created_at": "2026-11-01T00:00:00Z", "user_notes_count": 0}]"#
+                        .to_string(),
+                )
+            } else {
+                (200, "application/json", "[]".to_string())
+            };
+            let mut stream = stream;
+            let _ = write!(
+                stream,
+                "HTTP/1.1 {status} X\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    base
+}
+
+#[test]
+fn lists_merge_requests_once_the_vpn_is_on() {
+    use git_raccoon::forge::{Account, Kind, accounts};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let sample = Sample::build();
+    let on = std::sync::Arc::new(AtomicBool::new(false));
+    let base = vpn_gitlab(std::sync::Arc::clone(&on));
+    git(
+        &sample,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            &format!("{base}/team/app.git"),
+        ],
+    );
+    accounts::use_memory_store();
+    let account = Account {
+        kind: Kind::GitLab,
+        base: base.clone(),
+        login: "rocky".into(),
+        client: None,
+    };
+    accounts::save(
+        &account,
+        &accounts::Secret {
+            token: "glpat".into(),
+            refresh: None,
+            expires: None,
+        },
+    )
+    .unwrap();
+    let mut h = harness(Settings {
+        accounts: vec![account],
+        ..Settings::default()
+    });
+    open(&mut h, sample.path());
+    // Off the VPN: says so, rather than to sign in again.
+    wait_for(&mut h, "the refusal", |app| {
+        app.repo()
+            .unwrap()
+            .forge
+            .as_ref()
+            .is_some_and(|f| matches!(f.requests, Some(Err(_))))
+    });
+    h.run_ok();
+    h.get_all_by_label_contains("something other than GitLab answered (401)")
+        .next()
+        .unwrap();
+    assert!(h.query_by_label_contains("sign in again").is_none());
+    screenshot(&mut h, "109-off-the-vpn");
+
+    // On it: Try again lists them (as it would on its own, a little later).
+    on.store(true, Ordering::SeqCst);
+    h.get_all_by_label("Try again").next().unwrap().click();
+    wait_for(&mut h, "the merge requests", |app| {
+        app.repo()
+            .unwrap()
+            .forge
+            .as_ref()
+            .is_some_and(|f| matches!(&f.requests, Some(Ok(list)) if !list.is_empty()))
+    });
+    h.run_ok();
+    h.get_by_label("!5 Behind the VPN");
+}
+
 #[test]
 fn feedback_is_sent_as_the_person_when_signed_in_to_github() {
     use git_raccoon::forge::{Account, Kind};

@@ -17,27 +17,75 @@ fn agent() -> String {
 /// A plain sentence for an HTTP failure.
 fn explain(forge: &str, error: ureq::Error) -> String {
     match error {
-        ureq::Error::StatusCode(401) => format!("{forge} turned it away: sign in again"),
-        ureq::Error::StatusCode(403) => {
-            format!("{forge} turned it away (no permission, or too many requests for now)")
-        }
-        ureq::Error::StatusCode(404) => {
-            format!("{forge} doesn't know it (or it's private and this account can't see it)")
-        }
-        ureq::Error::StatusCode(422) => format!("{forge} wouldn't take it (it may already exist)"),
-        ureq::Error::StatusCode(code) if code >= 500 => {
-            format!("{forge} had a problem on its side ({code})")
-        }
-        ureq::Error::StatusCode(code) => format!("{forge} answered {code}"),
+        ureq::Error::StatusCode(code) => refused(forge, code, true),
         other => format!("couldn't reach {forge}: {other}"),
     }
 }
 
+/// A plain sentence for a refusal: by the forge's API itself (`api`, it
+/// answered in JSON), or by something in the way.
+fn refused(forge: &str, code: u16, api: bool) -> String {
+    match code {
+        // A page that isn't the API's, refusing: often a VPN's or a
+        // company's sign-in in front of a self-managed server, when off
+        // its network. The account's sign-in is likely fine.
+        401 | 403 | 407 if !api => not_the_forge(forge, &code.to_string()),
+        401 => format!("{forge} turned it away: sign in again"),
+        403 => format!("{forge} turned it away (no permission, or too many requests for now)"),
+        404 => format!("{forge} doesn't know it (or it's private and this account can't see it)"),
+        422 => format!("{forge} wouldn't take it (it may already exist)"),
+        code if code >= 500 => format!("{forge} had a problem on its side ({code})"),
+        code => format!("{forge} answered {code}"),
+    }
+}
+
+/// Something other than the forge's API answered.
+fn not_the_forge(forge: &str, what: &str) -> String {
+    format!(
+        "something other than {forge} answered ({what}), like a VPN's sign-in page: are you on {forge}'s network?"
+    )
+}
+
 fn agent_for() -> ureq::Agent {
+    // Statuses are read here (with what answered), not by ureq.
     ureq::Agent::config_builder()
-        .http_status_as_error(true)
+        .http_status_as_error(false)
         .build()
         .into()
+}
+
+/// The response, or why it's a failure: couldn't connect, or a status of
+/// 400 or more (from the forge's API, or something in front of it).
+fn checked(
+    forge: &str,
+    response: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
+) -> Result<ureq::http::Response<ureq::Body>, String> {
+    let response = response.map_err(|e| explain(forge, e))?;
+    let code = response.status().as_u16();
+    if code < 400 {
+        return Ok(response);
+    }
+    let api = response
+        .headers()
+        .get("content-type")
+        .and_then(|t| t.to_str().ok())
+        .is_some_and(|t| t.contains("json"));
+    Err(refused(forge, code, api))
+}
+
+/// A body as JSON (`Null` when empty). A web page instead of JSON is
+/// something other than the forge's API.
+fn json_of(forge: &str, text: &str) -> Result<Value, String> {
+    if text.trim().is_empty() {
+        return Ok(Value::Null);
+    }
+    serde_json::from_str(text).map_err(|e| {
+        if text.trim_start().starts_with('<') {
+            not_the_forge(forge, "a web page, not its API")
+        } else {
+            format!("{forge} answered something unexpected: {e}")
+        }
+    })
 }
 
 fn with_auth<B>(mut req: ureq::RequestBuilder<B>, auth: &Auth<'_>) -> ureq::RequestBuilder<B> {
@@ -54,16 +102,18 @@ fn read(
     forge: &str,
     response: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
 ) -> Result<Value, String> {
-    let response = response.map_err(|e| explain(forge, e))?;
+    let response = checked(forge, response)?;
+    body_json(forge, response)
+}
+
+/// A response's JSON, whatever its status (some answers have no body:
+/// "204 No Content").
+fn body_json(forge: &str, response: ureq::http::Response<ureq::Body>) -> Result<Value, String> {
     let text = response
         .into_body()
         .read_to_string()
         .map_err(|e| e.to_string())?;
-    // Some answers have no body ("204 No Content").
-    if text.trim().is_empty() {
-        return Ok(Value::Null);
-    }
-    serde_json::from_str(&text).map_err(|e| format!("{forge} answered something unexpected: {e}"))
+    json_of(forge, &text)
 }
 
 /// The part of an API address that says what was asked for:
@@ -106,13 +156,13 @@ fn call_get(
             .call()
     };
     let response = match attempt() {
-        Err(ureq::Error::StatusCode(code)) if code >= 500 => {
+        Ok(r) if r.status().as_u16() >= 500 => {
             std::thread::sleep(std::time::Duration::from_millis(600));
             attempt()
         }
         other => other,
     };
-    response.map_err(|e| format!("{}, for {}", explain(forge, e), what_of(url)))
+    checked(forge, response).map_err(|e| format!("{e}, for {}", what_of(url)))
 }
 
 /// GET some JSON.
@@ -140,12 +190,7 @@ pub fn get_page(
         .into_body()
         .read_to_string()
         .map_err(|e| e.to_string())?;
-    let value = if text.trim().is_empty() {
-        Value::Null
-    } else {
-        serde_json::from_str(&text)
-            .map_err(|e| format!("{forge} answered something unexpected: {e}"))?
-    };
+    let value = json_of(forge, &text).map_err(|e| format!("{e}, for {}", what_of(url)))?;
     Ok((value, next))
 }
 
@@ -189,10 +234,12 @@ fn next_link(header: &str) -> Option<String> {
 
 /// GET a file's bytes (an image), and its type if the server says.
 pub fn get_bytes(url: &str, auth: &Auth<'_>) -> Result<(Vec<u8>, Option<String>), String> {
-    let response = with_auth(agent_for().get(url), auth)
-        .header("Accept", "*/*")
-        .call()
-        .map_err(|e| explain("The forge", e))?;
+    let response = checked(
+        "The forge",
+        with_auth(agent_for().get(url), auth)
+            .header("Accept", "*/*")
+            .call(),
+    )?;
     let mime = response
         .headers()
         .get("content-type")
@@ -271,7 +318,10 @@ pub fn post_form(forge: &str, url: &str, form: &[(&str, &str)]) -> Result<Value,
         .build()
         .into();
     let req = with_auth(agent.post(url), &Auth::None);
-    read(forge, req.send_form(form.iter().copied()))
+    let response = req
+        .send_form(form.iter().copied())
+        .map_err(|e| explain(forge, e))?;
+    body_json(forge, response)
 }
 
 /// A string field, or "".
@@ -406,6 +456,68 @@ mod tests {
         assert_eq!(
             get("GitLab", &base, &Auth::None).unwrap(),
             serde_json::json!([1])
+        );
+    }
+
+    /// Answers one request with this status, type and body.
+    fn answer_once(status: u16, kind: &'static str, body: &'static str) -> String {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let Ok((stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            while reader.read_line(&mut line).unwrap_or(0) > 0 && line != "\r\n" {
+                line.clear();
+            }
+            let mut stream = stream;
+            let _ = write!(
+                stream,
+                "HTTP/1.1 {status} X\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        });
+        base
+    }
+
+    #[test]
+    fn tells_the_forge_from_something_in_front_of_it() {
+        // GitLab itself, refusing the token: sign in again.
+        let base = answer_once(401, "application/json", r#"{"message":"401 Unauthorized"}"#);
+        let e = get(
+            "GitLab",
+            &format!("{base}/api/v4/projects/a%2Fb/merge_requests"),
+            &Auth::None,
+        )
+        .unwrap_err();
+        assert_eq!(
+            e,
+            "GitLab turned it away: sign in again, for …/merge_requests"
+        );
+        // A VPN's or company's sign-in page, refusing: not the account's
+        // sign-in, so it doesn't say to sign in again.
+        let base = answer_once(401, "text/html", "<html>Sign in to Corp</html>");
+        let e = get(
+            "GitLab",
+            &format!("{base}/api/v4/projects/a%2Fb/merge_requests"),
+            &Auth::None,
+        )
+        .unwrap_err();
+        assert!(
+            e.starts_with("something other than GitLab answered (401)"),
+            "{e}"
+        );
+        assert!(e.contains("are you on GitLab's network?"), "{e}");
+        assert!(!e.contains("sign in again"), "{e}");
+        // Or a page that says yes, but isn't the API.
+        let base = answer_once(200, "text/html", "<!doctype html><html>Portal</html>");
+        let e = get("GitLab", &base, &Auth::None).unwrap_err();
+        assert!(
+            e.starts_with("something other than GitLab answered (a web page"),
+            "{e}"
         );
     }
 

@@ -1387,6 +1387,7 @@ impl App {
         );
         if let Some(f) = &mut repo.forge {
             f.poll();
+            f.retry_when_due(ctx);
             if std::mem::take(&mut f.state.reviewed)
                 && let Some(crate::forge_view::Opened::Request(n)) = f.open
             {
@@ -2342,6 +2343,11 @@ impl App {
                     repo.deselect();
                     if let Some(f) = &mut repo.forge {
                         f.open = Some(crate::forge_view::Opened::Issue(n));
+                    }
+                }
+                Some(sidebar::Action::TryForgeAgain) => {
+                    if let Some(f) = &mut repo.forge {
+                        f.try_again(&ctx);
                     }
                 }
                 Some(sidebar::Action::SignInToForge) => {
@@ -3585,6 +3591,7 @@ fn repo_action(repo: &mut RepoView, ctx: &egui::Context, action: sidebar::Action
         sidebar::Action::OpenRequest(_)
         | sidebar::Action::OpenIssue(_)
         | sidebar::Action::SignInToForge
+        | sidebar::Action::TryForgeAgain
         | sidebar::Action::NewRequest(_)
         | sidebar::Action::LoadMore(_)
         | sidebar::Action::Pin(..)

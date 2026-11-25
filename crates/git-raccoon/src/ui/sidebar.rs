@@ -696,6 +696,29 @@ fn forge_sections(
             });
         ui.add_space(6.0);
     };
+    // Listing failed: why, and that it tries again (or now).
+    let failed = |ui: &mut egui::Ui, c: &mut Ctx<'_>, why: &str, trying: bool| {
+        note(ui, why);
+        ui.horizontal(|ui| {
+            ui.add_space(28.0);
+            if trying {
+                ui.spinner();
+                ui.label(
+                    RichText::new("Trying again…")
+                        .size(12.0)
+                        .color(theme::muted()),
+                );
+            } else {
+                let again = ui
+                    .link(RichText::new("Try again").size(12.0))
+                    .on_hover_text("It also tries again on its own, every little while");
+                if again.clicked() {
+                    c.action = Some(Action::TryForgeAgain);
+                }
+            }
+        });
+        ui.add_space(6.0);
+    };
     // Before signing in: one link, for both sections.
     let signed_in = forge.account.is_some();
     let requests: Vec<&crate::forge::Request> = forge
@@ -746,7 +769,7 @@ fn forge_sections(
         body(ui, c, "requests", &title, |ui, c| match &forge.requests {
             _ if !signed_in => sign_in(ui, c),
             None => note(ui, "Loading…"),
-            Some(Err(e)) => note(ui, e),
+            Some(Err(e)) => failed(ui, c, e, forge.listing()),
             Some(Ok(_)) if requests.is_empty() => {
                 note(ui, &format!("No open {}", title.to_lowercase()))
             }
@@ -807,7 +830,7 @@ fn forge_sections(
         body(ui, c, "issues", "Issues", |ui, c| match &forge.issues {
             _ if !signed_in => sign_in(ui, c),
             None => note(ui, "Loading…"),
-            Some(Err(e)) => note(ui, e),
+            Some(Err(e)) => failed(ui, c, e, forge.listing()),
             Some(Ok(_)) if issues.is_empty() => note(ui, "No open issues"),
             Some(Ok(_)) => {
                 for i in issues {
@@ -882,6 +905,8 @@ pub enum Action {
     OpenIssue(u64),
     /// Sign in to the repository's forge.
     SignInToForge,
+    /// List the requests and issues again (after failing).
+    TryForgeAgain,
     /// Open a new pull/merge request.
     /// List the next page of requests (`true`) or issues.
     LoadMore(bool),
