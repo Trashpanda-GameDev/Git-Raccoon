@@ -6567,6 +6567,104 @@ fn vpn_gitlab(on: std::sync::Arc<std::sync::atomic::AtomicBool>) -> String {
     base
 }
 
+/// A GitLab that only takes the token "fresh" (the one renewing gives),
+/// as when the saved one was retired.
+fn renewing_gitlab() -> String {
+    use std::io::{BufRead as _, BufReader, Write as _};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut first = String::new();
+            let _ = reader.read_line(&mut first);
+            let (mut line, mut fresh) = (String::new(), false);
+            while reader.read_line(&mut line).unwrap_or(0) > 0 && line != "\r\n" {
+                fresh |= line
+                    .to_lowercase()
+                    .starts_with("authorization: bearer fresh");
+                line.clear();
+            }
+            let (status, body) = if first.starts_with("POST /oauth/token") {
+                (
+                    200,
+                    r#"{"access_token": "fresh", "refresh_token": "r2", "expires_in": 7200}"#
+                        .to_string(),
+                )
+            } else if !fresh {
+                (401, r#"{"message": "401 Unauthorized"}"#.to_string())
+            } else if first.contains("/merge_requests") {
+                (
+                    200,
+                    r#"[{"iid": 6, "title": "Seen after renewing", "author": {"username": "ada"},
+                    "source_branch": "x", "target_branch": "main", "source_project_id": 1,
+                    "target_project_id": 1, "draft": false, "web_url": "u", "description": "",
+                    "created_at": "2026-11-01T00:00:00Z", "user_notes_count": 0}]"#
+                        .to_string(),
+                )
+            } else {
+                (200, "[]".to_string())
+            };
+            let mut stream = stream;
+            let _ = write!(
+                stream,
+                "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    base
+}
+
+#[test]
+fn renews_a_gitlab_sign_in_that_was_turned_down() {
+    use git_raccoon::forge::{Account, Kind, accounts};
+    let sample = Sample::build();
+    let base = renewing_gitlab();
+    git(
+        &sample,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            &format!("{base}/team/app.git"),
+        ],
+    );
+    accounts::use_memory_store();
+    // Signed in through the browser; its token not expired by the clock,
+    // but retired by GitLab.
+    let account = Account {
+        kind: Kind::GitLab,
+        base: base.clone(),
+        login: "rocky".into(),
+        client: Some("cid".into()),
+    };
+    accounts::save(
+        &account,
+        &accounts::Secret {
+            token: "retired".into(),
+            refresh: Some("r1".into()),
+            expires: Some(git_raccoon::settings::now() + 3600),
+        },
+    )
+    .unwrap();
+    let mut h = harness(Settings {
+        accounts: vec![account.clone()],
+        ..Settings::default()
+    });
+    open(&mut h, sample.path());
+    wait_for(&mut h, "the merge requests", |app| {
+        app.repo()
+            .unwrap()
+            .forge
+            .as_ref()
+            .is_some_and(|f| f.requests.is_some())
+    });
+    h.run_ok();
+    h.get_by_label("!6 Seen after renewing");
+    assert_eq!(accounts::load(&account).unwrap().token, "fresh");
+}
+
 #[test]
 fn lists_merge_requests_once_the_vpn_is_on() {
     use git_raccoon::forge::{Account, Kind, accounts};

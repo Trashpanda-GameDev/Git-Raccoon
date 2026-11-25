@@ -30,13 +30,21 @@ fn refused(forge: &str, code: u16, api: bool) -> String {
         // company's sign-in in front of a self-managed server, when off
         // its network. The account's sign-in is likely fine.
         401 | 403 | 407 if !api => not_the_forge(forge, &code.to_string()),
-        401 => format!("{forge} turned it away: sign in again"),
+        401 => format!("{forge} turned it away: {SIGN_IN_AGAIN}"),
         403 => format!("{forge} turned it away (no permission, or too many requests for now)"),
         404 => format!("{forge} doesn't know it (or it's private and this account can't see it)"),
         422 => format!("{forge} wouldn't take it (it may already exist)"),
         code if code >= 500 => format!("{forge} had a problem on its side ({code})"),
         code => format!("{forge} answered {code}"),
     }
+}
+
+/// What a refusal of the account's sign-in says (to offer signing in).
+pub const SIGN_IN_AGAIN: &str = "sign in again";
+
+/// Whether an error is the forge turning the account's sign-in down.
+pub fn is_sign_in_refused(error: &str) -> bool {
+    error.contains(&format!("turned it away: {SIGN_IN_AGAIN}"))
 }
 
 /// Something other than the forge's API answered.

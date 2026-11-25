@@ -249,10 +249,21 @@ impl ForgeView {
         };
         let project = self.project.clone();
         self.loading = Some(Task::spawn(ctx, move || {
-            match forge::accounts::session(&account, &project) {
+            let list = || match forge::accounts::session(&account, &project) {
                 Ok(s) => (s.requests(1), s.issues(1)),
                 Err(e) => (Err(e.clone()), Err(e)),
+            };
+            let lists: Lists = list();
+            // The forge turned the sign-in down: renewed (when it can be),
+            // then once more.
+            let refused =
+                |e: Option<&String>| e.is_some_and(|e| forge::http::is_sign_in_refused(e));
+            if (refused(lists.0.as_ref().err()) || refused(lists.1.as_ref().err()))
+                && forge::accounts::renew(&account)
+            {
+                return list();
             }
+            lists
         }));
         if let Some(Opened::Request(n)) = self.open {
             self.load_details(ctx, n);

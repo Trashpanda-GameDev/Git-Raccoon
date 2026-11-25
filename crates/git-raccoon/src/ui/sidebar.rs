@@ -746,6 +746,16 @@ fn forge_sections(
                         .color(theme::muted()),
                 );
             } else {
+                // The forge turned the sign-in down (renewing it didn't help).
+                if crate::forge::http::is_sign_in_refused(why) {
+                    let again = ui
+                        .link(RichText::new("Sign in again").size(12.0))
+                        .on_hover_text("The forge no longer takes this sign-in: it may have expired or been revoked");
+                    if again.clicked() {
+                        c.action = Some(Action::SignInToForge);
+                    }
+                    ui.label(RichText::new("·").size(12.0).color(theme::muted()));
+                }
                 let again = ui
                     .link(RichText::new("Try again").size(12.0))
                     .on_hover_text("It also tries again on its own, every little while");

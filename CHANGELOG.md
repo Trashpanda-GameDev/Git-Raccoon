@@ -3,6 +3,10 @@
 Each version's notes appear in the app after updating to it (and on its
 release page). Newest first; a version's heading is just its number.
 
+## 0.5.33
+
+- **GitLab sign-ins through the browser stay signed in** (#109): they're renewed every two hours, and renewing them from several places at once could leave one GitLab no longer takes, so the requests and issues stopped listing ("sign in again") while pushing and pulling, which use Git's own sign-in, still worked. Now it's renewed once at a time; when GitLab turns a sign-in down, it's renewed and tried again; and if that doesn't help, *Sign in again* is right beside the error.
+
 ## 0.5.32
 
 - **Merge tools, diff tools and an editor.** *Settings › Tools* chooses the programs to use: your Git's own merge tool, one found on this computer (KDiff3, Meld, Beyond Compare, P4Merge, WinMerge, Visual Studio Code, JetBrains' IDEs), or a command of your own; a diff tool (the merge tool, to start with); and an editor.

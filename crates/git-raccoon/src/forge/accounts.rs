@@ -171,20 +171,48 @@ pub fn session(account: &Account, project: &Project) -> Result<Session, String> 
 
 /// An account's token, renewing an expired GitLab sign-in first.
 pub(super) fn token(account: &Account) -> Result<String, String> {
+    token_renewing(account, false).map(|(t, _)| t)
+}
+
+/// Renewing is one at a time: GitLab renews a sign-in once and retires the
+/// old one, so two renewing at once (the lists and the avatars, when a
+/// repository opens) would leave whichever saved last, maybe retired.
+static RENEWING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// The token, renewed first when it has expired, or `now` (GitLab turned
+/// it down): and whether it was renewed.
+fn token_renewing(account: &Account, now: bool) -> Result<(String, bool), String> {
+    let _one_at_a_time = RENEWING.lock().unwrap_or_else(|e| e.into_inner());
+    // Read under the lock: another may have just renewed it.
     let mut secret = load(account)?;
-    let now = crate::settings::now();
-    if let (Some(expires), Some(refresh)) = (secret.expires, secret.refresh.clone())
-        && expires - 60 < now
-    {
-        let client = account
-            .client
-            .as_deref()
-            .or_else(|| oauth::client_id(account.kind, &account.base))
-            .ok_or("signing in again is needed")?;
-        secret = oauth::refresh(account.kind, &account.base, client, &refresh)?;
-        save(account, &secret)?;
+    let Some(refresh) = secret.refresh.clone() else {
+        return Ok((secret.token, false));
+    };
+    let expired = secret
+        .expires
+        .is_some_and(|e| e - 60 < crate::settings::now());
+    if !(now || expired) {
+        return Ok((secret.token, false));
     }
-    Ok(secret.token)
+    let client = account
+        .client
+        .as_deref()
+        .or_else(|| oauth::client_id(account.kind, &account.base))
+        .ok_or("signing in again is needed")?;
+    let mut renewed = oauth::refresh(account.kind, &account.base, client, &refresh)?;
+    // Kept if the answer has none of its own.
+    if renewed.refresh.is_none() {
+        renewed.refresh = Some(refresh);
+    }
+    save(account, &renewed)?;
+    secret = renewed;
+    Ok((secret.token, true))
+}
+
+/// The forge turned the account's token down: renews it, if it can be
+/// (a GitLab sign-in through the browser). Whether it was.
+pub fn renew(account: &Account) -> bool {
+    matches!(token_renewing(account, true), Ok((_, true)))
 }
 
 /// What Git asks for when it signs in over HTTPS.
@@ -341,6 +369,89 @@ pub fn create_repository(
 mod tests {
     use super::super::http::mock;
     use super::*;
+
+    /// A GitLab account signed in through the browser, at `base`.
+    fn browser_account(base: &str, login: &str, expires: i64) -> Account {
+        use_memory_store();
+        let account = Account {
+            kind: Kind::GitLab,
+            base: base.into(),
+            login: login.into(),
+            client: Some("cid".into()),
+        };
+        save(
+            &account,
+            &Secret {
+                token: "old".into(),
+                refresh: Some("r1".into()),
+                expires: Some(expires),
+            },
+        )
+        .unwrap();
+        account
+    }
+
+    #[test]
+    fn renews_an_expired_sign_in_once_however_many_ask() {
+        // One renewal answered; a second would fail (GitLab retires the
+        // old refresh token on use).
+        let (base, seen) = mock::serve(vec![
+            (
+                200,
+                r#"{"access_token": "new", "refresh_token": "r2", "expires_in": 7200}"#.into(),
+            ),
+            (400, r#"{"error": "invalid_grant"}"#.into()),
+        ]);
+        let account = browser_account(&base, "many", 0);
+        let tokens: Vec<String> = (0..4)
+            .map(|_| {
+                let a = account.clone();
+                std::thread::spawn(move || token(&a))
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|t| t.join().unwrap().unwrap())
+            .collect();
+        assert_eq!(tokens, ["new", "new", "new", "new"]);
+        assert_eq!(seen.lock().unwrap().len(), 1, "renewed once");
+        assert_eq!(load(&account).unwrap().refresh.as_deref(), Some("r2"));
+    }
+
+    #[test]
+    fn renews_a_sign_in_the_forge_turned_down() {
+        // Not expired by the clock, but turned down: renewed on asking,
+        // keeping the refresh token when the answer has none.
+        let (base, seen) = mock::serve(vec![(
+            200,
+            r#"{"access_token": "fresh", "expires_in": 7200}"#.into(),
+        )]);
+        let far = crate::settings::now() + 3600;
+        let account = browser_account(&base, "refused", far);
+        assert_eq!(token(&account).unwrap(), "old", "not expired: as it is");
+        assert!(renew(&account));
+        assert_eq!(token(&account).unwrap(), "fresh");
+        assert_eq!(load(&account).unwrap().refresh.as_deref(), Some("r1"));
+        assert!(
+            seen.lock().unwrap()[0]
+                .2
+                .contains("grant_type=refresh_token")
+        );
+        // A token of one's own (no refresh token) can't be renewed.
+        let own = Account {
+            login: "pat".into(),
+            ..account.clone()
+        };
+        save(
+            &own,
+            &Secret {
+                token: "glpat".into(),
+                refresh: None,
+                expires: None,
+            },
+        )
+        .unwrap();
+        assert!(!renew(&own));
+    }
 
     #[test]
     fn signs_in_with_a_token_and_keeps_it() {

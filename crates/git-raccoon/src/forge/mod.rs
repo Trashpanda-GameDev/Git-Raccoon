@@ -7,7 +7,7 @@
 pub mod accounts;
 mod github;
 mod gitlab;
-mod http;
+pub mod http;
 pub mod images;
 pub mod oauth;
 pub mod published;
