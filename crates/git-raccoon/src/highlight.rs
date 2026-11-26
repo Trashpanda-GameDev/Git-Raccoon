@@ -89,6 +89,84 @@ pub fn code(lang: &str, text: &str) -> Option<LayoutJob> {
     Some(job)
 }
 
+/// One line of a file, highlighted for its type (by `path`), in the
+/// diffs' colours; `muted` for lines that only give context. Lines are
+/// highlighted on their own (as conflicts show them, in pieces), and kept:
+/// they're drawn every frame.
+pub fn line(path: &str, text: &str, size: f32, muted: bool) -> LayoutJob {
+    type Key = (
+        String,
+        String,
+        u32,
+        bool,
+        two_face::theme::EmbeddedThemeName,
+    );
+    static SEEN: OnceLock<Mutex<HashMap<Key, LayoutJob>>> = OnceLock::new();
+    let syntax = syntax_for(path);
+    let key: Key = (
+        syntax.map_or_else(String::new, |s| s.name.clone()),
+        text.to_string(),
+        size.to_bits(),
+        muted,
+        theme::syntax(),
+    );
+    let seen = SEEN.get_or_init(Mutex::default);
+    if let Some(job) = seen
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&key)
+    {
+        return job.clone();
+    }
+    let mut highlighter = syntax.map(|s| HighlightLines::new(s, syntax_theme()));
+    let mut job = LayoutJob::default();
+    for (range, color, italics) in spans(highlighter.as_mut(), text) {
+        job.append(
+            &text[range],
+            0.0,
+            TextFormat {
+                font_id: theme::mono(size),
+                color: if muted {
+                    color.gamma_multiply(0.6)
+                } else {
+                    color
+                },
+                italics,
+                ..Default::default()
+            },
+        );
+    }
+    let mut seen = seen.lock().unwrap_or_else(PoisonError::into_inner);
+    if seen.len() > 8_000 {
+        seen.clear();
+    }
+    seen.insert(key, job.clone());
+    job
+}
+
+/// A whole file's text, highlighted for its type, as one block.
+pub fn block(path: &str, text: &str, size: f32) -> LayoutJob {
+    let mut highlighter = syntax_for(path)
+        .filter(|_| text.len() <= MAX_HIGHLIGHT_BYTES)
+        .map(|s| HighlightLines::new(s, syntax_theme()));
+    let mut job = LayoutJob::default();
+    let format = |color, italics| TextFormat {
+        font_id: theme::mono(size),
+        color,
+        italics,
+        ..Default::default()
+    };
+    for (i, line) in text.split('\n').enumerate() {
+        if i > 0 {
+            job.append("\n", 0.0, format(theme::text(), false));
+        }
+        for (range, color, italics) in spans(highlighter.as_mut(), line) {
+            job.append(&line[range], 0.0, format(color, italics));
+        }
+    }
+    job
+}
+
 /// A row of the unified layout.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Row {

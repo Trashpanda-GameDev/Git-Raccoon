@@ -207,10 +207,18 @@ pub fn show(
             };
             line(ui, row_height, fill, |ui| {
                 gutter(ui, None, no, width);
-                ui.add(
-                    egui::Label::new(RichText::new(text).monospace().size(CODE).color(colour))
-                        .wrap_mode(egui::TextWrapMode::Extend),
-                );
+                // The file's lines in its colours; a note about an open
+                // conflict in its own.
+                let text: egui::WidgetText = if no.is_some() {
+                    crate::highlight::line(&open.file, &text, CODE, false).into()
+                } else {
+                    RichText::new(text)
+                        .monospace()
+                        .size(CODE)
+                        .color(colour)
+                        .into()
+                };
+                ui.add(egui::Label::new(text).wrap_mode(egui::TextWrapMode::Extend));
             });
         }
     });
@@ -391,13 +399,8 @@ fn side_pane(
                     line(ui, row_height, None, |ui| {
                         gutter(ui, Some(None), Some(*no), width);
                         ui.add(
-                            egui::Label::new(
-                                RichText::new(*text)
-                                    .monospace()
-                                    .size(CODE)
-                                    .color(theme::muted()),
-                            )
-                            .wrap_mode(egui::TextWrapMode::Extend),
+                            egui::Label::new(crate::highlight::line(&open.file, text, CODE, true))
+                                .wrap_mode(egui::TextWrapMode::Extend),
                         );
                     });
                 }
@@ -449,12 +452,9 @@ fn side_pane(
                         }
                         let text = ui
                             .add(
-                                egui::Button::new(
-                                    RichText::new(*text)
-                                        .monospace()
-                                        .size(CODE)
-                                        .color(theme::text()),
-                                )
+                                egui::Button::new(crate::highlight::line(
+                                    &open.file, text, CODE, false,
+                                ))
                                 .frame(false)
                                 .wrap_mode(egui::TextWrapMode::Extend),
                             )

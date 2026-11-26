@@ -145,6 +145,7 @@ impl Section {
                 settings.fetch_prune = d.fetch_prune;
                 settings.fetch_force = d.fetch_force;
                 settings.remember_resolutions = d.remember_resolutions;
+                settings.push_tags = d.push_tags;
                 settings.auto_fetch_minutes = d.auto_fetch_minutes;
                 settings.split_diff = d.split_diff;
                 settings.whole_file = d.whole_file;
@@ -249,6 +250,12 @@ const ROWS: &[Row] = &[
         name: "Fetching",
         hint: "",
         words: "fetch prune deleted remote branches tags force",
+    },
+    Row {
+        section: Section::Git,
+        name: "Pushing",
+        hint: "Push's menu can push the tags on their own.",
+        words: "push tags with branches send",
     },
     Row {
         section: Section::Git,
@@ -2093,6 +2100,13 @@ fn control(
                 RichText::new("Can drop tags you made here; asks first.")
                     .size(12.0)
                     .color(theme::modified()),
+            );
+        }
+        "Pushing" => {
+            ui.checkbox(&mut settings.push_tags, "Push tags with branches");
+            hint(
+                ui,
+                "Every push also sends the tags you've made (git push --tags), so they reach the remote without a step of their own.",
             );
         }
         "Conflicts" => {

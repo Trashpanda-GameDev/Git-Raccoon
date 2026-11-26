@@ -172,6 +172,8 @@ pub struct Settings {
     /// Have Git remember how conflicts were resolved, and resolve the same
     /// ones that way again (rerere, for the app's Git only).
     pub remember_resolutions: bool,
+    /// Pushing a branch sends the tags too (`git push --tags`).
+    pub push_tags: bool,
     /// The conflict editor as panes (each side's whole file, and the
     /// output), rather than a card per conflict.
     pub conflict_panes: bool,
@@ -397,6 +399,7 @@ impl Default for Settings {
             auto_fetch_minutes: 10,
             fetch_force: false,
             remember_resolutions: false,
+            push_tags: false,
             conflict_panes: false,
             pull: PullOptions::default(),
             hide_sidebar: false,

@@ -997,6 +997,11 @@ pub enum Action {
     SetUpstream(String),
     DeleteBranch(String),
     DeleteTag(String),
+    /// Push a tag to a remote.
+    PushTag {
+        name: String,
+        remote: String,
+    },
     /// Add a remote (`None`) or edit one.
     EditRemote(Option<String>),
     RemoveRemote(String),
@@ -1364,6 +1369,16 @@ pub fn set_request_noun(ctx: &egui::Context, noun: Option<String>) {
     ctx.data_mut(|d| d.insert_temp(egui::Id::new("request-noun"), noun));
 }
 
+/// The open repository's remotes, for menus that push to one.
+pub fn remotes(ctx: &egui::Context) -> Vec<String> {
+    ctx.data(|d| d.get_temp::<Vec<String>>(egui::Id::new("remotes")))
+        .unwrap_or_default()
+}
+
+pub fn set_remotes(ctx: &egui::Context, remotes: Vec<String>) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("remotes"), remotes));
+}
+
 /// What can be done with a remote branch ("origin/x") at `target`.
 pub fn remote_branch_items(
     full_name: &str,
@@ -1408,19 +1423,30 @@ pub fn remote_branch_items(
     ]
 }
 
-/// What can be done with a tag at `target`.
-pub fn tag_items(name: &str, target: &str) -> Vec<(String, bool, Action)> {
-    vec![
-        (
-            "Create branch here…".into(),
+/// What can be done with a tag at `target`: pushing it to each of
+/// `remotes` too.
+pub fn tag_items(name: &str, target: &str, remotes: &[String]) -> Vec<(String, bool, Action)> {
+    let mut items = vec![(
+        "Create branch here…".into(),
+        true,
+        Action::NewBranch {
+            start: target.into(),
+            label: name.into(),
+        },
+    )];
+    for remote in remotes {
+        items.push((
+            format!("Push to {remote}"),
             true,
-            Action::NewBranch {
-                start: target.into(),
-                label: name.into(),
+            Action::PushTag {
+                name: name.into(),
+                remote: remote.clone(),
             },
-        ),
-        ("Delete…".into(), true, Action::DeleteTag(name.into())),
-    ]
+        ));
+    }
+    // Here, on remotes, or both: it asks.
+    items.push(("Delete…".into(), true, Action::DeleteTag(name.into())));
+    items
 }
 
 /// Shows the sidebar.
@@ -1905,7 +1931,9 @@ pub fn show(
                         response.context_menu(|ui| {
                             copy_name(ui, &t.name);
                             web_items(ui, &mut c.action, page.as_ref());
-                            menu(ui, &mut c.action, tag_items(&t.name, &t.target));
+                            let remotes: Vec<String> =
+                                refs.remotes.iter().map(|r| r.name.clone()).collect();
+                            menu(ui, &mut c.action, tag_items(&t.name, &t.target, &remotes));
                         });
                     }
                 });

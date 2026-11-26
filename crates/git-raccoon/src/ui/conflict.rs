@@ -374,8 +374,12 @@ pub fn show(
                                 .show(ui, |ui| {
                                     ui.set_width(ui.available_width());
                                     ui.add(
-                                        egui::Label::new(RichText::new(text).monospace())
-                                            .selectable(true),
+                                        egui::Label::new(crate::highlight::block(
+                                            &open.file,
+                                            text,
+                                            theme::MONO_SIZE,
+                                        ))
+                                        .selectable(true),
                                     );
                                 });
                         }
@@ -413,7 +417,12 @@ fn chunk_list(
                     lines
                 };
                 for line in shown {
-                    ui.label(RichText::new(line).monospace().color(theme::muted()));
+                    ui.label(crate::highlight::line(
+                        &open.file,
+                        line,
+                        theme::MONO_SIZE,
+                        true,
+                    ));
                 }
             }
             Chunk::Conflict(c) => {
@@ -567,7 +576,10 @@ fn conflict_card(
                     for (line_no, line) in text.lines().enumerate() {
                         let key = (index, *column, line_no);
                         let mut on = open.ticked.contains(&key);
-                        let tick = ui.checkbox(&mut on, RichText::new(line).monospace());
+                        let tick = ui.checkbox(
+                            &mut on,
+                            crate::highlight::line(&open.file, line, theme::MONO_SIZE, false),
+                        );
                         let label =
                             format!("Take line {} of {title} in conflict {number}", line_no + 1);
                         ui.ctx()

@@ -1559,7 +1559,7 @@ fn commit_menu(
                 sidebar::local_branch_items(&r.name, &c.id, r.is_head, head, noun.as_deref())
             }
             RefKind::Remote => sidebar::remote_branch_items(&r.name, &c.id, head),
-            RefKind::Tag => sidebar::tag_items(&r.name, &c.id),
+            RefKind::Tag => sidebar::tag_items(&r.name, &c.id, &sidebar::remotes(ui.ctx())),
             RefKind::Head | RefKind::Stash => Vec::new(),
         };
         let items: Vec<_> = items

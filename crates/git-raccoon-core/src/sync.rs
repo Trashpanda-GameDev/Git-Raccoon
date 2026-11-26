@@ -2,7 +2,23 @@
 //! keys and credential helpers apply. Progress is reported as Git prints
 //! it, and each can be cancelled.
 
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Whether pushing a branch sends the tags too (Settings).
+static PUSH_TAGS: AtomicBool = AtomicBool::new(false);
+
+/// Pushes send every tag along with the branch (`git push --tags`), or not.
+pub fn set_push_tags(on: bool) {
+    PUSH_TAGS.store(on, Ordering::Relaxed);
+}
+
+/// A push's arguments, with `--tags` when tags go too.
+fn with_tags(mut args: Vec<&str>) -> Vec<&str> {
+    if PUSH_TAGS.load(Ordering::Relaxed) {
+        args.insert(2, "--tags");
+    }
+    args
+}
 
 use git2::Repository;
 
@@ -379,6 +395,26 @@ pub fn push(
     }
     args.push(&remote);
     args.push(&refspec);
+    run_push(path, &with_tags(args), on, cancel)
+}
+
+/// Pushes tags to `remote`: these ones, or every tag when `names` is empty.
+pub fn push_tags(
+    path: &str,
+    remote: &str,
+    names: &[String],
+    on: &mut dyn FnMut(Progress),
+    cancel: &AtomicBool,
+) -> Result<()> {
+    let refspecs: Vec<String> = names
+        .iter()
+        .map(|n| format!("refs/tags/{n}:refs/tags/{n}"))
+        .collect();
+    let mut args = vec!["push", "--progress", remote];
+    if refspecs.is_empty() {
+        args.push("--tags");
+    }
+    args.extend(refspecs.iter().map(String::as_str));
     run_push(path, &args, on, cancel)
 }
 
@@ -400,7 +436,7 @@ pub fn push_to(
     let refspec = format!("{}:refs/heads/{branch}", cur.branch);
     args.push(remote);
     args.push(&refspec);
-    run_push(path, &args, on, cancel)
+    run_push(path, &with_tags(args), on, cancel)
 }
 
 /// Pushes branch `branch` (checked out or not) to the same name on
@@ -415,7 +451,13 @@ pub fn push_branch(
     let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
     run_push(
         path,
-        &["push", "--progress", "--set-upstream", remote, &refspec],
+        &with_tags(vec![
+            "push",
+            "--progress",
+            "--set-upstream",
+            remote,
+            &refspec,
+        ]),
         on,
         cancel,
     )
@@ -660,6 +702,39 @@ mod tests {
         assert!(on_remote("v1"), "back, as the same annotated tag");
         let there = cli::run(s.a.path(), &["ls-remote", "--tags", "origin", "v1"], None).unwrap();
         assert!(there.starts_with(&id), "{there} / {id}");
+    }
+
+    #[test]
+    fn pushes_tags_one_by_one_all_at_once_or_with_the_branch() {
+        let s = setup();
+        let none = AtomicBool::new(false);
+        let on_remote = |name: &str| {
+            !cli::run(s.a.path(), &["ls-remote", "--tags", "origin", name], None)
+                .unwrap()
+                .trim()
+                .is_empty()
+        };
+        cli::run(s.a.path(), &["tag", "v1"], None).unwrap();
+        cli::run(s.a.path(), &["tag", "-a", "v2", "-m", "Two"], None).unwrap();
+        cli::run(s.a.path(), &["tag", "v3"], None).unwrap();
+        // One, by name.
+        push_tags(s.a.path(), "origin", &["v1".into()], &mut |_| {}, &none).unwrap();
+        assert!(on_remote("v1") && !on_remote("v2"));
+        // Every one.
+        push_tags(s.a.path(), "origin", &[], &mut |_| {}, &none).unwrap();
+        assert!(on_remote("v2") && on_remote("v3"));
+        // With the branch, when that's asked for (and not otherwise).
+        commit_file(&s.a, "f.txt", "tagged\n", "tagged");
+        cli::run(s.a.path(), &["tag", "v4"], None).unwrap();
+        push(s.a.path(), false, &mut |_| {}, &none).unwrap();
+        assert!(!on_remote("v4"), "not without asking");
+        cli::run(s.a.path(), &["tag", "v5"], None).unwrap();
+        commit_file(&s.a, "f.txt", "again\n", "again");
+        set_push_tags(true);
+        let pushed = push(s.a.path(), false, &mut |_| {}, &none);
+        set_push_tags(false);
+        pushed.unwrap();
+        assert!(on_remote("v4") && on_remote("v5"), "sent with the branch");
     }
 
     #[test]

@@ -2625,6 +2625,60 @@ fn the_side_panels_are_as_wide_as_you_drag_them() {
 }
 
 #[test]
+fn pushes_tags_from_their_menu_from_push_and_with_branches() {
+    let sample = Sample::build();
+    let bare = sample.dir.with_extension("pushtags.git");
+    git(&sample, &["init", "-q", "--bare", bare.to_str().unwrap()]);
+    git(
+        &sample,
+        &["remote", "set-url", "origin", bare.to_str().unwrap()],
+    );
+    git(&sample, &["push", "-q", "-u", "origin", "main"]);
+    git(&sample, &["tag", "v0.2.0"]);
+    git(&sample, &["tag", "v0.3.0"]);
+    let there = |name: &str| {
+        let out = std::process::Command::new("git")
+            .args(["ls-remote", "--tags", bare.to_str().unwrap(), name])
+            .output()
+            .unwrap();
+        !String::from_utf8_lossy(&out.stdout).trim().is_empty()
+    };
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    settle(&mut h);
+
+    // One tag, from its menu.
+    menu_item(&mut h, "v0.1.0", "Push to origin");
+    settle(&mut h);
+    assert!(there("v0.1.0") && !there("v0.2.0"));
+
+    // Every tag, from Push's menu.
+    h.get_by_label("Push options").click();
+    h.run_ok();
+    screenshot(&mut h, "111-push-menu");
+    h.get_by_label("Push all tags").click();
+    settle(&mut h);
+    assert!(there("v0.2.0") && there("v0.3.0"));
+
+    // With every push, once that's ticked.
+    h.get_by_label("Push options").click();
+    h.run_ok();
+    h.get_by_label("Push tags with branches").click();
+    h.run_ok();
+    assert!(h.state().settings().push_tags);
+    h.key_press(Key::Escape);
+    h.run_ok();
+    sample.write("README.md", "# Sample\n\ntagged\n");
+    git(&sample, &["commit", "-q", "-am", "Tagged"]);
+    git(&sample, &["tag", "v0.4.0"]);
+    settle(&mut h);
+    h.get_by_label("Push").click();
+    settle(&mut h);
+    assert!(there("v0.4.0"), "sent with the branch");
+    assert_eq!(h.state().error(), None);
+}
+
+#[test]
 fn deletes_a_tag_here_on_the_remote_or_both() {
     use egui::accesskit::Role;
     let sample = Sample::build();
@@ -7278,10 +7332,14 @@ fn settings_are_in_sections_and_can_be_searched() {
     h.get_by_label("Rebase my commits on top").click();
     h.run_ok();
     assert_eq!(h.state().settings().pull.strategy, PullStrategy::Rebase);
+    h.get_by_label("Side by side").scroll_to_me();
+    h.run_ok();
     h.get_by_label("Side by side").click();
     h.run_ok();
     assert!(h.state().settings().split_diff);
     screenshot(&mut h, "63-settings-git");
+    h.get_by_label("Reset Git to defaults").scroll_to_me();
+    h.run_ok();
     h.get_by_label("Reset Git to defaults").click();
     h.run_ok();
     assert_eq!(
@@ -8360,6 +8418,55 @@ fn opens_files_in_the_diff_tool_and_the_editor() {
     assert!(after.ends_with("repo_loader.after.rs"), "{diff}");
     assert!(h.state().error().is_none());
     let _ = std::fs::remove_file(&out);
+}
+
+#[test]
+fn highlights_code_in_conflicts() {
+    use egui::accesskit::Role;
+    let sample = Sample::build();
+    let base = "fn main() {\n    // Start up.\n    let size = 1;\n    println!(\"{size}\");\n}\n";
+    sample.write("src/main.rs", base);
+    git(&sample, &["add", "."]);
+    git(&sample, &["commit", "-q", "-m", "Main"]);
+    git(&sample, &["switch", "-q", "-c", "clash"]);
+    sample.write(
+        "src/main.rs",
+        base.replace("let size = 1;", "let size = 2; // bigger"),
+    );
+    git(&sample, &["commit", "-q", "-am", "Bigger"]);
+    git(&sample, &["switch", "-q", "main"]);
+    sample.write(
+        "src/main.rs",
+        base.replace("let size = 1;", "let size: u32 = 3;"),
+    );
+    git(&sample, &["commit", "-q", "-am", "Typed"]);
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    menu_item(&mut h, "clash", "Merge into main");
+    h.get_by_role_and_label(Role::Button, "Merge").click();
+    wait_for(&mut h, "the conflict", |app| conflicted(app) == 1);
+    h.get_by_label("Resolve src/main.rs").click();
+    wait_for(&mut h, "the file", |app| {
+        app.repo().unwrap().conflict.is_some()
+    });
+    h.run_ok();
+    // The code reads as code (its lines, coloured for Rust), still a line
+    // to tick.
+    h.get_all_by_label_contains("Take line 1 of")
+        .next()
+        .unwrap();
+    screenshot(&mut h, "110-conflict-cards-highlighted");
+    h.get_by_label("Show as panes").click();
+    h.run_ok();
+    screenshot(&mut h, "110b-conflict-panes-highlighted");
+    // Rust's colours, not plain text: more than one colour in a line.
+    let job = git_raccoon::highlight_line_for_tests("src/main.rs", "    let size: u32 = 3;");
+    let colours: std::collections::BTreeSet<_> = job
+        .sections
+        .iter()
+        .map(|s| s.format.color.to_array())
+        .collect();
+    assert!(colours.len() > 1, "highlighted: {colours:?}");
 }
 
 #[test]

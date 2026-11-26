@@ -323,6 +323,11 @@ pub enum Op {
         branch: String,
     },
     /// Push the checked-out branch; `force` only with lease.
+    /// Push tags to a remote: these, or every one when `names` is empty.
+    PushTags {
+        remote: String,
+        names: Vec<String>,
+    },
     Push {
         force: bool,
         /// The remote and branch to push to and track, for a branch that
@@ -587,6 +592,9 @@ impl Op {
                 sync::pull(path, from.as_deref(), mode, stash, report, &ctl.cancel)
             }
             Op::Push { force, to: None } => sync::push(path, force, report, &ctl.cancel),
+            Op::PushTags { remote, names } => {
+                sync::push_tags(path, &remote, &names, report, &ctl.cancel)
+            }
             Op::PushBranch { remote, branch } => {
                 sync::push_branch(path, &remote, &branch, report, &ctl.cancel)
             }
@@ -691,7 +699,7 @@ impl Op {
             Op::Then(ops) => ops.first().map_or("undo", Op::verb),
             Op::Fetch(_) | Op::FetchRemote(..) => "fetch",
             Op::Pull { .. } => "pull",
-            Op::Push { .. } | Op::PushBranch { .. } => "push",
+            Op::Push { .. } | Op::PushBranch { .. } | Op::PushTags { .. } => "push",
             Op::DeleteRemoteBranch(_) => "delete the remote branch",
             Op::DeleteRemoteBranches(_) => "delete the remote branches",
             Op::FetchInto { .. } => "fetch",
@@ -2120,6 +2128,7 @@ impl RepoView {
                 | Op::Pull { .. }
                 | Op::Push { .. }
                 | Op::PushBranch { .. }
+                | Op::PushTags { .. }
                 | Op::UpdateSubmodule(_)
                 | Op::AddSubmodule { .. }
                 | Op::DeleteRemoteBranch(_)
@@ -3172,6 +3181,7 @@ impl RepoView {
             Op::Then(ops) => return ops.iter().rev().find_map(|o| self.ssh_remote(o)),
             Op::FetchRemote(r, _)
             | Op::PushBranch { remote: r, .. }
+            | Op::PushTags { remote: r, .. }
             | Op::Push {
                 to: Some((r, _)), ..
             }

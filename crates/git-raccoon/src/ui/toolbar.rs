@@ -27,6 +27,10 @@ pub enum Action {
     /// How Pull goes from now on.
     SetPullOptions(PullOptions),
     Push,
+    /// Push every tag to this remote.
+    PushTags(String),
+    /// Whether pushing sends the tags too, from now on.
+    SetPushTags(bool),
     CancelSync,
     Palette,
     /// Search the commits (as Ctrl+F does).
@@ -71,6 +75,8 @@ pub struct OpenRepo<'a> {
     pub auto_fetch: Option<String>,
     /// How Pull goes.
     pub pull: PullOptions,
+    /// Pushing sends the tags too.
+    pub push_tags: bool,
 }
 
 pub fn show(
@@ -494,7 +500,7 @@ fn sync_buttons(ui: &mut egui::Ui, repo: &OpenRepo<'_>) -> Option<Action> {
         let enabled = !repo.busy && (name != "Pull" || repo.upstream.is_some());
         // Fetch and Pull are split buttons: their options' arrow joined on
         // at the right.
-        let split = name == "Fetch" || name == "Pull";
+        let split = name == "Fetch" || name == "Pull" || name == "Push";
         ui.scope(|ui| {
             let round = ui.visuals().widgets.inactive.corner_radius;
             let mut button =
@@ -522,6 +528,7 @@ fn sync_buttons(ui: &mut egui::Ui, repo: &OpenRepo<'_>) -> Option<Action> {
                 "Fetch" => fetch_menu(ui, repo, enabled, height),
                 // Pulling from a remote needs no upstream.
                 "Pull" => pull_menu(ui, repo, !repo.busy, height),
+                "Push" => push_menu(ui, repo, !repo.busy, height),
                 _ => None,
             };
             if menu.is_some() {
@@ -627,6 +634,39 @@ fn pull_menu(ui: &mut egui::Ui, repo: &OpenRepo<'_>, enabled: bool, height: f32)
     } else {
         "Change how Pull goes"
     });
+    action
+}
+
+/// The menu beside Push: the tags on their own, and whether every push
+/// sends them too.
+fn push_menu(ui: &mut egui::Ui, repo: &OpenRepo<'_>, enabled: bool, height: f32) -> Option<Action> {
+    let mut action = None;
+    let arrow = options_arrow(ui, enabled, height, "Push options", |ui| {
+        if !repo.remotes.is_empty() {
+            heading(ui, "Tags");
+            for remote in &repo.remotes {
+                let text = if repo.remotes.len() == 1 {
+                    "Push all tags".to_string()
+                } else {
+                    format!("Push all tags to {remote}")
+                };
+                if ui.button(text).clicked() {
+                    action = Some(Action::PushTags((*remote).to_string()));
+                    ui.close();
+                }
+            }
+            ui.separator();
+        }
+        let mut tags = repo.push_tags;
+        toggles(ui, |ui| {
+            ui.checkbox(&mut tags, "Push tags with branches")
+                .on_hover_text("Every push also sends the tags you've made");
+        });
+        if tags != repo.push_tags {
+            action = Some(Action::SetPushTags(tags));
+        }
+    });
+    arrow.on_hover_text("Push the tags, or have every push send them too");
     action
 }
 

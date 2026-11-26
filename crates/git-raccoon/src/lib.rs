@@ -28,3 +28,8 @@ mod ui;
 pub mod updates;
 
 pub use app::App;
+
+/// A line highlighted as the conflict views show it (tests).
+pub fn highlight_line_for_tests(path: &str, text: &str) -> eframe::egui::text::LayoutJob {
+    highlight::line(path, text, 13.0, false)
+}

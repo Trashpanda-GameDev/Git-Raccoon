@@ -1400,6 +1400,10 @@ impl App {
                 (forge, None) => *forge = None,
             }
         }
+        crate::ui::sidebar::set_remotes(
+            ctx,
+            repo.refs.remotes.iter().map(|r| r.name.clone()).collect(),
+        );
         crate::ui::sidebar::set_request_noun(
             ctx,
             repo.forge
@@ -1994,6 +1998,7 @@ impl App {
                     fetch: self.settings.fetch_options(),
                     auto_fetch: r.auto_fetch_status(self.settings.auto_fetch_minutes.min(60)),
                     pull: self.settings.pull,
+                    push_tags: self.settings.push_tags,
                 });
                 toolbar::show(
                     ui,
@@ -2037,6 +2042,18 @@ impl App {
                 }
             }
             Some(toolbar::Action::SetPullOptions(options)) => self.settings.pull = options,
+            Some(toolbar::Action::SetPushTags(on)) => self.settings.push_tags = on,
+            Some(toolbar::Action::PushTags(remote)) => {
+                if let Some(repo) = &mut self.repo {
+                    repo.run(
+                        &ctx,
+                        Op::PushTags {
+                            remote,
+                            names: Vec::new(),
+                        },
+                    );
+                }
+            }
             Some(toolbar::Action::Push) => {
                 if let Some(r) = &mut self.repo {
                     r.push(&ctx);
@@ -3202,6 +3219,7 @@ impl eframe::App for App {
         self.apply_look(ctx);
         self.updater.tick(ctx, !self.settings.no_update_checks);
         git_raccoon_core::conflict::set_remember(self.settings.remember_resolutions);
+        git_raccoon_core::sync::set_push_tags(self.settings.push_tags);
         if let Some(i) = self.switch_to.take() {
             self.use_profile(i);
         }
@@ -3604,6 +3622,13 @@ fn repo_action(repo: &mut RepoView, ctx: &egui::Context, action: sidebar::Action
         }
         sidebar::Action::DeleteRemoteBranch(name) => repo.confirm_delete_remote_branch(name),
         sidebar::Action::DeleteTag(name) => repo.confirm_delete_tag(name),
+        sidebar::Action::PushTag { name, remote } => repo.run(
+            ctx,
+            Op::PushTags {
+                remote,
+                names: vec![name],
+            },
+        ),
         sidebar::Action::EditRemote(name) => repo.edit_remote(name),
         sidebar::Action::RemoveRemote(name) => repo.confirm_remove_remote(name),
         sidebar::Action::ChangeRemoteUrl { name, url, how } => {
