@@ -48,6 +48,8 @@ pub enum Command {
     /// The open file's history or blame.
     FileHistory,
     Blame,
+    /// The open file, in the chosen editor, at the line looked at.
+    OpenInEditor,
     /// Find which commit broke something (the selected one, or HEAD, broken).
     FindBreak,
     /// Use this profile (by its place in the list).
@@ -180,6 +182,7 @@ pub const SHORTCUTS: &[(Command, Option<KeyboardShortcut>)] = &[
     (Command::CheckForUpdates, None),
     (Command::FileHistory, None),
     (Command::Blame, None),
+    (Command::OpenInEditor, None),
     (Command::Continue, None),
     (Command::Abort, None),
 ];

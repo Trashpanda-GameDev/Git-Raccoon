@@ -99,7 +99,7 @@ Moving around:
 
 ### The sidebar
 
-- **Click** an item to jump to its commit. The **filter** box at the top narrows the lists.
+- **Click** an item to jump to its commit. The **filter** box at the top narrows the lists; its **×** (or Esc) clears it.
 - **Click a heading** to collapse its section (it stays collapsed for that repository, after a restart too); **drag the line** between sections to resize them.
 - **Drag a branch** onto another to merge it; near the top or bottom of a section, the list scrolls to reach the rest.
 - **Right-click a heading** to hide sections you don't use (also in Settings › Appearance › Sidebar).
@@ -218,7 +218,7 @@ Options in the arrow menu:
 
 ### Pull
 
-By default, Pull only **fast-forwards**. If both sides have new commits, it asks whether to **merge** or **rebase**. Your uncommitted changes are put aside and back.
+By default, Pull only **fast-forwards**. If both sides have new commits, it asks whether to **merge** or **rebase**. Your uncommitted changes are put aside and back. Afterwards the branch's new commit is selected and scrolled into view, to see what came in.
 
 Options in the arrow menu:
 
@@ -413,7 +413,7 @@ Other programs can do some of the work: a **merge tool** for conflicts, a **diff
 
 **Opening a conflict in the merge tool:** **Open in KDiff3** in the conflict editor's header (the ▾ beside it lists the others found here), or on a file's row in the conflicts overview. The three versions are written out beside the file and the tool starts on them; a bar says it's open, with **Bring KDiff3 forward** and **Stop waiting**. When you save and close it there, its result comes back into the conflict editor to check before you **Mark resolved**. A tool that closes without saving changes nothing, and says so.
 
-**Open in the diff tool** and **Open in editor** are in a diff's title bar (a commit's file or your working changes); the editor opens the file at the line you picked, or the first change. A pull/merge request's **Changes** has the diff tool too, and the conflict editor opens the file in the editor at the conflict you're on.
+**Open in the diff tool** and **Open in editor** are in a diff's title bar (a commit's file or your working changes); the editor opens the file at the line you picked, or the first change. A pull/merge request's **Changes** has the diff tool too, and the conflict editor opens the file in the editor at the conflict you're on. **Right-click a file** in a list (your changes, a commit's files, the conflicted files) for **Open in editor**, and the command palette has *Open this file in …* for the file whose diff is open.
 
 ### A tool for some files
 

@@ -11,6 +11,9 @@ release page). Newest first; a version's heading is just its number.
   - **When an operation fails**, *Run it in the terminal* puts its Git command at the prompt, to run yourself and see all Git says.
   - **Finding which commit broke something** can test with Git's own `git bisect run`, in the terminal.
   - Settings › Tools › Terminal: built in (the new default), the system's own, or a command of your own (kept if you'd set one); and which shell.
+- **After a pull, the branch's new commit is in view** (#122): selected and scrolled to, so what came in is right there.
+- **An × clears the sidebar's filter** (#112), and so does Esc while typing in it.
+- **Open in editor from file lists and the palette** (#106): right-click a file in your changes, a commit's files or the conflicted files; or *Open this file in …* in the command palette, at the line you're looking at.
 - **Code in conflicts is highlighted** (#110): the conflict editor, in cards and in panes (each side and the output), colours the file's code for its language, as diffs do.
 
 ## 0.5.33

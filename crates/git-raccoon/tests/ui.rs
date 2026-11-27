@@ -5085,11 +5085,21 @@ fn fetches_pulls_and_pushes() {
         upstream_counts(app) == Some((0, 1))
     });
     screenshot(&mut h, "21-behind");
+    // Looking at an older commit: the pull brings the branch's new commit
+    // into view.
+    h.state_mut().repo_mut().unwrap().select_index(3);
+    h.run_ok();
     h.get_by_label("Pull").click();
     wait_for(&mut h, "the pull", |app| {
         upstream_counts(app) == Some((0, 0)) && !app.is_busy()
     });
     assert_eq!(read(&sample, "theirs.txt").as_deref(), Some("theirs\n"));
+    wait_for(&mut h, "the new commit selected", |app| {
+        app.repo()
+            .and_then(|r| r.selected.as_ref())
+            .is_some_and(|s| s.id == head_id(app))
+    });
+    assert_eq!(selected_summary(&h).as_deref(), Some("Add theirs.txt"));
 
     // Both sides move on: the push is refused, and the app offers a way on.
     someone_else_commits("more.txt");
@@ -8562,7 +8572,43 @@ fn opens_files_in_the_diff_tool_and_the_editor() {
     assert!(before.ends_with("repo_loader.before.rs"), "{diff}");
     assert!(after.ends_with("repo_loader.after.rs"), "{diff}");
     assert!(h.state().error().is_none());
+
+    // From the palette: the open file, at the line looked at.
+    std::fs::remove_file(&out).unwrap();
+    press(&mut h, egui::Modifiers::COMMAND, Key::K);
+    h.get_by_label("Command").type_text("open this file in git");
+    h.run_ok();
+    press(&mut h, egui::Modifiers::NONE, Key::Enter);
+    assert_eq!(wait(&mut h, "edit"), edit);
+
+    // From a file list's right-click menu, with no diff open.
+    std::fs::remove_file(&out).unwrap();
+    h.state_mut().repo_mut().unwrap().active_file = None;
+    h.run_ok();
+    menu_item(&mut h, "src/repo_loader.rs", "Open in editor");
+    assert_eq!(wait(&mut h, "edit"), format!("{file}:1"));
+    assert!(h.state().error().is_none());
     let _ = std::fs::remove_file(&out);
+}
+
+#[test]
+fn clears_the_branch_filter() {
+    let sample = Sample::build();
+    let mut h = harness(Settings::default());
+    open(&mut h, sample.path());
+    assert!(
+        h.query_by_label("Clear the filter").is_none(),
+        "only with a filter"
+    );
+    h.state_mut().repo_mut().unwrap().sidebar_filter = "toolbar".into();
+    h.run_ok();
+    assert!(h.query_by_label("main").is_none(), "filtered out");
+    screenshot(&mut h, "112-branch-filter");
+    h.get_by_label("Clear the filter").click();
+    h.run_ok();
+    assert_eq!(h.state().repo().unwrap().sidebar_filter, "");
+    assert!(h.query_all_by_label("main").count() > 0);
+    assert!(h.query_by_label("Clear the filter").is_none());
 }
 
 #[test]

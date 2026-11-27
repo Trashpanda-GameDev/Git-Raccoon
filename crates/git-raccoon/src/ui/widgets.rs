@@ -377,3 +377,50 @@ pub fn named_icon_button(ui: &mut Ui, glyph: &str, name: &str, enabled: bool) ->
         .accesskit_node_builder(response.id, |node| node.set_label(name));
     response.on_hover_text(name)
 }
+
+fn editor_id() -> egui::Id {
+    egui::Id::new("editor-chosen")
+}
+
+fn editor_asked_id() -> egui::Id {
+    egui::Id::new("editor-asked")
+}
+
+/// The editor chosen for this frame's repository (its name), for
+/// `editor_item`; `None` hides it.
+pub fn set_editor(ctx: &egui::Context, name: Option<String>) {
+    ctx.data_mut(|d| match name {
+        Some(n) => {
+            d.insert_temp(editor_id(), n);
+        }
+        None => d.remove::<String>(editor_id()),
+    });
+}
+
+/// "Open in <editor>" in a file's right-click menu, when one is chosen.
+/// Clicked, it asks for `path` to be opened (see `take_editor_asked`).
+pub fn editor_item(ui: &mut Ui, path: &str) {
+    let Some(name) = ui.data(|d| d.get_temp::<String>(editor_id())) else {
+        return;
+    };
+    let b = ui.button(format!(
+        "{}  Open in {name}",
+        egui_phosphor::regular::NOTE_PENCIL
+    ));
+    ui.ctx()
+        .accesskit_node_builder(b.id, |n| n.set_label("Open in editor"));
+    if b.clicked() {
+        let path = path.to_string();
+        ui.data_mut(|d| d.insert_temp(editor_asked_id(), path));
+        ui.close();
+    }
+}
+
+/// The file a menu asked to open in the editor this frame, if any.
+pub fn take_editor_asked(ctx: &egui::Context) -> Option<String> {
+    ctx.data_mut(|d| {
+        let asked = d.get_temp::<String>(editor_asked_id());
+        d.remove::<String>(editor_asked_id());
+        asked
+    })
+}

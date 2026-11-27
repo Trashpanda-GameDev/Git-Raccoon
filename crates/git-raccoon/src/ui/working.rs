@@ -155,6 +155,12 @@ fn bulk_menu(
         .map(|f| f.path.clone())
         .collect();
     let mut chosen = None;
+    if let (None, [one]) = (folder, files)
+        && one.status != git_raccoon_core::details::FileStatus::Deleted
+    {
+        widgets::editor_item(ui, &one.path);
+        ui.separator();
+    }
     let mut item = |ui: &mut egui::Ui, glyph: &str, text: String, enabled: bool, bulk: Bulk| {
         if ui
             .add_enabled(enabled, egui::Button::new(format!("{glyph}  {text}")))
@@ -355,6 +361,7 @@ pub fn show(ui: &mut egui::Ui, st: State<'_>) -> Option<Action> {
                     if row.clicked() {
                         action = Some(Action::OpenConflict(f.path.clone()));
                     }
+                    row.context_menu(|ui| widgets::editor_item(ui, &f.path));
                 }
                 ui.add_space(14.0);
                 ui.spacing_mut().item_spacing.y = 6.0;

@@ -1033,6 +1033,9 @@ impl App {
             | Command::ManageProfiles
             | Command::GoTo { .. } => true,
             Command::FileHistory | Command::Blame => repo.diff_key().is_some(),
+            Command::OpenInEditor => repo
+                .diff_key()
+                .is_some_and(|(_, file, _)| std::path::Path::new(repo.path()).join(file).is_file()),
             Command::GoToHead => repo.history.head_row().is_some(),
             Command::Undo => repo.undo.is_some() && !busy,
             Command::Fetch => !busy,
@@ -1123,6 +1126,13 @@ impl App {
         }
         add(Command::FileHistory, "History of this file".into());
         add(Command::Blame, "Blame this file".into());
+        if let Some(editor) = crate::tools::name_for(
+            &self.settings,
+            git_raccoon_core::tools::Role::Editor,
+            Some(repo.path()),
+        ) {
+            add(Command::OpenInEditor, format!("Open this file in {editor}"));
+        }
         add(Command::Find, "Search commits".into());
         add(Command::Refresh, "Refresh".into());
         add(Command::ToggleSidebar, "Show or hide the sidebar".into());
@@ -1282,6 +1292,19 @@ impl App {
                         repo.search.focus = true;
                     }
                     Command::Undo => repo.undo(ctx),
+                    Command::OpenInEditor => {
+                        if let Some(key) = repo.diff_key() {
+                            let line = repo.line_looked_at(&key);
+                            if let Err(e) = crate::tools::open_in_editor(
+                                &self.settings,
+                                repo.path(),
+                                &key.1,
+                                line,
+                            ) {
+                                self.error = Some(e);
+                            }
+                        }
+                    }
                     Command::FindBreak => {
                         let id = repo.selected.as_ref().map(|s| s.id.clone()).or_else(|| {
                             let row = repo.history.head_row()?;
@@ -3438,7 +3461,22 @@ impl App {
             }
         }
         let ctx = ui.ctx().clone();
+        // Files' right-click menus offer the editor chosen for this repository.
+        let editor = self.repo.as_ref().and_then(|r| {
+            crate::tools::name_for(
+                &self.settings,
+                git_raccoon_core::tools::Role::Editor,
+                Some(r.path()),
+            )
+        });
+        widgets::set_editor(&ctx, editor);
         self.panels(ui);
+        if let Some(file) = widgets::take_editor_asked(&ctx)
+            && let Some(repo) = &self.repo
+            && let Err(e) = crate::tools::open_in_editor(&self.settings, repo.path(), &file, 1)
+        {
+            self.error = Some(e);
+        }
         // A branch being dragged (from the sidebar or the graph) follows the pointer.
         sidebar::drag_label(ui.ctx());
         // Above everything: the clone and new-repository dialogs, then Git's

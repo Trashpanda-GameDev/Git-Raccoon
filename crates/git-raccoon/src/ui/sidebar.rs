@@ -1482,11 +1482,41 @@ pub fn show(
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.add_space(4.0);
-        ui.add(
+        let field = ui.add(
             egui::TextEdit::singleline(filter)
                 .hint_text(format!("{}  Filter…", icon::FUNNEL_SIMPLE))
+                .margin(egui::Margin {
+                    left: 4,
+                    right: 22,
+                    top: 2,
+                    bottom: 2,
+                })
                 .desired_width(ui.available_width() - 8.0),
         );
+        // An × inside it, at the end, to start again (Esc in it too).
+        if !filter.is_empty() {
+            let at = egui::Rect::from_center_size(
+                egui::pos2(field.rect.right() - 11.0, field.rect.center().y),
+                egui::vec2(18.0, field.rect.height()),
+            );
+            let clear = ui
+                .put(
+                    at,
+                    egui::Button::new(RichText::new(icon::X).size(13.0).color(theme::muted()))
+                        .frame(false),
+                )
+                .on_hover_text("Clear the filter");
+            ui.ctx()
+                .accesskit_node_builder(clear.id, |n| n.set_label("Clear the filter"));
+            if clear.clicked() {
+                filter.clear();
+                field.request_focus();
+            } else if (field.has_focus() || field.lost_focus())
+                && ui.input(|i| i.key_pressed(egui::Key::Escape))
+            {
+                filter.clear();
+            }
+        }
     });
     ui.add_space(4.0);
     ui.painter().hline(

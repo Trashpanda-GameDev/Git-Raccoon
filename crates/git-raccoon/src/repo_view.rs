@@ -1698,6 +1698,9 @@ pub struct RepoView {
     pub terminals: crate::ui::terminal_panel::Terminals,
     /// The Git command an operation that just failed stands for.
     pub failed_command: Option<String>,
+    /// A branch just pulled into (and where it was): once the history has
+    /// reloaded, its new commit is selected and scrolled to, if it moved.
+    reveal_branch: Option<(String, String)>,
     /// While something's in progress: its conflicted files (how each
     /// conflicts), the files resolved since it started, and whether the
     /// history is shown in place of the conflicts' overview.
@@ -1828,6 +1831,7 @@ impl RepoView {
             tool_results: Vec::new(),
             terminals: Default::default(),
             failed_command: None,
+            reveal_branch: None,
             conflict_files: Vec::new(),
             resolved_here: std::collections::BTreeSet::new(),
             history_over_conflicts: false,
@@ -3706,6 +3710,14 @@ impl RepoView {
             }
             self.picked.clear();
             self.pick_anchor = None;
+            if result.is_ok() && matches!(op, Op::Pull { .. }) {
+                self.reveal_branch = self
+                    .refs
+                    .local
+                    .iter()
+                    .find(|b| b.is_head)
+                    .map(|b| (b.name.clone(), b.target.clone()));
+            }
             match result {
                 Ok(Some(undo)) => self.undo = Some(undo),
                 // Something changed that can't be undone: older undos would be out of order.
@@ -3949,6 +3961,14 @@ impl RepoView {
             sel.row = self.history.locate(&sel.id);
         }
         self.search.restart(&self.history);
+        // Pulled: where the branch is now, in view.
+        if let Some((name, before)) = self.reveal_branch.take()
+            && let Some(b) = self.refs.local.iter().find(|b| b.name == name)
+            && before != b.target
+        {
+            let id = b.target.clone();
+            self.select(&id);
+        }
     }
 
     /// Selects a commit by id and scrolls to it.

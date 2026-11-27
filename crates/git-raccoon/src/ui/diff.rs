@@ -737,9 +737,6 @@ pub(crate) fn split_share(ctx: &egui::Context) -> f32 {
         .unwrap_or(0.5)
 }
 
-/// The line between the two sides, at `x` from `top` to `bottom`, as a
-/// handle: dragging it shares out `span` (where the two sides are) between
-/// them; a double-click gives them half each.
 /// "Open in Beyond Compare" and "Open in editor", for the tools chosen.
 pub(crate) fn open_with_buttons(
     ui: &mut egui::Ui,
@@ -772,6 +769,9 @@ pub(crate) fn open_with_buttons(
     action
 }
 
+/// The line between the two sides, at `x` from `top` to `bottom`, as a
+/// handle: dragging it shares out `span` (where the two sides are) between
+/// them; a double-click gives them half each.
 pub(crate) fn split_handle(ui: &mut egui::Ui, x: f32, ys: egui::Rangef, span: egui::Rangef) {
     let rect = Rect::from_x_y_ranges(x - 3.0..=x + 3.0, ys);
     let handle = ui.interact(rect, ui.id().with("split-handle"), Sense::click_and_drag());

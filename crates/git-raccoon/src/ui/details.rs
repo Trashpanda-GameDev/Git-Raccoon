@@ -204,9 +204,12 @@ pub fn show(
                 |f| f.path.as_str(),
                 tree,
                 |ui, f, shown| {
-                    if file_row_shown(ui, f, active_file == Some(f.path.as_str()), shown).clicked()
-                    {
+                    let row = file_row_shown(ui, f, active_file == Some(f.path.as_str()), shown);
+                    if row.clicked() {
                         action = Some(Action::OpenFile(f.path.clone()));
+                    }
+                    if f.status != git_raccoon_core::details::FileStatus::Deleted {
+                        row.context_menu(|ui| widgets::editor_item(ui, &f.path));
                     }
                 },
                 |_, _, _| {},
