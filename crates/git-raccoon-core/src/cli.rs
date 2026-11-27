@@ -63,6 +63,36 @@ fn identity() -> Option<(String, String)> {
     IDENTITY.lock().ok().and_then(|i| i.clone())
 }
 
+/// Variables for a terminal of the app's, so the Git run in it is like the
+/// app's own: commits by the profile in use, sign-in questions answered by
+/// the app (with its accounts) unless the person has their own askpass, and
+/// the SSH program chosen for the app.
+pub fn terminal_env() -> Vec<(String, String)> {
+    let mut env = Vec::new();
+    if let Some((name, email)) = identity() {
+        for who in ["AUTHOR", "COMMITTER"] {
+            env.push((format!("GIT_{who}_NAME"), name.clone()));
+            env.push((format!("GIT_{who}_EMAIL"), email.clone()));
+        }
+    }
+    if let Some(ask) = crate::askpass::current() {
+        env.push((crate::askpass::ENV.to_string(), ask.value.clone()));
+        if unset("GIT_ASKPASS") {
+            env.push((
+                "GIT_ASKPASS".into(),
+                ask.program.to_string_lossy().to_string(),
+            ));
+        }
+    }
+    if let Some(ssh) = ssh_command().filter(|_| unset("GIT_SSH_COMMAND") && unset("GIT_SSH")) {
+        env.push((
+            "GIT_SSH_COMMAND".into(),
+            format!("\"{}\"", ssh.replace('\\', "/")),
+        ));
+    }
+    env
+}
+
 /// Git's own `user.name` and `user.email` (global), where set.
 pub fn global_identity() -> (String, String) {
     let Ok(config) = git2::Config::open_default() else {

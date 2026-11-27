@@ -153,6 +153,8 @@ impl Section {
             }
             Section::Tools => {
                 settings.terminal = d.terminal;
+                settings.terminal_kind = d.terminal_kind;
+                settings.terminal_shell = d.terminal_shell;
                 settings.clone_dir = d.clone_dir;
                 settings.merge_tool = d.merge_tool;
                 settings.diff_tool = d.diff_tool;
@@ -338,8 +340,8 @@ const ROWS: &[Row] = &[
     Row {
         section: Section::Tools,
         name: "Terminal",
-        hint: "What \"Open a terminal here\" (Ctrl+`) runs.",
-        words: "terminal command shell console",
+        hint: "What \"Open a terminal here\" (Ctrl+`) opens.",
+        words: "terminal command shell console built in integrated bash zsh powershell",
     },
     Row {
         section: Section::Tools,
@@ -2254,17 +2256,68 @@ fn control(
         "Diff tool" => tool_picker(ui, settings, Role::Diff),
         "Editor" => tool_picker(ui, settings, Role::Editor),
         "Terminal" => {
-            let field = ui.add(
-                egui::TextEdit::singleline(&mut settings.terminal)
-                    .hint_text("The system's own")
-                    .desired_width(360.0),
-            );
+            use crate::settings::TerminalKind;
+            let name = |k: TerminalKind| match k {
+                TerminalKind::BuiltIn => "Built in",
+                TerminalKind::System => "The system's own",
+                TerminalKind::Custom => "Custom command…",
+            };
+            let combo = egui::ComboBox::from_id_salt("terminal-kind")
+                .selected_text(name(settings.terminal_kind))
+                .width(240.0)
+                .show_ui(ui, |ui| {
+                    for k in [
+                        TerminalKind::BuiltIn,
+                        TerminalKind::System,
+                        TerminalKind::Custom,
+                    ] {
+                        ui.selectable_value(&mut settings.terminal_kind, k, name(k));
+                    }
+                });
             ui.ctx()
-                .accesskit_node_builder(field.id, |n| n.set_label("Terminal command"));
-            hint(
-                ui,
-                "For another terminal, its command, like alacritty --working-directory \"{path}\"; {path} is the repository's folder.",
-            );
+                .accesskit_node_builder(combo.response.id, |n| n.set_label("Terminal"));
+            match settings.terminal_kind {
+                TerminalKind::BuiltIn => {
+                    hint(
+                        ui,
+                        "A terminal under the graph, one for each repository tab, in its folder. It commits as your profile and signs in with your accounts, as Git Raccoon does.",
+                    );
+                    ui.add_space(4.0);
+                    let usual = if cfg!(windows) {
+                        "Your usual shell (PowerShell)".to_string()
+                    } else {
+                        format!(
+                            "Your usual shell ({})",
+                            std::env::var("SHELL").unwrap_or_else(|_| "sh".into())
+                        )
+                    };
+                    let field = ui.add(
+                        egui::TextEdit::singleline(&mut settings.terminal_shell)
+                            .hint_text(usual)
+                            .desired_width(360.0),
+                    );
+                    ui.ctx()
+                        .accesskit_node_builder(field.id, |n| n.set_label("Terminal shell"));
+                    hint(
+                        ui,
+                        "Another shell, with its arguments: bash -l, pwsh, \"C:\\Program Files\\Git\\bin\\bash.exe\" --login.",
+                    );
+                }
+                TerminalKind::System => hint(ui, "Opens in a window of its own."),
+                TerminalKind::Custom => {
+                    let field = ui.add(
+                        egui::TextEdit::singleline(&mut settings.terminal)
+                            .hint_text("alacritty --working-directory \"{path}\"")
+                            .desired_width(360.0),
+                    );
+                    ui.ctx()
+                        .accesskit_node_builder(field.id, |n| n.set_label("Terminal command"));
+                    hint(
+                        ui,
+                        "Its command, like alacritty --working-directory \"{path}\"; {path} is the repository's folder.",
+                    );
+                }
+            }
         }
         "Agent access" => agent_access(ui, settings),
         "Connect an agent" => connect_agent(ui),

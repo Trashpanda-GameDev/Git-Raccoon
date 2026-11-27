@@ -19,6 +19,7 @@ pub mod repo_view;
 mod search;
 pub mod settings;
 mod task;
+pub mod term;
 pub mod terminal;
 mod theme;
 pub mod themes;

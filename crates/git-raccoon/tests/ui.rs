@@ -7313,6 +7313,102 @@ fn picks_a_merge_tool_diff_tool_and_editor() {
     let _ = std::fs::remove_dir_all(&bin);
 }
 
+/// What the built-in terminal in front shows.
+fn terminal_screen(app: &App) -> String {
+    app.repo()
+        .and_then(|r| r.terminals.list.get(r.terminals.active))
+        .map(|(_, t)| t.screen_text())
+        .unwrap_or_default()
+}
+
+/// Types into the terminal (it has the keyboard), and waits for `until`.
+fn type_in_terminal(h: &mut Harness<'_, App>, text: &str, until: &str) {
+    h.event(egui::Event::Text(text.into()));
+    h.event(egui::Event::Key {
+        key: Key::Enter,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_ok();
+    let begun = Instant::now();
+    while !terminal_screen(h.state()).contains(until) {
+        assert!(
+            begun.elapsed() < Duration::from_secs(20),
+            "no {until:?} in the terminal:\n{}",
+            terminal_screen(h.state())
+        );
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    h.run_ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn has_a_terminal_under_the_graph() {
+    let sample = Sample::build();
+    let mut h = harness(Settings {
+        terminal_shell: "/bin/sh".into(),
+        ..Settings::default()
+    });
+    open(&mut h, sample.path());
+    // Ctrl+`: a terminal, in the repository's folder, with the keyboard.
+    press(&mut h, egui::Modifiers::COMMAND, Key::Backtick);
+    h.run_ok();
+    h.run_ok();
+    assert!(h.state().repo().unwrap().terminals.shown);
+    type_in_terminal(&mut h, "pwd; echo hello-$((6*7))", "hello-42");
+    let screen = terminal_screen(h.state());
+    let folder = std::fs::canonicalize(&sample.dir).unwrap();
+    assert!(
+        screen.contains(folder.to_str().unwrap()) || screen.contains(sample.path()),
+        "in the repository's folder: {screen}"
+    );
+    // Keys are the shell's while it has the keyboard: Ctrl+K isn't the palette.
+    press(&mut h, egui::Modifiers::COMMAND, Key::K);
+    h.run_ok();
+    assert!(h.query_by_label("Search commands").is_none(), "no palette");
+
+    // A commit made in it is by the profile (as the app's own commits are),
+    // and shows in the graph. (%x41 is "A": only Git's answer says AUTHOR.)
+    let profile = git_raccoon::profiles::Profile {
+        name: "Work".into(),
+        commit_name: "Rocky at Work".into(),
+        email: "rocky@work.example".into(),
+        ..Default::default()
+    };
+    h.state_mut().settings_mut().profiles = vec![profile];
+    h.state_mut().settings_mut().active_profile = 0;
+    h.run_ok();
+    // A new terminal takes the profile in use.
+    h.get_by_label("Another terminal").click();
+    h.run_ok();
+    h.run_ok();
+    type_in_terminal(
+        &mut h,
+        "git commit -q --allow-empty -m 'From the terminal' && git log -1 --format='%x41UTHOR=%an <%ae>'",
+        "AUTHOR=",
+    );
+    let screen = terminal_screen(h.state());
+    assert!(
+        screen.contains("AUTHOR=Rocky at Work <rocky@work.example>"),
+        "{screen}"
+    );
+    assert_eq!(h.state().repo().unwrap().terminals.list.len(), 2);
+    wait_for(&mut h, "the graph", |app| {
+        head_summary(app) == "From the terminal"
+    });
+    screenshot(&mut h, "113-terminal");
+
+    // Ctrl+`, with the keyboard in it: hidden (still running).
+    press(&mut h, egui::Modifiers::COMMAND, Key::Backtick);
+    h.run_ok();
+    assert!(!h.state().repo().unwrap().terminals.shown);
+    assert_eq!(h.state().repo().unwrap().terminals.list.len(), 2);
+}
+
 #[test]
 fn settings_are_in_sections_and_can_be_searched() {
     use egui::accesskit::Role;
@@ -7349,7 +7445,7 @@ fn settings_are_in_sections_and_can_be_searched() {
     assert!(!h.state().settings().split_diff);
     // Searching finds a setting in any section.
     type_into(&mut h, "Search settings", "terminal");
-    h.get_by_label("Terminal command");
+    h.get_by_role_and_label(Role::ComboBox, "Terminal");
     assert!(h.query_by_label("Light or dark").is_none());
     screenshot(&mut h, "64-settings-search");
     h.get_by_label("Search settings").click();

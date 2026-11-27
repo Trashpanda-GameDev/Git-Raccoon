@@ -1232,7 +1232,15 @@ impl App {
             Command::ZoomReset => self.settings.zoom = None,
             Command::Feedback => self.open_feedback(ctx),
             Command::Terminal => {
-                if let Some(path) = self.repo.as_ref().map(|r| r.path().to_string()) {
+                if self.settings.terminal_kind == crate::settings::TerminalKind::BuiltIn {
+                    let start = self
+                        .repo
+                        .as_ref()
+                        .map(|r| terminal_start(&self.settings, r.path()));
+                    if let (Some(repo), Some(start)) = (&mut self.repo, start) {
+                        repo.terminals.toggle(ctx, &start);
+                    }
+                } else if let Some(path) = self.repo.as_ref().map(|r| r.path().to_string()) {
                     self.open_terminal(&path);
                 }
             }
@@ -1784,6 +1792,24 @@ impl App {
             || self.new_request.is_some()
             || dialog_open
         {
+            return;
+        }
+        // The terminal has the keyboard: every key is the program's, but
+        // Ctrl+` (to hide it).
+        if self
+            .repo
+            .as_ref()
+            .is_some_and(|r| r.terminals.shown && r.terminals.focused)
+        {
+            let toggle = commands::SHORTCUTS
+                .iter()
+                .find(|(c, _)| *c == Command::Terminal)
+                .and_then(|(_, s)| *s);
+            if let Some(s) = toggle
+                && ctx.input_mut(|i| i.consume_shortcut(&s))
+            {
+                self.run_command(ctx, Command::Terminal);
+            }
             return;
         }
         // While typing, only Ctrl+Shift shortcuts (and the palette) apply, so
@@ -2607,6 +2633,34 @@ impl App {
         egui::CentralPanel::no_frame()
             .frame(Frame::new().fill(theme::bg()))
             .show(ui, |ui| {
+                // The built-in terminal, along the bottom.
+                if repo.terminals.shown {
+                    let folder = repo.path().to_string();
+                    let who = terminal_who(&self.settings, repo);
+                    match crate::ui::terminal_panel::show(ui, &mut repo.terminals, &folder, &who) {
+                        Some(crate::ui::terminal_panel::Action::New) => {
+                            let start = terminal_start(&self.settings, &folder);
+                            repo.terminals.open(&ctx, &start);
+                        }
+                        Some(crate::ui::terminal_panel::Action::Restart(i)) => {
+                            let start = terminal_start(&self.settings, &folder);
+                            if i < repo.terminals.list.len() {
+                                repo.terminals.list.remove(i);
+                            }
+                            repo.terminals.open(&ctx, &start);
+                        }
+                        Some(crate::ui::terminal_panel::Action::Clicked(word)) => {
+                            if let Err(e) = follow_terminal_link(&self.settings, repo, &ctx, &word)
+                            {
+                                self.error = Some(e);
+                            }
+                        }
+                        None => {}
+                    }
+                    if repo.terminals.full {
+                        return;
+                    }
+                }
                 // A new pull/merge request being written, in place of the graph.
                 if let Some(form) = &mut self.new_request {
                     self.new_request_action = crate::ui::forge::new_request(ui, form);
@@ -3929,6 +3983,72 @@ fn start_merge_tool(
             v.clean_up();
             Err(e)
         }
+    }
+}
+
+/// What the built-in terminal runs, where, and as whom.
+fn terminal_start(settings: &crate::settings::Settings, folder: &str) -> crate::term::Start {
+    let words = git_raccoon_core::tools::words(&settings.terminal_shell);
+    let shell = words.split_first().map(|(p, a)| (p.clone(), a.to_vec()));
+    let mut env: std::collections::HashMap<String, String> =
+        git_raccoon_core::commit::terminal_env()
+            .into_iter()
+            .collect();
+    env.insert("TERM_PROGRAM".into(), "GitRaccoon".into());
+    env.insert(
+        "TERM_PROGRAM_VERSION".into(),
+        env!("CARGO_PKG_VERSION").into(),
+    );
+    crate::term::Start {
+        shell,
+        folder: folder.into(),
+        env,
+    }
+}
+
+/// "committing as Work · GitLab as rocky", for the terminal's header.
+fn terminal_who(settings: &crate::settings::Settings, repo: &RepoView) -> String {
+    let mut who = match settings.profile() {
+        Some(p) => format!("committing as {}", p.name),
+        None => "committing as yourself".into(),
+    };
+    if let Some(account) = repo.forge.as_ref().and_then(|f| f.account.as_ref()) {
+        who.push_str(&format!(" · {} as {}", account.kind.name(), account.login));
+    }
+    who
+}
+
+/// Ctrl+click on a word in the terminal: a commit shows in the graph, a
+/// file (with its line) opens in the editor, a link in the browser.
+fn follow_terminal_link(
+    settings: &crate::settings::Settings,
+    repo: &mut RepoView,
+    ctx: &egui::Context,
+    word: &str,
+) -> Result<(), String> {
+    match crate::term::link::classify(word) {
+        Some(crate::term::link::Link::Url(url)) => {
+            ctx.open_url(egui::OpenUrl::new_tab(url));
+            Ok(())
+        }
+        Some(crate::term::link::Link::Commit(sha)) => {
+            let id = git_raccoon_core::git_output(
+                repo.path(),
+                &[
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    &format!("{sha}^{{commit}}"),
+                ],
+            )
+            .map_err(|_| format!("{sha} isn't a commit here"))?;
+            repo.select(id.trim());
+            Ok(())
+        }
+        Some(crate::term::link::Link::File { path, line }) => {
+            crate::tools::open_in_editor(settings, repo.path(), &path, line).map(drop)
+        }
+        None => Ok(()),
     }
 }
 

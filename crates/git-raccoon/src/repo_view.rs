@@ -1638,6 +1638,8 @@ pub struct RepoView {
     rule_tool: Option<(String, Option<String>)>,
     /// What rules' merge tools did in what's in progress.
     pub tool_results: Vec<git_raccoon_core::rules::DriverResult>,
+    /// The built-in terminals for this repository (its tab's).
+    pub terminals: crate::ui::terminal_panel::Terminals,
     /// While something's in progress: its conflicted files (how each
     /// conflicts), the files resolved since it started, and whether the
     /// history is shown in place of the conflicts' overview.
@@ -1766,6 +1768,7 @@ impl RepoView {
             tool_note: None,
             rule_tool: None,
             tool_results: Vec::new(),
+            terminals: Default::default(),
             conflict_files: Vec::new(),
             resolved_here: std::collections::BTreeSet::new(),
             history_over_conflicts: false,

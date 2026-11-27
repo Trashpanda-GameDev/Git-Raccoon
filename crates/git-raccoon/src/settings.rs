@@ -209,6 +209,10 @@ pub struct Settings {
     /// The command that opens a terminal ("{path}" is the folder); empty
     /// for the system's own.
     pub terminal: String,
+    pub terminal_kind: TerminalKind,
+    /// The built-in terminal's shell and its arguments; empty for the
+    /// person's usual one.
+    pub terminal_shell: String,
     /// Sidebar sections not shown (by key: "local", "remotes", "requests",
     /// "issues", "tags", "stashes", "worktrees", "submodules").
     pub sidebar_hidden: Vec<String>,
@@ -241,8 +245,21 @@ pub struct Settings {
 }
 
 /// The current defaults: 1 since Raccoon became the default look, 2 since
-/// every look comes dark and light, 3 since the version run is noted.
-const DEFAULTS: u32 = 3;
+/// every look comes dark and light, 3 since the version run is noted, 4
+/// since the terminal is built in.
+const DEFAULTS: u32 = 4;
+
+/// Which terminal Ctrl+` and "Open a terminal here" open.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TerminalKind {
+    /// Git Raccoon's own, under the graph.
+    #[default]
+    BuiltIn,
+    /// The system's usual terminal, in a window of its own.
+    System,
+    /// The command in `terminal`.
+    Custom,
+}
 
 /// The look: which family of colours (each comes dark and light; see
 /// [`ThemeMode`]).
@@ -412,6 +429,8 @@ impl Default for Settings {
             accounts: Vec::new(),
             file_tree: false,
             terminal: String::new(),
+            terminal_kind: TerminalKind::default(),
+            terminal_shell: String::new(),
             sidebar_hidden: Vec::new(),
             review_drafts: std::collections::BTreeMap::new(),
             pinned_branches: std::collections::BTreeMap::new(),
@@ -501,6 +520,11 @@ impl Settings {
         // 0.5.2 or earlier, so what's new since then is shown.
         if self.defaults < 3 && self.last_version.is_none() {
             self.last_version = Some("0.5.2".to_string());
+        }
+        // Before the built-in terminal: a terminal command of one's own
+        // stays the one used; the system's own becomes the built-in one.
+        if self.defaults < 4 && !self.terminal.trim().is_empty() {
+            self.terminal_kind = TerminalKind::Custom;
         }
         // Abyss is gone: Classic is the nearest, in the same mode.
         if self.theme == ThemeChoice::Abyss {

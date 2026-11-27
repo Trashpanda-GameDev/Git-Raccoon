@@ -31,6 +31,7 @@ pub mod ssh_problem;
 pub mod ssh_settings;
 pub mod ssh_setup;
 pub mod tabs;
+pub mod terminal_panel;
 pub mod toolbar;
 pub mod welcome;
 pub mod whats_new;

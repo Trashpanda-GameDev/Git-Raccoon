@@ -30,6 +30,8 @@ serde_json = "1"
 # Forge accounts' tokens, in the system keychain.
 keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 netwatcher = "0.8.0"
+alacritty_terminal = "0.26"
+parking_lot = "0.12"
 
 # Colouring the title bar to match the theme, on Windows 11.
 [target.'cfg(windows)'.dependencies]
