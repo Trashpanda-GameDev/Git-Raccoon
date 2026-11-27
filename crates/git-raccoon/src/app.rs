@@ -28,6 +28,8 @@ pub struct App {
     /// Repositories being opened: path, the load, and the tab they're for.
     opening: Vec<Opening>,
     error: Option<String>,
+    /// The Git command behind the error, to run by hand.
+    error_command: Option<String>,
     /// The active tab's history scroll position.
     scroll: history::Scroll,
     tabs: Vec<Tab>,
@@ -229,6 +231,7 @@ impl App {
             repo: None,
             opening: Vec::new(),
             error: None,
+            error_command: None,
             scroll: history::Scroll::default(),
             network: crate::network::Watch::start(ctx),
             tabs: vec![Tab {
@@ -2117,6 +2120,28 @@ impl App {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if widgets::icon_button(ui, widgets::ICON_CLOSE, "Dismiss").clicked() {
                                 self.error = None;
+                                self.error_command = None;
+                            }
+                            // The Git command it stands for: run it by hand, and
+                            // see all Git says.
+                            if let Some(command) = self.error_command.clone() {
+                                let shown = ui
+                                    .link("Show the command")
+                                    .on_hover_text(format!("{command}\n(click to copy it)"));
+                                if shown.clicked() {
+                                    ui.ctx().copy_text(command.clone());
+                                }
+                                let builtin = self.settings.terminal_kind
+                                    == crate::settings::TerminalKind::BuiltIn;
+                                if builtin
+                                    && ui.button("Run it in the terminal").clicked()
+                                    && let Some(repo) = &mut self.repo
+                                {
+                                    let start = terminal_start(&self.settings, repo.path());
+                                    repo.terminals.put(&ctx, &start, &command);
+                                    self.error = None;
+                                    self.error_command = None;
+                                }
                             }
                         });
                     });
@@ -3137,6 +3162,19 @@ impl App {
                             self.settings.bisect_commands.insert(key, command);
                         }
                         crate::ui::bisect::Action::History(click) => bisect_click = Some(click),
+                        crate::ui::bisect::Action::RunInTerminal(command) => {
+                            let key = repo.path().trim_end_matches(['/', '\\']).to_string();
+                            self.settings.bisect_commands.insert(key, command.clone());
+                            // Through a shell, so a command line with && or
+                            // pipes is one test.
+                            let quoted = format!("'{}'", command.replace('\'', "'\\''"));
+                            let start = terminal_start(&self.settings, repo.path());
+                            repo.terminals.put(
+                                &ctx,
+                                &start,
+                                &format!("git bisect run sh -c {quoted}\r"),
+                            );
+                        }
                     }
                 }
                 // The search box over the history, while searching (Ctrl+F).
@@ -3311,6 +3349,7 @@ impl eframe::App for App {
             repo.poll(ctx);
             if let Some(e) = repo.refresh_error.take() {
                 self.error = Some(e);
+                self.error_command = repo.failed_command.take();
             }
         }
         self.keep_forge(ctx);

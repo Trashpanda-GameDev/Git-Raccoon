@@ -153,6 +153,28 @@ pub fn show(ui: &mut egui::Ui, t: &mut Terminal, id: egui::Id) -> Shown {
     if response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
     }
+    // A link under the pointer: underlined, saying what Ctrl+click does.
+    let mut response = response;
+    if let Some(pos) = response.hover_pos() {
+        let (row, column, _) = cell_at(pos, inner.min, cell, t.size());
+        let offset = t.lock().grid().display_offset();
+        let point =
+            alacritty_terminal::term::viewport_to_point(offset, Point::new(row, Column(column)));
+        if let Some((word, start, end)) = word_span(t, point)
+            && let Some(link) = super::link::classify(&word)
+        {
+            let y = inner.top() + (row as f32 + 1.0) * cell.y - 1.0;
+            ui.painter().hline(
+                inner.left() + start as f32 * cell.x..=inner.left() + (end + 1) as f32 * cell.x,
+                y,
+                Stroke::new(1.0, theme::accent()),
+            );
+            if ui.input(|i| i.modifiers.command) {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            response = response.on_hover_text(link_tip(&link));
+        }
+    }
     shown.response = Some(response);
     shown
 }
@@ -371,6 +393,11 @@ fn mouse(
 
 /// The word (no spaces) at a point on the screen.
 fn word_at(t: &Terminal, point: Point) -> Option<String> {
+    word_span(t, point).map(|(w, _, _)| w)
+}
+
+/// The word at a point, with the columns it runs from and to.
+fn word_span(t: &Terminal, point: Point) -> Option<(String, usize, usize)> {
     let term = t.lock();
     let grid = term.grid();
     let columns = grid.columns();
@@ -391,7 +418,23 @@ fn word_at(t: &Terminal, point: Point) -> Option<String> {
         .take_while(|&i| !chars[i].is_whitespace())
         .last()
         .unwrap_or(at);
-    Some(chars[start..=end].iter().collect())
+    Some((chars[start..=end].iter().collect(), start, end))
+}
+
+/// What Ctrl+click on a link would do, in words.
+fn link_tip(link: &super::link::Link) -> String {
+    let key = if cfg!(target_os = "macos") {
+        "⌘"
+    } else {
+        "Ctrl"
+    };
+    match link {
+        super::link::Link::Url(u) => format!("{key}+click to open {u}"),
+        super::link::Link::Commit(c) => format!("{key}+click to show {c} in the graph"),
+        super::link::Link::File { path, line } => {
+            format!("{key}+click to open {path} at line {line} in your editor")
+        }
+    }
 }
 
 /// Paints the screen: each row as one run of text, with its cells'

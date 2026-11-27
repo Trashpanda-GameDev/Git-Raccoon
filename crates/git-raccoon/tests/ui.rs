@@ -7402,6 +7402,42 @@ fn has_a_terminal_under_the_graph() {
     });
     screenshot(&mut h, "113-terminal");
 
+    // A push that fails: its Git command, run by hand in the terminal.
+    git(
+        &sample,
+        &["remote", "set-url", "origin", "/nowhere/at/all.git"],
+    );
+    press(&mut h, egui::Modifiers::COMMAND, Key::Backtick);
+    h.run_ok();
+    h.get_by_label("Push").click();
+    settle(&mut h);
+    assert!(
+        h.state()
+            .error()
+            .is_some_and(|e| e.contains("Could not push"))
+    );
+    h.get_by_label("Show the command");
+    screenshot(&mut h, "119-run-it-yourself");
+    h.get_by_label("Run it in the terminal").click();
+    h.run_ok();
+    h.run_ok();
+    assert!(h.state().error().is_none());
+    let begun = Instant::now();
+    while !terminal_screen(h.state())
+        .lines()
+        .last()
+        .unwrap_or_default()
+        .contains("git push")
+    {
+        assert!(
+            begun.elapsed() < Duration::from_secs(10),
+            "{}",
+            terminal_screen(h.state())
+        );
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
     // Ctrl+`, with the keyboard in it: hidden (still running).
     press(&mut h, egui::Modifiers::COMMAND, Key::Backtick);
     h.run_ok();

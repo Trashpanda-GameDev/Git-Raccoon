@@ -21,6 +21,9 @@ pub struct Terminals {
     pub focused: bool,
     /// Give it the keyboard on the next frame.
     pub focus_next: bool,
+    /// Frames it has asked for the keyboard (a click elsewhere in the same
+    /// frame can take it away again).
+    focus_tries: u8,
     next: u64,
     /// Why the last one couldn't start.
     pub error: Option<String>,
@@ -54,6 +57,19 @@ impl Terminals {
         self.focus_next = true;
         if self.list.is_empty() {
             self.open(ctx, start);
+        }
+    }
+
+    /// Puts `text` at the prompt of the terminal in front (starting one if
+    /// there's none), not run: the person presses Enter.
+    pub fn put(&mut self, ctx: &egui::Context, start: &Start, text: &str) {
+        if self.list.is_empty() {
+            self.open(ctx, start);
+        }
+        self.shown = true;
+        self.focus_next = true;
+        if let Some(t) = self.current() {
+            t.type_text(text);
         }
     }
 
@@ -193,6 +209,14 @@ pub fn show(ui: &mut egui::Ui, terms: &mut Terminals, folder: &str, who: &str) -
         }
         let shown = crate::term::view::show(ui, t, id);
         terms.focused = ui.memory(|m| m.has_focus(id));
+        // Asked for but not had yet: asked again next frame, a few times.
+        if focus_next && !terms.focused && terms.focus_tries < 5 {
+            terms.focus_tries += 1;
+            terms.focus_next = true;
+            ui.ctx().request_repaint();
+        } else if !terms.focus_next {
+            terms.focus_tries = 0;
+        }
         if let Some(word) = shown.clicked_word {
             action = Some(Action::Clicked(word));
         }

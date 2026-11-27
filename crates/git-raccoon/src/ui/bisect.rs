@@ -25,6 +25,9 @@ pub enum Action {
     History(Click),
     /// Remember this command for the repository.
     Remember(String),
+    /// Run Git's own `git bisect run` with this command in the built-in
+    /// terminal, its output there as it goes.
+    RunInTerminal(String),
 }
 
 /// The start window: where it's broken, where it last worked, what's being
@@ -457,6 +460,13 @@ fn command_button(
         {
             *action = Some(Action::Remember(command.trim().to_string()));
             bisect.run_command(ctx, path, command.clone(), None);
+            ui.close();
+        }
+        let terminal = ui
+            .add_enabled(!command.trim().is_empty(), egui::Button::new("Run it in the terminal"))
+            .on_hover_text("Git's own git bisect run, in the terminal under the graph: its output there as it goes");
+        if terminal.clicked() {
+            *action = Some(Action::RunInTerminal(command.trim().to_string()));
             ui.close();
         }
         ui.data_mut(|d| d.insert_temp(id, command));

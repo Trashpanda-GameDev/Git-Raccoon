@@ -436,6 +436,62 @@ impl Control {
 }
 
 impl Op {
+    /// The Git command a person would type for this, to run it by hand
+    /// (and see all Git says): `None` for what has no one command.
+    pub fn command(&self) -> Option<String> {
+        let q = |s: &str| {
+            if s.is_empty() || s.contains([' ', '\'', '"', '$', '`', '\\']) {
+                format!("'{}'", s.replace('\'', "'\\''"))
+            } else {
+                s.to_string()
+            }
+        };
+        Some(match self {
+            Op::Fetch(_) => "git fetch --all".into(),
+            Op::FetchRemote(r, _) => format!("git fetch {}", q(r)),
+            Op::Pull { from: None, .. } => "git pull".into(),
+            Op::Pull { from: Some(r), .. } => format!("git pull {}", q(r)),
+            Op::Push { force, to: None } => {
+                if *force {
+                    "git push --force-with-lease".into()
+                } else {
+                    "git push".into()
+                }
+            }
+            Op::Push {
+                force,
+                to: Some((r, b)),
+            } => format!(
+                "git push -u {}{} HEAD:{}",
+                if *force { "--force-with-lease " } else { "" },
+                q(r),
+                q(b)
+            ),
+            Op::PushBranch { remote, branch } => format!("git push -u {} {}", q(remote), q(branch)),
+            Op::PushTags { remote, names } if names.is_empty() => {
+                format!("git push {} --tags", q(remote))
+            }
+            Op::PushTags { remote, names } => format!(
+                "git push {} {}",
+                q(remote),
+                names.iter().map(|n| q(n)).collect::<Vec<_>>().join(" ")
+            ),
+            Op::DeleteRemoteBranch(full) => {
+                let (r, b) = full.split_once('/')?;
+                format!("git push {} --delete {}", q(r), q(b))
+            }
+            Op::Merge { branch, .. } => format!("git merge {}", q(branch)),
+            Op::Rebase(onto) => format!("git rebase {}", q(onto)),
+            Op::CherryPick(id) => format!("git cherry-pick {}", q(id)),
+            Op::Revert(id) => format!("git revert {}", q(id)),
+            Op::Checkout(b) => format!("git switch {}", q(b)),
+            Op::Continue => "git status".into(),
+            Op::StashThen(op) => return op.command(),
+            Op::Then(ops) => return ops.last()?.command(),
+            _ => return None,
+        })
+    }
+
     /// A plain pull from the upstream: fast-forward only, with uncommitted
     /// changes put aside and back.
     pub fn pull_upstream() -> Op {
@@ -1640,6 +1696,8 @@ pub struct RepoView {
     pub tool_results: Vec<git_raccoon_core::rules::DriverResult>,
     /// The built-in terminals for this repository (its tab's).
     pub terminals: crate::ui::terminal_panel::Terminals,
+    /// The Git command an operation that just failed stands for.
+    pub failed_command: Option<String>,
     /// While something's in progress: its conflicted files (how each
     /// conflicts), the files resolved since it started, and whether the
     /// history is shown in place of the conflicts' overview.
@@ -1769,6 +1827,7 @@ impl RepoView {
             rule_tool: None,
             tool_results: Vec::new(),
             terminals: Default::default(),
+            failed_command: None,
             conflict_files: Vec::new(),
             resolved_here: std::collections::BTreeSet::new(),
             history_over_conflicts: false,
@@ -3671,6 +3730,8 @@ impl RepoView {
                         ));
                     } else if !self.offer_way_on(&op, &e) {
                         self.refresh_error = Some(format!("Could not {}:\n{e}", op.verb()));
+                        // To run by hand, in the terminal.
+                        self.failed_command = op.command();
                     }
                 }
             }
