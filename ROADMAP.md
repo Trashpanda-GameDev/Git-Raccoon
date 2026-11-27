@@ -189,6 +189,22 @@ A terminal inside Git Raccoon, under the graph, in the repository's folder: for 
 
 ## Designed (ready to build)
 
+### Editing a commit's message
+
+Mockups: [docs/design/edit-message](docs/design/edit-message). Asked for in [#67](https://github.com/Trashpanda-GameDev/Git-Raccoon/issues/67).
+
+Today the last commit's message can be changed with *Amend last commit*, and older ones with the interactive rebase planner's *Reword*, but only from the commit *below* the one to change. This makes it one step, where the message is shown.
+
+- [ ] **A. In place:** the commit's message in the details pane turns into its summary and body (as in the commit box, with the summary's length), **Save** (Ctrl+Enter) and **Cancel** (Esc). The graph stays as it is.
+- [ ] **B. Where:** right-click a commit › **Edit message…**; the **✎** beside a commit's message in its details; *Edit this commit's message* in the command palette.
+- [ ] **How it's done:** the checked-out commit is amended, message only (what's staged stays staged, not folded in); an older one on the checked-out branch is reworded by a one-step rebase (uncommitted changes put aside and back), the first commit of the repository too (`--root`). The edited commit stays selected under its new SHA.
+- [ ] **Said before saving:** already pushed ("Already on origin/main: afterwards you'll need to force-push"); the commits after it that get new SHAs ("Rewrites the 2 commits after it too"); and other branches with the commit ("feature/cache also has it and keeps the old message"), with **Move it too**, on by default, for local branches stacked on the edited one (Git's `--update-refs`).
+- [ ] **C. When it can't, it says why** (greyed, with the reason): a merge comes after it on the branch; it's only on another branch ("Check out feature/cache to edit its messages"); no branch is checked out; a merge, rebase or other operation is in progress. An empty summary can't be saved.
+- [ ] **D. Afterwards:** **Undo** puts it back ("Undo edit message"). Pushing a message that was already pushed gets Push's usual offer to force-push, always with lease.
+- [ ] **Several at once** stay in the interactive rebase planner: *Edit several? Interactive rebase…* opens it from the right commit.
+- [ ] **For agents:** an *edit a commit's message* tool, asking first, as other changes do.
+- Later: editing a commit on a branch that isn't checked out (in a temporary worktree); keeping merges after it (`--rebase-merges`); editing the author.
+
 ### Merge requests without leaving the app
 
 Clickable prototype: [Git Raccoon merge requests](https://claude.ai/artifact/HZ9aRqi9yffGtvRmptrYW8). Build work: the [Merge requests milestone](https://github.com/Trashpanda-GameDev/Git-Raccoon/milestone/2).
