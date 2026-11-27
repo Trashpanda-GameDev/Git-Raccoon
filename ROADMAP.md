@@ -191,7 +191,7 @@ A terminal inside Git Raccoon, under the graph, in the repository's folder: for 
 
 ### Editing a commit's message
 
-Mockups: [docs/design/edit-message](docs/design/edit-message). Asked for in [#67](https://github.com/Trashpanda-GameDev/Git-Raccoon/issues/67).
+Mockups: [docs/design/edit-message](docs/design/edit-message). Asked for in [#67](https://github.com/Trashpanda-GameDev/Git-Raccoon/issues/67). Build work: the [Editing commit messages milestone](https://github.com/Trashpanda-GameDev/Git-Raccoon/milestone/8).
 
 Today the last commit's message can be changed with *Amend last commit*, and older ones with the interactive rebase planner's *Reword*, but only from the commit *below* the one to change. Instead, a commit's message in its details is where you edit it.
 
