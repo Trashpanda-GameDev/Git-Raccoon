@@ -85,6 +85,13 @@ pub struct Terminal {
 impl Terminal {
     /// Starts the shell in its folder.
     pub fn start(ctx: &egui::Context, start: &Start, id: u64) -> Result<Terminal, String> {
+        // What it understands, so programs (a pager, an editor) draw for it
+        // rather than for whatever started the app (often nothing).
+        let mut env = HashMap::from([
+            ("TERM".to_string(), "xterm-256color".to_string()),
+            ("COLORTERM".to_string(), "truecolor".to_string()),
+        ]);
+        env.extend(start.env.clone());
         let options = tty::Options {
             shell: start
                 .shell
@@ -92,7 +99,7 @@ impl Terminal {
                 .map(|(program, args)| tty::Shell::new(program, args)),
             working_directory: Some(start.folder.clone()),
             drain_on_exit: true,
-            env: start.env.clone(),
+            env,
             #[cfg(windows)]
             escape_args: true,
         };

@@ -7324,6 +7324,7 @@ fn picks_a_merge_tool_diff_tool_and_editor() {
     let _ = std::fs::remove_dir_all(&bin);
 }
 
+#[cfg(unix)]
 /// What the built-in terminal in front shows.
 fn terminal_screen(app: &App) -> String {
     app.repo()
@@ -7332,6 +7333,7 @@ fn terminal_screen(app: &App) -> String {
         .unwrap_or_default()
 }
 
+#[cfg(unix)]
 /// Types into the terminal (it has the keyboard), and waits for `until`.
 fn type_in_terminal(h: &mut Harness<'_, App>, text: &str, until: &str) {
     h.event(egui::Event::Text(text.into()));
