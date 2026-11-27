@@ -3106,6 +3106,7 @@ fn opens_a_terminal_in_the_repository() {
     // A stand-in terminal that leaves a mark where it's started.
     let mut h = harness(Settings {
         terminal: "touch opened-here".into(),
+        terminal_kind: git_raccoon::settings::TerminalKind::Custom,
         ..Settings::default()
     });
     open(&mut h, sample.path());
@@ -3133,6 +3134,7 @@ fn opens_a_terminal_in_the_repository() {
     // One that doesn't start says so.
     let mut h = harness(Settings {
         terminal: "no-such-terminal-anywhere".into(),
+        terminal_kind: git_raccoon::settings::TerminalKind::Custom,
         ..Settings::default()
     });
     open(&mut h, sample.path());
@@ -6712,9 +6714,18 @@ fn renews_a_gitlab_sign_in_that_was_turned_down() {
             .unwrap()
             .forge
             .as_ref()
-            .is_some_and(|f| f.requests.is_some())
+            .is_some_and(|f| matches!(&f.requests, Some(Ok(l)) if !l.is_empty()))
     });
     h.run_ok();
+    let listed = h
+        .state()
+        .repo()
+        .unwrap()
+        .forge
+        .as_ref()
+        .and_then(|f| f.requests.clone())
+        .map(|r| r.map(|l| l.len()));
+    assert_eq!(listed, Some(Ok(1)), "listed after renewing");
     h.get_by_label("!6 Seen after renewing");
     assert_eq!(accounts::load(&account).unwrap().token, "fresh");
 }

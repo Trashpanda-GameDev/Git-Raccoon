@@ -526,7 +526,20 @@ A robot in the toolbar shows while an agent is connected. Agents can only connec
 
 Moving around the graph has [keys of its own](#the-graph).
 
-**A terminal** (the toolbar button, or Ctrl+`) opens in the repository's folder, for anything Git Raccoon doesn't do. Choose which terminal in Settings › Tools.
+**A terminal** (the toolbar button, or Ctrl+`) opens in the repository's folder, for anything Git Raccoon doesn't do; see [The terminal](#the-terminal).
+
+### The terminal
+
+Git Raccoon has a terminal of its own, along the bottom under the graph. **Ctrl+`** (or the toolbar's terminal button, or *Open a terminal here*) shows it, and gives it the keyboard; Ctrl+` again, while you're typing in it, hides it (it keeps running).
+
+- **One for each repository tab**, started in its folder; it keeps running while another tab is in front. **+** opens another in the same tab (tests in one, Git in the other); right-click one's tab to close it. ⤢ gives it the whole window; drag its top edge to make it taller or shorter.
+- **It's a real terminal:** colours, full-screen programs (vim, less, htop), scrollback (the mouse wheel), selecting with the mouse (double-click a word, triple-click a line), copying and pasting. **Ctrl+C** copies what's selected, and with nothing selected interrupts the program, as terminals do. While it has the keyboard, keys are the program's: Ctrl+K and Ctrl+F too.
+- **It's like Git Raccoon's own Git:** commits made in it are by your profile (the header says which: "committing as Work"), and Git's sign-in questions are answered with your signed-in accounts. What you do there shows in the graph at once.
+- **Ctrl+click** (⌘+click on a Mac) a commit's SHA to show it in the graph, a `file:line` to open it in your editor at the line ([Settings › Tools › Editor](#merge-tools-diff-tools-and-an-editor)), or a link to open it in your browser. They're underlined when the pointer is over them.
+- **When an operation fails**, the error offers **Run it in the terminal**: the Git command it stands for, at the prompt, to run yourself and see all Git says (**Show the command** says what it is).
+- **While finding which commit broke something**, *Test with a command…* › **Run it in the terminal** runs Git's own `git bisect run` there, its output as it goes.
+
+**Settings › Tools › Terminal** chooses which terminal Ctrl+` opens: **Built in** (this one), **The system's own** (a window of its own), or **Custom command…** (`{path}` stands for the folder). For the built-in one, **Shell** says which to run: your usual one (`$SHELL`, or PowerShell on Windows), or another with its arguments (`bash -l`, `pwsh`, Git Bash).
 
 ## Themes and settings
 
@@ -538,7 +551,7 @@ Moving around the graph has [keys of its own](#the-graph).
 | **Git** | How Pull and Fetch behave; how often to fetch in the background; diff and file list defaults. |
 | **Accounts** | Your GitHub and GitLab accounts. |
 | **SSH** | Your SSH keys, the agent, trusted hosts, and setting it all up ([SSH](#ssh)). |
-| **Tools** | The terminal to open (`{path}` stands for the folder), and where new clones go. |
+| **Tools** | The merge tool, diff tool and editor; tools for some files; the terminal (built in, the system's, or your own) and its shell; and where new clones go. |
 | **Updates and privacy** | Automatic updates, **Check for updates now**, and clearing recent repositories. |
 | **About** | The version, what's new, feedback, and licenses. |
 

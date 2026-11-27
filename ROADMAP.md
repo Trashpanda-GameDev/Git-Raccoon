@@ -166,25 +166,28 @@ Built on Git's own ways of doing this, so what's set up here works from a termin
 - Later: a different merge tool per repository; a team's recommended tools in the repository.
 - [ ] Tried on Windows, macOS and Linux with a real Unity project and at least one other tool.
 
-## Designed (ready to build)
+## An integrated terminal (0.5.34)
 
-### An integrated terminal
+Mockups: [docs/design/integrated-terminal](docs/design/integrated-terminal). Asked for in [#99](https://github.com/Trashpanda-GameDev/Git-Raccoon/issues/99). Built in the [Integrated terminal milestone](https://github.com/Trashpanda-GameDev/Git-Raccoon/milestone/7).
 
-Mockups: [docs/design/integrated-terminal](docs/design/integrated-terminal). Asked for in [#99](https://github.com/Trashpanda-GameDev/Git-Raccoon/issues/99).
+A terminal inside Git Raccoon, under the graph, in the repository's folder: for the commands Git Raccoon doesn't have a button for, a project's own tools (tests, builds), and seeing everything Git says. Built on Alacritty's terminal (`alacritty_terminal`, Apache-2.0) which also runs the shell (ConPTY on Windows 10 1809 and later), drawn in egui.
 
-A terminal inside Git Raccoon, under the graph, in the repository's folder: for the commands Git Raccoon doesn't have a button for, a project's own tools (tests, builds), and seeing everything Git says. Built on Alacritty's terminal (`alacritty_terminal`, Apache-2.0) and WezTerm's way of running a shell (`portable-pty`, MIT; ConPTY on Windows 10 1809 and later), drawn in egui (`egui_term` is a reference, for an older egui).
-
-- [ ] **A. Under the graph:** a panel along the bottom, Ctrl+` to show and hide it (and *Open a terminal here*); drag its edge for height, ⤢ for the whole window. One terminal for each repository tab, in its folder, still running when you switch tabs and come back.
-- [ ] **B. Settings › Tools › Terminal:** *Built in* (the new default), *The system's own* (as today), or *Custom command…*; and the **shell**: your usual one (`$SHELL`; PowerShell on Windows, or Git Bash when it's there), or another.
-- [ ] **A real terminal:** colours from the theme, scrollback, copy and paste, selecting with the mouse, resizing, the mouse wheel, a blinking cursor, input methods; full-screen programs (vim, less, htop) work. Keys go to the shell while it has focus, except Ctrl+` and the window's own (Ctrl+K and Ctrl+F are the shell's then).
-- [ ] **What's in the output can be clicked:** a commit's SHA shows it in the graph; `src/store.rs:42` opens in your editor at the line (Settings › Tools › Editor); a link opens in the browser.
-- [ ] **As Git Raccoon is:** it commits as the active profile (`GIT_AUTHOR_*` / `GIT_COMMITTER_*`) and Git's sign-in prompts are answered with your signed-in accounts, as the app's own Git is; the header says so ("committing as Work · GitLab as rocky").
-- [ ] **Keeps up:** what's done in it (commits, checkouts, rebases) shows in the graph at once (the repository is watched already).
-- [ ] **More than one:** **+** for another terminal in the same tab (tests in one, Git in another); each named for what's running.
-- [ ] **C. Run it yourself:** when an operation fails, *Run it in the terminal* puts the Git command it ran there, ready to press Enter, and *Show the command* says what it is.
-- [ ] **D. During a search:** *Open a terminal here* while finding which commit broke something opens it at the commit being tested; a test command can run in it, its output there as it goes.
-- [ ] Heavy output (a long build) doesn't slow the app: drawn at most once a frame, scrollback capped.
+- [x] **A. Under the graph:** a panel along the bottom, Ctrl+` to show and hide it (and *Open a terminal here*); drag its edge for height, ⤢ for the whole window. One terminal for each repository tab, in its folder, still running when you switch tabs and come back.
+- [x] **B. Settings › Tools › Terminal:** *Built in* (the new default), *The system's own* (as today), or *Custom command…*; and the **shell**: your usual one (`$SHELL`; PowerShell on Windows, or Git Bash when it's there), or another.
+- [x] **A real terminal:** colours from the theme, scrollback, copy and paste, selecting with the mouse, resizing, the mouse wheel, a blinking cursor; full-screen programs (vim, less, htop) work.
+  - [ ] Input methods (IME) for typing other scripts; mouse reporting to programs that ask for the mouse. Keys go to the shell while it has focus, except Ctrl+` and the window's own (Ctrl+K and Ctrl+F are the shell's then).
+- [x] **What's in the output can be clicked:** a commit's SHA shows it in the graph; `src/store.rs:42` opens in your editor at the line (Settings › Tools › Editor); a link opens in the browser.
+- [x] **As Git Raccoon is:** it commits as the active profile (`GIT_AUTHOR_*` / `GIT_COMMITTER_*`) and Git's sign-in prompts are answered with your signed-in accounts, as the app's own Git is; the header says so ("committing as Work · GitLab as rocky").
+- [x] **Keeps up:** what's done in it (commits, checkouts, rebases) shows in the graph at once (the repository is watched already).
+- [x] **More than one:** **+** for another terminal in the same tab (tests in one, Git in another); each named for what's running.
+  - [ ] Renaming one.
+- [x] **C. Run it yourself:** when an operation fails, *Run it in the terminal* puts the Git command it ran there, ready to press Enter, and *Show the command* says what it is.
+- [x] **D. During a search:** *Open a terminal here* while finding which commit broke something opens it at the commit being tested; a test command can run in it (Git's own `git bisect run`), its output there as it goes.
+- [x] Heavy output (a long build) doesn't slow the app: drawn at most once a frame, scrollback capped.
 - Later: splitting the panel side by side; letting connected agents read a terminal's output (asking first).
+- [ ] Tried on Windows (PowerShell and Git Bash), macOS (zsh) and Linux (bash), with a full-screen program and a long build.
+
+## Designed (ready to build)
 
 ### Merge requests without leaving the app
 

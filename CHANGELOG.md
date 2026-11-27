@@ -6,6 +6,11 @@ release page). Newest first; a version's heading is just its number.
 ## 0.5.34
 
 - **Pushing tags** (#111): *Push to origin* on a tag's menu (in the sidebar or on the graph) pushes just that tag; Push's menu (▾) has *Push all tags*; and *Push tags with branches*, there or in Settings › Git, sends your tags with every push. A tag's *Delete…* still deletes it here, on the remote, or both.
+- **A terminal, built in** (#99): **Ctrl+`** opens a terminal under the graph, in the repository's folder, one for each repository tab (and **+** for more). It's a real terminal (colours, full-screen programs, scrollback, selecting, copy and paste), and it works like Git Raccoon's own Git: commits are by your profile, and sign-in questions are answered with your accounts.
+  - **Ctrl+click** a commit's SHA to show it in the graph, a `file:line` to open it in your editor at the line, or a link to open it.
+  - **When an operation fails**, *Run it in the terminal* puts its Git command at the prompt, to run yourself and see all Git says.
+  - **Finding which commit broke something** can test with Git's own `git bisect run`, in the terminal.
+  - Settings › Tools › Terminal: built in (the new default), the system's own, or a command of your own (kept if you'd set one); and which shell.
 - **Code in conflicts is highlighted** (#110): the conflict editor, in cards and in panes (each side and the output), colours the file's code for its language, as diffs do.
 
 ## 0.5.33
