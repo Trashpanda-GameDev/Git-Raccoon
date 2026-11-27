@@ -193,15 +193,17 @@ A terminal inside Git Raccoon, under the graph, in the repository's folder: for 
 
 Mockups: [docs/design/edit-message](docs/design/edit-message). Asked for in [#67](https://github.com/Trashpanda-GameDev/Git-Raccoon/issues/67).
 
-Today the last commit's message can be changed with *Amend last commit*, and older ones with the interactive rebase planner's *Reword*, but only from the commit *below* the one to change. This makes it one step, where the message is shown.
+Today the last commit's message can be changed with *Amend last commit*, and older ones with the interactive rebase planner's *Reword*, but only from the commit *below* the one to change. Instead, a commit's message in its details is where you edit it.
 
-- [ ] **A. In place:** the commit's message in the details pane turns into its summary and body (as in the commit box, with the summary's length), **Save** (Ctrl+Enter) and **Cancel** (Esc). The graph stays as it is.
-- [ ] **B. Where:** right-click a commit › **Edit message…**; the **✎** beside a commit's message in its details; *Edit this commit's message* in the command palette.
-- [ ] **How it's done:** the checked-out commit is amended, message only (what's staged stays staged, not folded in); an older one on the checked-out branch is reworded by a one-step rebase (uncommitted changes put aside and back), the first commit of the repository too (`--root`). The edited commit stays selected under its new SHA.
-- [ ] **Said before saving:** already pushed ("Already on origin/main: afterwards you'll need to force-push"); the commits after it that get new SHAs ("Rewrites the 2 commits after it too"); and other branches with the commit ("feature/cache also has it and keeps the old message"), with **Move it too**, on by default, for local branches stacked on the edited one (Git's `--update-refs`).
-- [ ] **C. When it can't, it says why** (greyed, with the reason): a merge comes after it on the branch; it's only on another branch ("Check out feature/cache to edit its messages"); no branch is checked out; a merge, rebase or other operation is in progress. An empty summary can't be saved.
+- [ ] **A. Always editable:** a commit's summary and description in the details pane are fields at all times. They look like the text they are; pointing at them shows a faint frame ("Click to edit the message"). Selecting and copying works as before. Keys only go to them once clicked, so the graph's own keys are unaffected.
+- [ ] **B. Changed, then applied:** once the text differs from the commit's, **Apply** (Ctrl+Enter) and **Discard** (Esc) appear under it, with what applying will do, and the commit is marked "Edited, not applied" (with a dot on its row in the graph). Nothing changes until Apply; putting the text back as it was hides them again. An empty summary can't be applied.
+  - Looking at another commit keeps the edit, marked, until it's applied or discarded (not lost, not asked about).
+  - The right-click menu's *Edit message* and the palette's *Edit this commit's message* put the cursor in the summary.
+- [ ] **How it's applied:** the checked-out commit is amended, message only (what's staged stays staged, not folded in); an older one on the checked-out branch is reworded by a one-step rebase (uncommitted changes put aside and back), the first commit of the repository too (`--root`). The commit stays selected under its new SHA.
+- [ ] **Said before applying:** already pushed ("Already on origin/main: afterwards you'll need to force-push"); the commits after it that get new SHAs ("Rewrites the 2 commits after it too"); and other branches with the commit ("feature/cache also has it and keeps the old message"), with **Move it too**, on by default, for local branches stacked on the edited one (Git's `--update-refs`, Git 2.38 and later; with an older Git, said and left).
+- [ ] **C. When it can't be edited, it's read-only, saying why** on hover (🔒): a merge comes after it on the branch; it's only on another branch ("Check out feature/cache to edit its messages"); no branch is checked out; a merge, rebase or other operation is in progress. Working changes and stashes aren't commits to edit.
 - [ ] **D. Afterwards:** **Undo** puts it back ("Undo edit message"). Pushing a message that was already pushed gets Push's usual offer to force-push, always with lease.
-- [ ] **Several at once** stay in the interactive rebase planner: *Edit several? Interactive rebase…* opens it from the right commit.
+- [ ] **Several at once** stay in the interactive rebase planner.
 - [ ] **For agents:** an *edit a commit's message* tool, asking first, as other changes do.
 - Later: editing a commit on a branch that isn't checked out (in a temporary worktree); keeping merges after it (`--rebase-merges`); editing the author.
 
